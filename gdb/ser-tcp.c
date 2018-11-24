@@ -1,6 +1,6 @@
 /* Serial interface for raw TCP connections on Un*x like systems.
 
-   Copyright (C) 1992-2013 Free Software Foundation, Inc.
+   Copyright (C) 1992-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -35,7 +35,7 @@
 #include <sys/ioctl.h>  /* For FIONBIO.  */
 #endif
 
-#include <sys/time.h>
+#include "gdb_sys_time.h"
 
 #ifdef USE_WIN32API
 #include <winsock2.h>
@@ -53,7 +53,6 @@
 #endif
 
 #include <signal.h>
-#include <string.h>
 #include "gdb_select.h"
 
 #ifndef HAVE_SOCKLEN_T
@@ -156,7 +155,8 @@ wait_for_connect (struct serial *scb, unsigned int *polls)
 int
 net_open (struct serial *scb, const char *name)
 {
-  char *port_str, hostname[100];
+  char hostname[100];
+  const char *port_str;
   int n, port, tmp;
   int use_udp;
   struct hostent *hostent;
@@ -169,12 +169,12 @@ net_open (struct serial *scb, const char *name)
   unsigned int polls = 0;
 
   use_udp = 0;
-  if (strncmp (name, "udp:", 4) == 0)
+  if (startswith (name, "udp:"))
     {
       use_udp = 1;
       name = name + 4;
     }
-  else if (strncmp (name, "tcp:", 4) == 0)
+  else if (startswith (name, "tcp:"))
     name = name + 4;
 
   port_str = strchr (name, ':');
@@ -280,10 +280,10 @@ net_open (struct serial *scb, const char *name)
 
     len = sizeof (err);
     /* On Windows, the fourth parameter to getsockopt is a "char *";
-       on UNIX systems it is generally "void *".  The cast to "void *"
-       is OK everywhere, since in C "void *" can be implicitly
-       converted to any pointer type.  */
-    res = getsockopt (scb->fd, SOL_SOCKET, SO_ERROR, (void *) &err, &len);
+       on UNIX systems it is generally "void *".  The cast to "char *"
+       is OK everywhere, since in C++ any data pointer type can be
+       implicitly converted to "void *".  */
+    res = getsockopt (scb->fd, SOL_SOCKET, SO_ERROR, (char *) &err, &len);
     if (res < 0 || err)
       {
 	/* Maybe the target still isn't ready to accept the connection.  */
@@ -342,13 +342,17 @@ net_read_prim (struct serial *scb, size_t count)
   /* Need to cast to silence -Wpointer-sign on MinGW, as Winsock's
      'recv' takes 'char *' as second argument, while 'scb->buf' is
      'unsigned char *'.  */
-  return recv (scb->fd, (void *) scb->buf, count, 0);
+  return recv (scb->fd, (char *) scb->buf, count, 0);
 }
 
 int
 net_write_prim (struct serial *scb, const void *buf, size_t count)
 {
-  return send (scb->fd, buf, count, 0);
+  /* On Windows, the second parameter to send is a "const char *"; on
+     UNIX systems it is generally "const void *".  The cast to "const
+     char *" is OK everywhere, since in C++ any data pointer type can
+     be implicitly converted to "const void *".  */
+  return send (scb->fd, (const char *) buf, count, 0);
 }
 
 int
@@ -363,15 +367,46 @@ ser_tcp_send_break (struct serial *scb)
 static void
 set_tcp_cmd (char *args, int from_tty)
 {
-  help_list (tcp_set_cmdlist, "set tcp ", -1, gdb_stdout);
+  help_list (tcp_set_cmdlist, "set tcp ", all_commands, gdb_stdout);
 }
 
 static void
 show_tcp_cmd (char *args, int from_tty)
 {
-  help_list (tcp_show_cmdlist, "show tcp ", -1, gdb_stdout);
+  help_list (tcp_show_cmdlist, "show tcp ", all_commands, gdb_stdout);
 }
 
+#ifndef USE_WIN32API
+
+/* The TCP ops.  */
+
+static const struct serial_ops tcp_ops =
+{
+  "tcp",
+  net_open,
+  net_close,
+  NULL,
+  ser_base_readchar,
+  ser_base_write,
+  ser_base_flush_output,
+  ser_base_flush_input,
+  ser_tcp_send_break,
+  ser_base_raw,
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_base_setbaudrate,
+  ser_base_setstopbits,
+  ser_base_setparity,
+  ser_base_drain_output,
+  ser_base_async,
+  net_read_prim,
+  net_write_prim
+};
+
+#endif /* USE_WIN32API */
 
 void
 _initialize_ser_tcp (void)
@@ -380,32 +415,7 @@ _initialize_ser_tcp (void)
   /* Do nothing; the TCP serial operations will be initialized in
      ser-mingw.c.  */
 #else
-  struct serial_ops *ops;
-
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "tcp";
-  ops->next = 0;
-  ops->open = net_open;
-  ops->close = net_close;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->flush_output = ser_base_flush_output;
-  ops->flush_input = ser_base_flush_input;
-  ops->send_break = ser_tcp_send_break;
-  ops->go_raw = ser_base_raw;
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->setbaudrate = ser_base_setbaudrate;
-  ops->setstopbits = ser_base_setstopbits;
-  ops->drain_output = ser_base_drain_output;
-  ops->async = ser_base_async;
-  ops->read_prim = net_read_prim;
-  ops->write_prim = net_write_prim;
-  serial_add_interface (ops);
+  serial_add_interface (&tcp_ops);
 #endif /* USE_WIN32API */
 
   add_prefix_cmd ("tcp", class_maintenance, set_tcp_cmd, _("\

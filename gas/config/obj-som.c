@@ -1,6 +1,5 @@
 /* SOM object file format.
-   Copyright 1993, 1994, 1998, 2000, 2002, 2003, 2004, 2005, 2006,
-   2007, 2008, 2009  Free Software Foundation, Inc.
+   Copyright (C) 1993-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -25,7 +24,6 @@
 #include "as.h"
 #include "subsegs.h"
 #include "aout/stab_gnu.h"
-#include "obstack.h"
 
 static int version_seen = 0;
 static int copyright_seen = 0;
@@ -212,7 +210,8 @@ obj_som_init_stab_section (segT seg)
   segT saved_seg = now_seg;
   segT space;
   subsegT saved_subseg = now_subseg;
-  char *p, *file;
+  char *p;
+ const char * file;
   unsigned int stroff;
 
   /* Make the space which will contain the debug subspaces.  */
@@ -243,7 +242,7 @@ obj_som_init_stab_section (segT seg)
      the call to get_stab_string_offset.  */
   p = frag_more (12);
   memset (p, 0, 12);
-  as_where (&file, (unsigned int *) NULL);
+  file = as_where ((unsigned int *) NULL);
   stroff = get_stab_string_offset (file, "$GDB_STRINGS$");
   know (stroff == 1);
   md_number_to_chars (p, stroff, 4);
@@ -304,11 +303,10 @@ obj_som_weak (int ignore ATTRIBUTE_UNUSED)
 
   do
     {
-      name = input_line_pointer;
-      c = get_symbol_end ();
+      c = get_symbol_name (&name);
       symbolP = symbol_find_or_make (name);
       *input_line_pointer = c;
-      SKIP_WHITESPACE ();
+      SKIP_WHITESPACE_AFTER_NAME ();
       S_SET_WEAK (symbolP);
       if (c == ',')
 	{

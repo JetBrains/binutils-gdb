@@ -1,6 +1,5 @@
 # Expect script for MIPS ELF linker tests
-#   Copyright 2002, 2003, 2004, 2005, 2006, 2007, 2008
-#   Free Software Foundation, Inc.
+#   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 #
 # This file is part of the GNU Binutils.
 #
@@ -55,12 +54,14 @@ if {![istarget mips*-*-*] || ![is_elf_format]} {
 
 set has_newabi [expr [istarget *-*-irix6*] \
 		     || [istarget mips*-*-linux*] \
-		     || [istarget mips*-sde-elf*]]
+		     || [istarget mips*-sde-elf*] \
+		     || [istarget mips*-mti-elf*] \
+		     || [istarget mips*-img-elf*]]
 set linux_gnu [expr [istarget mips*-*-linux*]]
 set embedded_elf [expr [istarget mips*-*-elf]]
 
 # Set defaults.
-set abi_asflags(o32) ""
+set abi_asflags(o32) "-32"
 set abi_asflags(n32) "-march=from-abi -n32 -EB"
 set abi_asflags(n64) "-march=from-abi -64 -EB"
 set abi_ldflags(o32) ""
@@ -78,7 +79,8 @@ if { [istarget *-*-irix6*] } {
     set abi_asflags(o32) "-32 -EB"
     set abi_ldflags(o32) -melf32btsmip_fbsd
 }
-if { [istarget mips*-*-linux*] || [istarget mips*-sde-elf*] } {
+if { [istarget mips*-*-linux*] || [istarget mips*-sde-elf*]
+     || [istarget mips*-mti-elf*] || [istarget mips*-img-elf*]} {
     set abi_ldflags(n32) -melf32btsmipn32
     set abi_ldflags(n64) -melf64btsmip
 } elseif { [istarget mips64*-*freebsd*] } {
@@ -166,6 +168,42 @@ if { $linux_gnu } {
 	      "jalx-2"]]
 }
 
+run_dump_test "jalx-addend" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "jalx-local" [list [list ld $abi_ldflags(o32)]]
+if $has_newabi {
+    run_dump_test "jalx-addend-n32" [list [list ld $abi_ldflags(n32)]]
+    run_dump_test "jalx-local-n32" [list [list ld $abi_ldflags(n32)]]
+    run_dump_test "jalx-addend-n64" [list [list ld $abi_ldflags(n64)]]
+    run_dump_test "jalx-local-n64" [list [list ld $abi_ldflags(n64)]]
+}
+
+run_dump_test "unaligned-jalx-0" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-jalx-1" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-jalx-mips16-0" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-jalx-mips16-1" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-jalx-micromips-0" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-jalx-micromips-1" [list [list ld $abi_ldflags(o32)]]
+
+if $has_newabi {
+    run_dump_test "unaligned-jalx-addend-0" \
+					[list [list ld $abi_ldflags(n32)]]
+    run_dump_test "unaligned-jalx-addend-1" \
+					[list [list ld $abi_ldflags(n32)]]
+    run_dump_test "unaligned-jalx-addend-mips16-0" \
+					[list [list ld $abi_ldflags(n32)]]
+    run_dump_test "unaligned-jalx-addend-mips16-1" \
+					[list [list ld $abi_ldflags(n32)]]
+    run_dump_test "unaligned-jalx-addend-micromips-0" \
+					[list [list ld $abi_ldflags(n32)]]
+    run_dump_test "unaligned-jalx-addend-micromips-1" \
+					[list [list ld $abi_ldflags(n32)]]
+}
+
+run_dump_test "unaligned-lwpc-0" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-lwpc-1" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-ldpc-0" [list [list ld $abi_ldflags(o32)]]
+run_dump_test "unaligned-ldpc-1" [list [list ld $abi_ldflags(o32)]]
+
 # Test multi-got link.  We only do this on GNU/Linux because it requires
 # the "traditional" emulations.
 if { $linux_gnu } {
@@ -181,6 +219,15 @@ if { $linux_gnu } {
     if { $has_newabi } {
 	run_dump_test "no-shared-1-n32"
 	run_dump_test "no-shared-1-n64"
+    }
+}
+
+# Test PIE debug dynamic tags
+if { $linux_gnu } {
+    run_dump_test "pie-o32"
+    if { $has_newabi } {
+	run_dump_test "pie-n32"
+	run_dump_test "pie-n64"
     }
 }
 
@@ -408,6 +455,8 @@ if { $has_newabi } {
 	    "reloc-6b"]]
 }
 
+run_dump_test "reloc-local-overflow" [list [list ld $abi_ldflags(o32)]]
+
 if {$has_newabi && $linux_gnu} {
     run_dump_test "eh-frame1-n32"
     run_dump_test "eh-frame1-n64"
@@ -430,8 +479,30 @@ if {$linux_gnu} {
     run_ld_link_tests $eh_frame5_test
 }
 
+if {$embedded_elf} {
+    run_dump_test "compact-eh1"
+    run_dump_test "compact-eh2"
+    run_dump_test "compact-eh3"
+}
+
+if {$linux_gnu} {
+    run_dump_test "compact-eh4"
+    run_dump_test "compact-eh5"
+    run_dump_test "compact-eh6"
+}
+
 run_dump_test "jaloverflow"
 run_dump_test "jaloverflow-2"
+run_dump_test "undefweak-overflow" [list [list as $abi_asflags(o32)] \
+					 [list ld $abi_ldflags(o32)]]
+
+if {$has_newabi} {
+    run_dump_test "undefweak-overflow" [list [list as $abi_asflags(n32)] \
+					     [list ld $abi_ldflags(n32)]]
+    run_dump_test "undefweak-overflow" [list [list as $abi_asflags(n64)] \
+					     [list ld $abi_ldflags(n64)]]
+}
+
 if {$has_newabi} {
     run_dump_test "jalbal" [list [list ld $abi_ldflags(n32)]]
 }
@@ -633,37 +704,76 @@ run_ld_link_tests $mips16_intermix_test
 
 run_dump_test "mips16-local-stubs-1"
 
-run_dump_test "attr-gnu-4-00"
-run_dump_test "attr-gnu-4-01"
-run_dump_test "attr-gnu-4-02"
-run_dump_test "attr-gnu-4-03"
-run_dump_test "attr-gnu-4-04"
-run_dump_test "attr-gnu-4-05"
-run_dump_test "attr-gnu-4-10"
-run_dump_test "attr-gnu-4-11"
-run_dump_test "attr-gnu-4-12"
-run_dump_test "attr-gnu-4-13"
-run_dump_test "attr-gnu-4-14"
-run_dump_test "attr-gnu-4-15"
-run_dump_test "attr-gnu-4-20"
-run_dump_test "attr-gnu-4-21"
-run_dump_test "attr-gnu-4-22"
-run_dump_test "attr-gnu-4-23"
-run_dump_test "attr-gnu-4-24"
-run_dump_test "attr-gnu-4-25"
-run_dump_test "attr-gnu-4-30"
-run_dump_test "attr-gnu-4-31"
-run_dump_test "attr-gnu-4-32"
-run_dump_test "attr-gnu-4-33"
-run_dump_test "attr-gnu-4-34"
-run_dump_test "attr-gnu-4-35"
-run_dump_test "attr-gnu-4-40"
-run_dump_test "attr-gnu-4-41"
-run_dump_test "attr-gnu-4-42"
-run_dump_test "attr-gnu-4-43"
-run_dump_test "attr-gnu-4-44"
-run_dump_test "attr-gnu-4-45"
-run_dump_test "attr-gnu-4-51"
+set mips16_fp_stub_test [list \
+    [list "Floating-point stub for mips16 functions" \
+	 "$abi_ldflags(o32)" "" \
+	 "$abi_asflags(o32) -mips32r2" \
+	 {mips16-fp-stub-1.s mips16-fp-stub-2.s} \
+	 {{readelf --debug-dump=frames mips16-fp-stub.d}} \
+	 "mips16-fp-stub"]]
+
+run_ld_link_tests $mips16_fp_stub_test
+
+set o32flagslist [list [list as $abi_asflags(o32)] [list ld $abi_ldflags(o32)]]
+
+foreach firstfpabi [list 0 1 2 3 4 5 6 7 ] {
+  foreach secondfpabi [list 4 5 6 7 ] {
+    run_dump_test "attr-gnu-4-${firstfpabi}${secondfpabi}" $o32flagslist
+  }
+}
+foreach firstfpabi [list 4 5 6 7 ] {
+  foreach secondfpabi [list 0 1 2 3 8 9] {
+    run_dump_test "attr-gnu-4-${firstfpabi}${secondfpabi}" $o32flagslist
+  }
+}
+foreach firstfpabi [list 0 1 2 3 ] {
+  foreach secondfpabi [list 0 1 2 3 8 9] {
+    run_dump_test "attr-gnu-4-${firstfpabi}${secondfpabi}"
+  }
+}
+
+run_dump_test "attr-gnu-4-81"
+
+run_dump_test "attr-gnu-8-00"
+run_dump_test "attr-gnu-8-01"
+run_dump_test "attr-gnu-8-02"
+run_dump_test "attr-gnu-8-10"
+run_dump_test "attr-gnu-8-11"
+run_dump_test "attr-gnu-8-12"
+run_dump_test "attr-gnu-8-20"
+run_dump_test "attr-gnu-8-21"
+run_dump_test "attr-gnu-8-22"
+
+run_dump_test "attr-gnu-4-0-ph" $o32flagslist
+run_dump_test "attr-gnu-4-1-ph" $o32flagslist
+run_dump_test "attr-gnu-4-2-ph" $o32flagslist
+run_dump_test "attr-gnu-4-3-ph" $o32flagslist
+run_dump_test "attr-gnu-4-4-ph" $o32flagslist
+run_dump_test "attr-gnu-4-5-ph" $o32flagslist
+run_dump_test "attr-gnu-4-6-ph" $o32flagslist
+run_dump_test "attr-gnu-4-7-ph" $o32flagslist
+
+if $has_newabi {
+  run_dump_test "attr-gnu-4-0-n32-ph"
+  run_dump_test "attr-gnu-4-1-n32-ph"
+  run_dump_test "attr-gnu-4-2-n32-ph"
+  run_dump_test "attr-gnu-4-3-n32-ph"
+  run_dump_test "attr-gnu-4-0-n64-ph"
+  run_dump_test "attr-gnu-4-1-n64-ph"
+  run_dump_test "attr-gnu-4-2-n64-ph"
+  run_dump_test "attr-gnu-4-3-n64-ph"
+}
+
+run_dump_test "abiflags-strip1-ph" $o32flagslist
+run_dump_test "abiflags-strip2-ph" $o32flagslist
+run_dump_test "abiflags-strip3-ph" $o32flagslist
+run_dump_test "abiflags-strip4-ph" $o32flagslist
+run_dump_test "abiflags-strip5-ph" $o32flagslist
+run_dump_test "abiflags-strip6-ph" $o32flagslist
+run_dump_test "abiflags-strip7-ph" $o32flagslist
+run_dump_test "abiflags-strip8-ph" $o32flagslist
+run_dump_test "abiflags-strip9-ph" $o32flagslist
+run_dump_test "abiflags-strip10-ph" $o32flagslist
 
 run_dump_test "nan-legacy"
 run_dump_test "nan-2008"
@@ -828,12 +938,30 @@ if { $linux_gnu } {
     }
 }
 
-run_dump_test "attr-gnu-8-00"
-run_dump_test "attr-gnu-8-01"
-run_dump_test "attr-gnu-8-02"
-run_dump_test "attr-gnu-8-10"
-run_dump_test "attr-gnu-8-11"
-run_dump_test "attr-gnu-8-12"
-run_dump_test "attr-gnu-8-20"
-run_dump_test "attr-gnu-8-21"
-run_dump_test "attr-gnu-8-22"
+# PR ld/19908 export class tests.
+if { $linux_gnu } {
+    run_ld_link_tests [list \
+	[list "Shared library for MIPS export class symbol reference tests" \
+	      "$abi_ldflags(o32) -shared" "" \
+	      "$abi_asflags(o32)" \
+	      { export-class-ref-f2.s } \
+	      { { readelf --dyn-syms export-class-ref-lib.sd } } \
+	      "export-class-ref-lib.so"]]
+    foreach { class flag } { internal 1 hidden 2 protected 3 } {
+	run_ld_link_tests [list \
+	    [list "MIPS $class symbol reference test 1" \
+		  "$abi_ldflags(o32) -e f0" "tmpdir/export-class-ref-lib.so" \
+		  "$abi_asflags(o32) --defsym defv=$flag" \
+		  { export-class-ref-f0.s export-class-ref-f1.s } \
+		  [list [list readelf --dyn-syms export-$class-ref.sd] \
+			[list readelf --dyn-syms export-local-ref.sd]] \
+		  "export-$class-ref"] \
+	    [list "MIPS $class symbol reference test 2" \
+		  "$abi_ldflags(o32) -e f0" "tmpdir/export-class-ref-lib.so" \
+		  "$abi_asflags(o32) --defsym defv=$flag --defsym refv=$flag" \
+		  { export-class-ref-f0.s export-class-ref-f1.s } \
+		  [list [list readelf --dyn-syms export-$class-ref.sd] \
+			[list readelf --dyn-syms export-local-ref.sd]] \
+		  "export-$class-ref"]]
+    }
+}

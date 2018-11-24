@@ -1,6 +1,6 @@
 /* Command-line output logging for GDB, the GNU debugger.
 
-   Copyright (C) 2003-2013 Free Software Foundation, Inc.
+   Copyright (C) 2003-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,9 +21,6 @@
 #include "gdbcmd.h"
 #include "ui-out.h"
 #include "interps.h"
-#include "gdb_assert.h"
-
-#include <string.h>
 
 /* These hold the pushed copies of the gdb output files.
    If NULL then nothing has yet been pushed.  */
@@ -171,7 +168,7 @@ pop_output_files (void)
       gdb_stderr = saved_output.err;
       gdb_stdlog = saved_output.log;
       gdb_stdtarg = saved_output.targ;
-      gdb_stdtargerr = saved_output.targ;
+      gdb_stdtargerr = saved_output.targerr;
     }
 
   saved_output.out = NULL;
@@ -180,7 +177,9 @@ pop_output_files (void)
   saved_output.targ = NULL;
   saved_output.targerr = NULL;
 
-  ui_out_redirect (current_uiout, NULL);
+  /* Stay consistent with handle_redirections.  */
+  if (!ui_out_is_mi_like_p (current_uiout))
+    ui_out_redirect (current_uiout, NULL);
 }
 
 /* This is a helper for the `set logging' command.  */

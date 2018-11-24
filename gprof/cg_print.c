@@ -1,7 +1,6 @@
 /* cg_print.c -  Print routines for displaying call graphs.
 
-   Copyright 2000, 2001, 2002, 2004, 2007, 2009, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    This file is part of GNU Binutils.
 
@@ -62,7 +61,7 @@ double print_time = 0.0;
 
 
 static void
-print_header ()
+print_header (void)
 {
   if (first_output)
     first_output = FALSE;
@@ -562,7 +561,7 @@ cmp_name (const PTR left, const PTR right)
 
 
 void
-cg_print_index ()
+cg_print_index (void)
 {
   unsigned int sym_index;
   unsigned int nnames, todo, i, j;
@@ -985,13 +984,9 @@ cg_print_function_ordering (void)
 
 #define MOST 0.99
 static void
-order_and_dump_functions_by_arcs (the_arcs, arc_count, all,
-				  unplaced_arcs, unplaced_arc_count)
-     Arc **the_arcs;
-     unsigned long arc_count;
-     int all;
-     Arc **unplaced_arcs;
-     unsigned long *unplaced_arc_count;
+order_and_dump_functions_by_arcs (Arc **the_arcs, unsigned long arc_count,
+				  int all, Arc **unplaced_arcs,
+				  unsigned long *unplaced_arc_count)
 {
 #ifdef __GNUC__
   unsigned long long tmp_arcs, total_arcs;

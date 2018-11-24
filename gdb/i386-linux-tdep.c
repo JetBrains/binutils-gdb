@@ -1,6 +1,6 @@
 /* Target-dependent code for GNU/Linux i386.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -27,11 +27,10 @@
 #include "osabi.h"
 #include "reggroups.h"
 #include "dwarf2-frame.h"
-#include <string.h>
-
 #include "i386-tdep.h"
 #include "i386-linux-tdep.h"
 #include "linux-tdep.h"
+#include "utils.h"
 #include "glibc-tdep.h"
 #include "solib-svr4.h"
 #include "symtab.h"
@@ -39,41 +38,19 @@
 #include "xml-syscall.h"
 
 #include "i387-tdep.h"
-#include "i386-xstate.h"
+#include "x86-xstate.h"
 
 /* The syscall's XML filename for i386.  */
 #define XML_SYSCALL_FILENAME_I386 "syscalls/i386-linux.xml"
 
 #include "record-full.h"
 #include "linux-record.h"
-#include <stdint.h>
-
 #include "features/i386/i386-linux.c"
 #include "features/i386/i386-mmx-linux.c"
 #include "features/i386/i386-mpx-linux.c"
+#include "features/i386/i386-avx-mpx-linux.c"
 #include "features/i386/i386-avx-linux.c"
-
-/* Supported register note sections.  */
-static struct core_regset_section i386_linux_regset_sections[] =
-{
-  { ".reg", 68, "general-purpose" },
-  { ".reg2", 108, "floating-point" },
-  { NULL, 0 }
-};
-
-static struct core_regset_section i386_linux_sse_regset_sections[] =
-{
-  { ".reg", 68, "general-purpose" },
-  { ".reg-xfp", 512, "extended floating-point" },
-  { NULL, 0 }
-};
-
-static struct core_regset_section i386_linux_avx_regset_sections[] =
-{
-  { ".reg", 68, "general-purpose" },
-  { ".reg-xstate", I386_XSTATE_MAX_SIZE, "XSAVE extended state" },
-  { NULL, 0 }
-};
+#include "features/i386/i386-avx512-linux.c"
 
 /* Return non-zero, when the register is in the corresponding register
    group.  Put the LINUX_ORIG_EAX register in the system group.  */
@@ -404,9 +381,75 @@ i386_canonicalize_syscall (int syscall)
   enum { i386_syscall_max = 499 };
 
   if (syscall <= i386_syscall_max)
-    return syscall;
+    return (enum gdb_syscall) syscall;
   else
-    return -1;
+    return gdb_sys_no_syscall;
+}
+
+/* Value of the sigcode in case of a boundary fault.  */
+
+#define SIG_CODE_BONDARY_FAULT 3
+
+/* i386 GNU/Linux implementation of the handle_segmentation_fault
+   gdbarch hook.  Displays information related to MPX bound
+   violations.  */
+void
+i386_linux_handle_segmentation_fault (struct gdbarch *gdbarch,
+				      struct ui_out *uiout)
+{
+  /* -Wmaybe-uninitialized  */
+  CORE_ADDR lower_bound = 0, upper_bound = 0, access = 0;
+  int is_upper;
+  long sig_code = 0;
+
+  if (!i386_mpx_enabled ())
+    return;
+
+  TRY
+    {
+      /* Sigcode evaluates if the actual segfault is a boundary violation.  */
+      sig_code = parse_and_eval_long ("$_siginfo.si_code\n");
+
+      lower_bound
+        = parse_and_eval_long ("$_siginfo._sifields._sigfault._addr_bnd._lower");
+      upper_bound
+        = parse_and_eval_long ("$_siginfo._sifields._sigfault._addr_bnd._upper");
+      access
+        = parse_and_eval_long ("$_siginfo._sifields._sigfault.si_addr");
+    }
+  CATCH (exception, RETURN_MASK_ALL)
+    {
+      return;
+    }
+  END_CATCH
+
+  /* If this is not a boundary violation just return.  */
+  if (sig_code != SIG_CODE_BONDARY_FAULT)
+    return;
+
+  is_upper = (access > upper_bound ? 1 : 0);
+
+  ui_out_text (uiout, "\n");
+  if (is_upper)
+    ui_out_field_string (uiout, "sigcode-meaning",
+			 _("Upper bound violation"));
+  else
+    ui_out_field_string (uiout, "sigcode-meaning",
+			 _("Lower bound violation"));
+
+  ui_out_text (uiout, _(" while accessing address "));
+  ui_out_field_fmt (uiout, "bound-access", "%s",
+		    paddress (gdbarch, access));
+
+  ui_out_text (uiout, _("\nBounds: [lower = "));
+  ui_out_field_fmt (uiout, "lower-bound", "%s",
+		    paddress (gdbarch, lower_bound));
+
+  ui_out_text (uiout, _(", upper = "));
+  ui_out_field_fmt (uiout, "upper-bound", "%s",
+		    paddress (gdbarch, upper_bound));
+
+  ui_out_text (uiout, _("]"));
 }
 
 /* Parse the arguments of current system call instruction and record
@@ -570,9 +613,11 @@ int i386_linux_gregset_reg_offset[] =
   -1, -1, -1, -1, -1, -1, -1, -1,
   -1,
   -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1,		/* MPX registers BND0 ... BND3.  */
-  -1, -1,			/* MPX registers BNDCFGU, BNDSTATUS.  */
-  11 * 4			/* "orig_eax" */
+  -1, -1, -1, -1,		  /* MPX registers BND0 ... BND3.  */
+  -1, -1,			  /* MPX registers BNDCFGU, BNDSTATUS.  */
+  -1, -1, -1, -1, -1, -1, -1, -1, /* k0 ... k7 (AVX512)  */
+  -1, -1, -1, -1, -1, -1, -1, -1, /* zmm0 ... zmm7 (AVX512)  */
+  11 * 4,			  /* "orig_eax"  */
 };
 
 /* Mapping between the general-purpose registers in `struct
@@ -612,8 +657,8 @@ i386_linux_core_read_xcr0 (bfd *abfd)
       size_t size = bfd_section_size (abfd, xstate);
 
       /* Check extended state size.  */
-      if (size < I386_XSTATE_AVX_SIZE)
-	xcr0 = I386_XSTATE_SSE_MASK;
+      if (size < X86_XSTATE_AVX_SIZE)
+	xcr0 = X86_XSTATE_SSE_MASK;
       else
 	{
 	  char contents[8];
@@ -646,15 +691,20 @@ i386_linux_core_read_description (struct gdbarch *gdbarch,
   /* Linux/i386.  */
   uint64_t xcr0 = i386_linux_core_read_xcr0 (abfd);
 
-  switch ((xcr0 & I386_XSTATE_ALL_MASK))
+  switch ((xcr0 & X86_XSTATE_ALL_MASK))
     {
-    case I386_XSTATE_MPX_MASK:
+    case X86_XSTATE_MPX_AVX512_MASK:
+    case X86_XSTATE_AVX512_MASK:
+      return tdesc_i386_avx512_linux;
+    case X86_XSTATE_MPX_MASK:
       return tdesc_i386_mpx_linux;
-    case I386_XSTATE_AVX_MASK:
+    case X86_XSTATE_AVX_MPX_MASK:
+      return tdesc_i386_avx_mpx_linux;
+    case X86_XSTATE_AVX_MASK:
       return tdesc_i386_avx_linux;
-    case I386_XSTATE_SSE_MASK:
+    case X86_XSTATE_SSE_MASK:
       return tdesc_i386_linux;
-    case I386_XSTATE_X87_MASK:
+    case X86_XSTATE_X87_MASK:
       return tdesc_i386_mmx_linux;
     default:
       break;
@@ -664,6 +714,63 @@ i386_linux_core_read_description (struct gdbarch *gdbarch,
     return tdesc_i386_linux;
   else
     return tdesc_i386_mmx_linux;
+}
+
+/* Similar to i386_supply_fpregset, but use XSAVE extended state.  */
+
+static void
+i386_linux_supply_xstateregset (const struct regset *regset,
+				struct regcache *regcache, int regnum,
+				const void *xstateregs, size_t len)
+{
+  i387_supply_xsave (regcache, regnum, xstateregs);
+}
+
+struct type *
+x86_linux_get_siginfo_type (struct gdbarch *gdbarch)
+{
+  return linux_get_siginfo_type_with_fields (gdbarch, LINUX_SIGINFO_FIELD_ADDR_BND);
+}
+
+/* Similar to i386_collect_fpregset, but use XSAVE extended state.  */
+
+static void
+i386_linux_collect_xstateregset (const struct regset *regset,
+				 const struct regcache *regcache,
+				 int regnum, void *xstateregs, size_t len)
+{
+  i387_collect_xsave (regcache, regnum, xstateregs, 1);
+}
+
+/* Register set definitions.  */
+
+static const struct regset i386_linux_xstateregset =
+  {
+    NULL,
+    i386_linux_supply_xstateregset,
+    i386_linux_collect_xstateregset
+  };
+
+/* Iterate over core file register note sections.  */
+
+static void
+i386_linux_iterate_over_regset_sections (struct gdbarch *gdbarch,
+					 iterate_over_regset_sections_cb *cb,
+					 void *cb_data,
+					 const struct regcache *regcache)
+{
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+
+  cb (".reg", 68, &i386_gregset, NULL, cb_data);
+
+  if (tdep->xcr0 & X86_XSTATE_AVX)
+    cb (".reg-xstate", X86_XSTATE_SIZE (tdep->xcr0),
+	&i386_linux_xstateregset, "XSAVE extended state", cb_data);
+  else if (tdep->xcr0 & X86_XSTATE_SSE)
+    cb (".reg-xfp", 512, &i386_fpregset, "extended floating-point",
+	cb_data);
+  else
+    cb (".reg2", 108, &i386_fpregset, NULL, cb_data);
 }
 
 /* Linux kernel shows PC value after the 'int $0x80' instruction even if
@@ -714,7 +821,8 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
   const struct target_desc *tdesc = info.target_desc;
-  struct tdesc_arch_data *tdesc_data = (void *) info.tdep_info;
+  struct tdesc_arch_data *tdesc_data
+    = (struct tdesc_arch_data *) info.tdep_info;
   const struct tdesc_feature *feature;
   int valid_p;
 
@@ -774,8 +882,8 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   i386_linux_record_tdep.size_flock = 16;
   i386_linux_record_tdep.size_oldold_utsname = 45;
   i386_linux_record_tdep.size_ustat = 20;
-  i386_linux_record_tdep.size_old_sigaction = 140;
-  i386_linux_record_tdep.size_old_sigset_t = 128;
+  i386_linux_record_tdep.size_old_sigaction = 16;
+  i386_linux_record_tdep.size_old_sigset_t = 4;
   i386_linux_record_tdep.size_rlimit = 8;
   i386_linux_record_tdep.size_rusage = 72;
   i386_linux_record_tdep.size_timeval = 8;
@@ -783,8 +891,7 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   i386_linux_record_tdep.size_old_gid_t = 2;
   i386_linux_record_tdep.size_old_uid_t = 2;
   i386_linux_record_tdep.size_fd_set = 128;
-  i386_linux_record_tdep.size_dirent = 268;
-  i386_linux_record_tdep.size_dirent64 = 276;
+  i386_linux_record_tdep.size_old_dirent = 268;
   i386_linux_record_tdep.size_statfs = 64;
   i386_linux_record_tdep.size_statfs64 = 84;
   i386_linux_record_tdep.size_sockaddr = 16;
@@ -811,15 +918,15 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   i386_linux_record_tdep.size_NFS_FHSIZE = 32;
   i386_linux_record_tdep.size_knfsd_fh = 132;
   i386_linux_record_tdep.size_TASK_COMM_LEN = 16;
-  i386_linux_record_tdep.size_sigaction = 140;
+  i386_linux_record_tdep.size_sigaction = 20;
   i386_linux_record_tdep.size_sigset_t = 8;
   i386_linux_record_tdep.size_siginfo_t = 128;
   i386_linux_record_tdep.size_cap_user_data_t = 12;
   i386_linux_record_tdep.size_stack_t = 12;
   i386_linux_record_tdep.size_off_t = i386_linux_record_tdep.size_long;
   i386_linux_record_tdep.size_stat64 = 96;
-  i386_linux_record_tdep.size_gid_t = 2;
-  i386_linux_record_tdep.size_uid_t = 2;
+  i386_linux_record_tdep.size_gid_t = 4;
+  i386_linux_record_tdep.size_uid_t = 4;
   i386_linux_record_tdep.size_PAGE_SIZE = 4096;
   i386_linux_record_tdep.size_flock64 = 24;
   i386_linux_record_tdep.size_user_desc = 16;
@@ -829,7 +936,6 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   i386_linux_record_tdep.size_itimerspec
     = i386_linux_record_tdep.size_timespec * 2;
   i386_linux_record_tdep.size_mq_attr = 32;
-  i386_linux_record_tdep.size_siginfo = 128;
   i386_linux_record_tdep.size_termios = 36;
   i386_linux_record_tdep.size_termios2 = 44;
   i386_linux_record_tdep.size_pid_t = 4;
@@ -839,6 +945,7 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   i386_linux_record_tdep.size_hayes_esp_config = 12;
   i386_linux_record_tdep.size_size_t = 4;
   i386_linux_record_tdep.size_iovec = 8;
+  i386_linux_record_tdep.size_time_t = 4;
 
   /* These values are the second argument of system call "sys_ioctl".
      They are obtained from Linux Kernel source.  */
@@ -944,14 +1051,9 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   set_gdbarch_fetch_tls_load_module_address (gdbarch,
                                              svr4_fetch_objfile_link_map);
 
-  /* Install supported register note sections.  */
-  if (tdesc_find_feature (tdesc, "org.gnu.gdb.i386.avx"))
-    set_gdbarch_core_regset_sections (gdbarch, i386_linux_avx_regset_sections);
-  else if (tdesc_find_feature (tdesc, "org.gnu.gdb.i386.sse"))
-    set_gdbarch_core_regset_sections (gdbarch, i386_linux_sse_regset_sections);
-  else
-    set_gdbarch_core_regset_sections (gdbarch, i386_linux_regset_sections);
-
+  /* Core file support.  */
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, i386_linux_iterate_over_regset_sections);
   set_gdbarch_core_read_description (gdbarch,
 				     i386_linux_core_read_description);
 
@@ -962,14 +1064,16 @@ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
   set_gdbarch_displaced_step_free_closure (gdbarch,
                                            simple_displaced_step_free_closure);
   set_gdbarch_displaced_step_location (gdbarch,
-                                       displaced_step_at_entry_point);
+                                       linux_displaced_step_location);
 
   /* Functions for 'catch syscall'.  */
-  set_xml_syscall_file_name (XML_SYSCALL_FILENAME_I386);
+  set_xml_syscall_file_name (gdbarch, XML_SYSCALL_FILENAME_I386);
   set_gdbarch_get_syscall_number (gdbarch,
                                   i386_linux_get_syscall_number);
 
-  set_gdbarch_get_siginfo_type (gdbarch, linux_get_siginfo_type);
+  set_gdbarch_get_siginfo_type (gdbarch, x86_linux_get_siginfo_type);
+  set_gdbarch_handle_segmentation_fault (gdbarch,
+					 i386_linux_handle_segmentation_fault);
 }
 
 /* Provide a prototype to silence -Wmissing-prototypes.  */
@@ -986,4 +1090,6 @@ _initialize_i386_linux_tdep (void)
   initialize_tdesc_i386_mmx_linux ();
   initialize_tdesc_i386_avx_linux ();
   initialize_tdesc_i386_mpx_linux ();
+  initialize_tdesc_i386_avx_mpx_linux ();
+  initialize_tdesc_i386_avx512_linux ();
 }

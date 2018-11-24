@@ -1,5 +1,5 @@
 /* C preprocessor macro expansion commands for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
    Contributed by Red Hat, Inc.
 
    This file is part of GDB.
@@ -25,7 +25,6 @@
 #include "cli/cli-utils.h"
 #include "command.h"
 #include "gdbcmd.h"
-#include <string.h>
 #include "linespec.h"
 
 
@@ -38,7 +37,7 @@ macro_command (char *arg, int from_tty)
 {
   printf_unfiltered
     ("\"macro\" must be followed by the name of a macro command.\n");
-  help_list (macrolist, "macro ", -1, gdb_stdout);
+  help_list (macrolist, "macro ", all_commands, gdb_stdout);
 }
 
 
@@ -159,32 +158,32 @@ print_macro_definition (const char *name,
 			struct macro_source_file *file,
 			int line)
 {
-      fprintf_filtered (gdb_stdout, "Defined at ");
-      show_pp_source_pos (gdb_stdout, file, line);
+  fprintf_filtered (gdb_stdout, "Defined at ");
+  show_pp_source_pos (gdb_stdout, file, line);
 
-      if (line != 0)
-	fprintf_filtered (gdb_stdout, "#define %s", name);
-      else
-	fprintf_filtered (gdb_stdout, "-D%s", name);
+  if (line != 0)
+    fprintf_filtered (gdb_stdout, "#define %s", name);
+  else
+    fprintf_filtered (gdb_stdout, "-D%s", name);
 
-      if (d->kind == macro_function_like)
-        {
-          int i;
+  if (d->kind == macro_function_like)
+    {
+      int i;
 
-          fputs_filtered ("(", gdb_stdout);
-          for (i = 0; i < d->argc; i++)
-            {
-              fputs_filtered (d->argv[i], gdb_stdout);
-              if (i + 1 < d->argc)
-                fputs_filtered (", ", gdb_stdout);
-            }
-          fputs_filtered (")", gdb_stdout);
-        }
+      fputs_filtered ("(", gdb_stdout);
+      for (i = 0; i < d->argc; i++)
+	{
+	  fputs_filtered (d->argv[i], gdb_stdout);
+	  if (i + 1 < d->argc)
+	    fputs_filtered (", ", gdb_stdout);
+	}
+      fputs_filtered (")", gdb_stdout);
+    }
 
-      if (line != 0)
-	fprintf_filtered (gdb_stdout, " %s\n", d->replacement);
-      else
-	fprintf_filtered (gdb_stdout, "=%s\n", d->replacement);
+  if (line != 0)
+    fprintf_filtered (gdb_stdout, " %s\n", d->replacement);
+  else
+    fprintf_filtered (gdb_stdout, "=%s\n", d->replacement);
 }
 
 /* A callback function for usage with macro_for_each and friends.
@@ -197,7 +196,7 @@ print_macro_callback (const char *name, const struct macro_definition *macro,
 		   struct macro_source_file *source, int line,
 		   void *user_data)
 {
-  if (! user_data || strcmp (user_data, name) == 0)
+  if (! user_data || strcmp ((const char *) user_data, name) == 0)
     print_macro_definition (name, macro, source, line);
 }
 
@@ -326,7 +325,7 @@ extract_identifier (char **expp, int is_parameter)
   char *p = *expp;
   unsigned int len;
 
-  if (is_parameter && !strncmp (p, "...", 3))
+  if (is_parameter && startswith (p, "..."))
     {
       /* Ok.  */
     }
@@ -340,7 +339,7 @@ extract_identifier (char **expp, int is_parameter)
 	;
     }
 
-  if (is_parameter && !strncmp (p, "...", 3))      
+  if (is_parameter && startswith (p, "..."))      
     p += 3;
 
   len = p - *expp;
@@ -388,7 +387,7 @@ macro_define_command (char *exp, int from_tty)
     {
       /* Function-like macro.  */
       int alloced = 5;
-      char **argv = (char **) xmalloc (alloced * sizeof (char *));
+      char **argv = XNEWVEC (char *, alloced);
 
       new_macro.kind = macro_function_like;
       new_macro.argc = 0;
@@ -523,21 +522,18 @@ expression work together to yield a pre-processed expression."),
 	   &macrolist);
   add_alias_cmd ("exp1", "expand-once", no_class, 1, &macrolist);
 
-  add_cmd ("macro", no_class, info_macro_command,
-	   _("Show the definition of MACRO, and it's source location.\n\
+  add_info ("macro", info_macro_command,
+	    _("Show the definition of MACRO, and it's source location.\n\
 Usage: info macro [-a|-all] [--] MACRO\n\
 Options: \n\
   -a, --all    Output all definitions of MACRO in the current compilation\
  unit.\n\
-  --           Specify the end of arguments and the beginning of the MACRO."),
+  --           Specify the end of arguments and the beginning of the MACRO."));
 
-	   &infolist);
-
-  add_cmd ("macros", no_class, info_macros_command,
-	   _("Show the definitions of all macros at LINESPEC, or the current \
+  add_info ("macros", info_macros_command,
+	    _("Show the definitions of all macros at LINESPEC, or the current \
 source location.\n\
-Usage: info macros [LINESPEC]"),
-	   &infolist);
+Usage: info macros [LINESPEC]"));
 
   add_cmd ("define", no_class, macro_define_command, _("\
 Define a new C/C++ preprocessor macro.\n\

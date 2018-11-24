@@ -1,6 +1,6 @@
 /* Process record and replay target for GDB, the GNU debugger.
 
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,9 +20,10 @@
 #ifndef _RECORD_H_
 #define _RECORD_H_
 
-struct cmd_list_element;
+#include "target/waitstatus.h" /* For enum target_stop_reason.  */
+#include "common/enum-flags.h"
 
-#define RECORD_IS_USED	(current_target.to_stratum == record_stratum)
+struct cmd_list_element;
 
 extern unsigned int record_debug;
 
@@ -32,6 +33,10 @@ extern struct cmd_list_element *set_record_cmdlist;
 extern struct cmd_list_element *show_record_cmdlist;
 extern struct cmd_list_element *info_record_cmdlist;
 
+/* Unwinders for some record targets.  */
+extern const struct frame_unwind record_btrace_frame_unwind;
+extern const struct frame_unwind record_btrace_tailcall_frame_unwind;
+
 /* A list of flags specifying what record target methods should print.  */
 enum record_print_flag
 {
@@ -40,7 +45,22 @@ enum record_print_flag
 
   /* Print the instruction number range (if applicable).  */
   RECORD_PRINT_INSN_RANGE = (1 << 1),
+
+  /* Indent based on call stack depth (if applicable).  */
+  RECORD_PRINT_INDENT_CALLS = (1 << 2)
 };
+DEF_ENUM_FLAGS_TYPE (enum record_print_flag, record_print_flags);
+
+/* Determined whether the target is stopped at a software or hardware
+   breakpoint, based on PC and the breakpoint tables.  The breakpoint
+   type is translated to the appropriate target_stop_reason and
+   written to REASON.  Returns true if stopped at a breakpoint, false
+   otherwise.  */
+
+extern int
+  record_check_stopped_by_breakpoint (struct address_space *aspace,
+				      CORE_ADDR pc,
+				      enum target_stop_reason *reason);
 
 /* Wrapper for target_read_memory that prints a debug message if
    reading memory fails.  */
@@ -48,11 +68,11 @@ extern int record_read_memory (struct gdbarch *gdbarch,
 			       CORE_ADDR memaddr, gdb_byte *myaddr,
 			       ssize_t len);
 
-/* The "record goto" command.  */
-extern void cmd_record_goto (char *arg, int from_tty);
+/* A wrapper for target_goto_record that parses ARG as a number.  */
+extern void record_goto (const char *arg);
 
 /* The default "to_disconnect" target method for record targets.  */
-extern void record_disconnect (struct target_ops *, char *, int);
+extern void record_disconnect (struct target_ops *, const char *, int);
 
 /* The default "to_detach" target method for record targets.  */
 extern void record_detach (struct target_ops *, const char *, int);
@@ -62,5 +82,13 @@ extern void record_mourn_inferior (struct target_ops *);
 
 /* The default "to_kill" target method for record targets.  */
 extern void record_kill (struct target_ops *);
+
+/* Find the record_stratum target in the current target stack.
+   Returns NULL if none is found.  */
+extern struct target_ops *find_record_target (void);
+
+/* This is to be called by record_stratum targets' open routine before
+   it does anything.  */
+extern void record_preopen (void);
 
 #endif /* _RECORD_H_ */

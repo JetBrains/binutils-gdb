@@ -1,6 +1,6 @@
 // dwp.cc -- DWARF packaging utility
 
-// Copyright 2012 Free Software Foundation, Inc.
+// Copyright (C) 2012-2016 Free Software Foundation, Inc.
 // Written by Cary Coutant <ccoutant@google.com>.
 
 // This file is part of dwp, the DWARF packaging utility.
@@ -272,7 +272,7 @@ class Sized_relobj_dwo : public Sized_relobj<size, big_endian>
 
   // Get the name of a section.
   std::string
-  do_section_name(unsigned int shndx)
+  do_section_name(unsigned int shndx) const
   { return this->elf_file_.section_name(shndx); }
 
   // Get the size of a section.
@@ -283,14 +283,6 @@ class Sized_relobj_dwo : public Sized_relobj<size, big_endian>
   // Return a view of the contents of a section.
   const unsigned char*
   do_section_contents(unsigned int, section_size_type*, bool);
-
-  // Return a view of the uncompressed contents of a section.  Set *PLEN
-  // to the size.  Set *IS_NEW to true if the contents need to be deleted
-  // by the caller.
-  const unsigned char*
-  do_decompressed_section_contents(unsigned int shndx,
-				   section_size_type* plen,
-				   bool* is_new);
 
   // The following virtual functions are abstract in the base classes,
   // but are not used here.
@@ -781,9 +773,36 @@ template <int size, bool big_endian>
 void
 Sized_relobj_dwo<size, big_endian>::setup()
 {
+  const int shdr_size = elfcpp::Elf_sizes<size>::shdr_size;
+  const off_t shoff = this->elf_file_.shoff();
   const unsigned int shnum = this->elf_file_.shnum();
+
   this->set_shnum(shnum);
   this->section_offsets().resize(shnum);
+
+  // Read the section headers.
+  const unsigned char* const pshdrs = this->get_view(shoff, shnum * shdr_size,
+						     true, false);
+
+  // Read the section names.
+  const unsigned char* pshdrnames =
+      pshdrs + this->elf_file_.shstrndx() * shdr_size;
+  typename elfcpp::Shdr<size, big_endian> shdrnames(pshdrnames);
+  if (shdrnames.get_sh_type() != elfcpp::SHT_STRTAB)
+    this->error(_("section name section has wrong type: %u"),
+		static_cast<unsigned int>(shdrnames.get_sh_type()));
+  section_size_type section_names_size =
+      convert_to_section_size_type(shdrnames.get_sh_size());
+  const unsigned char* namesu = this->get_view(shdrnames.get_sh_offset(),
+					       section_names_size, false,
+					       false);
+  const char* names = reinterpret_cast<const char*>(namesu);
+
+  Compressed_section_map* compressed_sections =
+      build_compressed_section_map<size, big_endian>(
+	  pshdrs, this->shnum(), names, section_names_size, this, true);
+  if (compressed_sections != NULL && !compressed_sections->empty())
+    this->set_compressed_sections(compressed_sections);
 }
 
 // Return a view of the contents of a section.
@@ -803,43 +822,6 @@ Sized_relobj_dwo<size, big_endian>::do_section_contents(
       return empty;
     }
   return this->get_view(loc.file_offset, *plen, true, cache);
-}
-
-// Return a view of the uncompressed contents of a section.  Set *PLEN
-// to the size.  Set *IS_NEW to true if the contents need to be deleted
-// by the caller.
-
-template <int size, bool big_endian>
-const unsigned char*
-Sized_relobj_dwo<size, big_endian>::do_decompressed_section_contents(
-    unsigned int shndx,
-    section_size_type* plen,
-    bool* is_new)
-{
-  section_size_type buffer_size;
-  const unsigned char* buffer = this->do_section_contents(shndx, &buffer_size,
-							  false);
-
-  std::string sect_name = this->do_section_name(shndx);
-  if (!is_prefix_of(".zdebug_", sect_name.c_str()))
-    {
-      *plen = buffer_size;
-      *is_new = false;
-      return buffer;
-    }
-
-  section_size_type uncompressed_size = get_uncompressed_size(buffer,
-							      buffer_size);
-  unsigned char* uncompressed_data = new unsigned char[uncompressed_size];
-  if (!decompress_input_section(buffer,
-				buffer_size,
-				uncompressed_data,
-				uncompressed_size))
-    this->error(_("could not decompress section %s"),
-		this->section_name(shndx).c_str());
-  *plen = uncompressed_size;
-  *is_new = true;
-  return uncompressed_data;
 }
 
 // Class Dwo_file.
@@ -970,10 +952,13 @@ Dwo_file::read(Dwp_output_file* output_file)
 	this->read_unit_index(debug_cu_index, debug_shndx, output_file, false);
       if (debug_tu_index > 0)
         {
-	  if (debug_types.size() != 1)
-	    gold_fatal(_("%s: .dwp file must have exactly one "
+	  if (debug_types.size() > 1)
+	    gold_fatal(_("%s: .dwp file must have no more than one "
 			 ".debug_types.dwo section"), this->name_);
-	  debug_shndx[elfcpp::DW_SECT_TYPES] = debug_types[0];
+          if (debug_types.size() == 1)
+            debug_shndx[elfcpp::DW_SECT_TYPES] = debug_types[0];
+          else
+            debug_shndx[elfcpp::DW_SECT_TYPES] = 0;
 	  this->read_unit_index(debug_tu_index, debug_shndx, output_file, true);
 	}
       return;
@@ -1154,7 +1139,7 @@ Dwo_file::sized_read_unit_index(unsigned int shndx,
 			       : elfcpp::DW_SECT_INFO);
   unsigned int info_shndx = debug_shndx[info_sect];
 
-  gold_assert(shndx > 0 && info_shndx > 0);
+  gold_assert(shndx > 0);
 
   section_size_type index_len;
   bool index_is_new;
@@ -1179,6 +1164,8 @@ Dwo_file::sized_read_unit_index(unsigned int shndx,
 						      + 2 * sizeof(uint32_t));
   if (ncols == 0 || nused == 0)
     return;
+
+  gold_assert(info_shndx > 0);
 
   unsigned int nslots =
       elfcpp::Swap_unaligned<32, big_endian>::readval(contents
@@ -2347,7 +2334,7 @@ print_version()
 {
   // This output is intended to follow the GNU standards.
   printf("GNU dwp %s\n", BFD_VERSION_STRING);
-  printf(_("Copyright 2012 Free Software Foundation, Inc.\n"));
+  printf(_("Copyright (C) 2016 Free Software Foundation, Inc.\n"));
   printf(_("\
 This program is free software; you may redistribute it under the terms of\n\
 the GNU General Public License version 3 or (at your option) any later version.\n\

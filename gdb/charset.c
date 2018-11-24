@@ -1,6 +1,6 @@
 /* Character set conversion support for GDB.
 
-   Copyright (C) 2001-2013 Free Software Foundation, Inc.
+   Copyright (C) 2001-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,7 +20,6 @@
 #include "defs.h"
 #include "charset.h"
 #include "gdbcmd.h"
-#include "gdb_assert.h"
 #include "gdb_obstack.h"
 #include "gdb_wait.h"
 #include "charset-list.h"
@@ -28,9 +27,6 @@
 #include "environ.h"
 #include "arch-utils.h"
 #include "gdb_vecs.h"
-
-#include <stddef.h>
-#include <string.h>
 #include <ctype.h>
 
 #ifdef USE_WIN32API
@@ -81,9 +77,13 @@
    arrange for there to be a single available character set.  */
 
 #undef GDB_DEFAULT_HOST_CHARSET
-#define GDB_DEFAULT_HOST_CHARSET "ISO-8859-1"
-#define GDB_DEFAULT_TARGET_CHARSET "ISO-8859-1"
-#define GDB_DEFAULT_TARGET_WIDE_CHARSET "ISO-8859-1"
+#ifdef USE_WIN32API
+# define GDB_DEFAULT_HOST_CHARSET "CP1252"
+#else
+# define GDB_DEFAULT_HOST_CHARSET "ISO-8859-1"
+#endif
+#define GDB_DEFAULT_TARGET_CHARSET GDB_DEFAULT_HOST_CHARSET 
+#define GDB_DEFAULT_TARGET_WIDE_CHARSET "UTF-32"
 #undef DEFAULT_CHARSET_NAMES
 #define DEFAULT_CHARSET_NAMES GDB_DEFAULT_HOST_CHARSET ,
 
@@ -99,29 +99,27 @@
 #undef ICONV_CONST
 #define ICONV_CONST const
 
-/* Some systems don't have EILSEQ, so we define it here, but not as
-   EINVAL, because callers of `iconv' want to distinguish EINVAL and
-   EILSEQ.  This is what iconv.h from libiconv does as well.  Note
-   that wchar.h may also define EILSEQ, so this needs to be after we
-   include wchar.h, which happens in defs.h through gdb_wchar.h.  */
-#ifndef EILSEQ
-#define EILSEQ ENOENT
-#endif
+/* We allow conversions from UTF-32, wchar_t, and the host charset.
+   We allow conversions to wchar_t and the host charset.
+   Return 1 if we are converting from UTF-32BE, 2 if from UTF32-LE,
+   0 otherwise.  This is used as a flag in calls to iconv.  */
 
 static iconv_t
 phony_iconv_open (const char *to, const char *from)
 {
-  /* We allow conversions from UTF-32BE, wchar_t, and the host charset.
-     We allow conversions to wchar_t and the host charset.  */
-  if (strcmp (from, "UTF-32BE") && strcmp (from, "wchar_t")
-      && strcmp (from, GDB_DEFAULT_HOST_CHARSET))
-    return -1;
   if (strcmp (to, "wchar_t") && strcmp (to, GDB_DEFAULT_HOST_CHARSET))
     return -1;
 
-  /* Return 1 if we are converting from UTF-32BE, 0 otherwise.  This is
-     used as a flag in calls to iconv.  */
-  return !strcmp (from, "UTF-32BE");
+  if (!strcmp (from, "UTF-32BE") || !strcmp (from, "UTF-32"))
+    return 1;
+
+  if (!strcmp (from, "UTF-32LE"))
+    return 2;
+
+  if (strcmp (from, "wchar_t") && strcmp (from, GDB_DEFAULT_HOST_CHARSET))
+    return -1;
+
+  return 0;
 }
 
 static int
@@ -136,31 +134,33 @@ phony_iconv (iconv_t utf_flag, const char **inbuf, size_t *inbytesleft,
 {
   if (utf_flag)
     {
+      enum bfd_endian endian
+	= utf_flag == 1 ? BFD_ENDIAN_BIG : BFD_ENDIAN_LITTLE;
       while (*inbytesleft >= 4)
 	{
-	  size_t j;
-	  unsigned long c = 0;
-
-	  for (j = 0; j < 4; ++j)
-	    {
-	      c <<= 8;
-	      c += (*inbuf)[j] & 0xff;
-	    }
+	  unsigned long c
+	    = extract_unsigned_integer ((const gdb_byte *)*inbuf, 4, endian);
 
 	  if (c >= 256)
 	    {
 	      errno = EILSEQ;
 	      return -1;
 	    }
+	  if (*outbytesleft < 1)
+	    {
+	      errno = E2BIG;
+	      return -1;
+	    }
 	  **outbuf = c & 0xff;
 	  ++*outbuf;
 	  --*outbytesleft;
 
-	  ++*inbuf;
+	  *inbuf += 4;
 	  *inbytesleft -= 4;
 	}
-      if (*inbytesleft < 4)
+      if (*inbytesleft)
 	{
+	  /* Partial sequence on input.  */
 	  errno = EINVAL;
 	  return -1;
 	}
@@ -178,12 +178,11 @@ phony_iconv (iconv_t utf_flag, const char **inbuf, size_t *inbytesleft,
       *outbuf += amt;
       *inbytesleft -= amt;
       *outbytesleft -= amt;
-    }
-
-  if (*inbytesleft)
-    {
-      errno = E2BIG;
-      return -1;
+      if (*inbytesleft)
+	{
+	  errno = E2BIG;
+	  return -1;
+	}
     }
 
   /* The number of non-reversible conversions -- but they were all
@@ -191,8 +190,28 @@ phony_iconv (iconv_t utf_flag, const char **inbuf, size_t *inbytesleft,
   return 0;
 }
 
-#endif
+#else /* PHONY_ICONV */
 
+/* On systems that don't have EILSEQ, GNU iconv's iconv.h defines it
+   to ENOENT, while gnulib defines it to a different value.  Always
+   map ENOENT to gnulib's EILSEQ, leaving callers agnostic.  */
+
+static size_t
+gdb_iconv (iconv_t utf_flag, ICONV_CONST char **inbuf, size_t *inbytesleft,
+	   char **outbuf, size_t *outbytesleft)
+{
+  size_t ret;
+
+  ret = iconv (utf_flag, inbuf, inbytesleft, outbuf, outbytesleft);
+  if (errno == ENOENT)
+    errno = EILSEQ;
+  return ret;
+}
+
+#undef iconv
+#define iconv gdb_iconv
+
+#endif /* PHONY_ICONV */
 
 
 /* The global lists of character sets and translations.  */
@@ -283,6 +302,11 @@ set_be_le_names (struct gdbarch *gdbarch)
     return;
   be_le_arch = gdbarch;
 
+#ifdef PHONY_ICONV
+  /* Match the wide charset names recognized by phony_iconv_open.  */
+  target_wide_charset_le_name = "UTF-32LE";
+  target_wide_charset_be_name = "UTF-32BE";
+#else
   target_wide_charset_le_name = NULL;
   target_wide_charset_be_name = NULL;
 
@@ -306,6 +330,7 @@ set_be_le_names (struct gdbarch *gdbarch)
 	    target_wide_charset_le_name = charset_enum[i];
 	}
     }
+# endif  /* PHONY_ICONV */
 }
 
 /* 'Set charset', 'set host-charset', 'set target-charset', 'set
@@ -461,7 +486,7 @@ host_hex_value (char c)
 static void
 cleanup_iconv (void *p)
 {
-  iconv_t *descp = p;
+  iconv_t *descp = (iconv_t *) p;
   iconv_close (*descp);
 }
 
@@ -503,14 +528,14 @@ convert_between_encodings (const char *from, const char *to,
       old_size = obstack_object_size (output);
       obstack_blank (output, space_request);
 
-      outp = obstack_base (output) + old_size;
+      outp = (char *) obstack_base (output) + old_size;
       outleft = space_request;
 
       r = iconv (desc, &inp, &inleft, &outp, &outleft);
 
       /* Now make sure that the object on the obstack only includes
 	 bytes we have converted.  */
-      obstack_blank (output, - (int) outleft);
+      obstack_blank_fast (output, -outleft);
 
       if (r == (size_t) -1)
 	{
@@ -610,7 +635,7 @@ make_wchar_iterator (const gdb_byte *input, size_t bytes,
 static void
 do_cleanup_iterator (void *p)
 {
-  struct wchar_iterator *iter = p;
+  struct wchar_iterator *iter = (struct wchar_iterator *) p;
 
   iconv_close (iter->desc);
   xfree (iter->out);
@@ -680,8 +705,7 @@ wchar_iterate (struct wchar_iterator *iter,
 	      if (out_request > iter->out_size)
 		{
 		  iter->out_size = out_request;
-		  iter->out = xrealloc (iter->out,
-					out_request * sizeof (gdb_wchar_t));
+		  iter->out = XRESIZEVEC (gdb_wchar_t, iter->out, out_request);
 		}
 	      continue;
 
@@ -954,7 +978,7 @@ extern char your_gdb_wchar_t_is_bogus[(sizeof (gdb_wchar_t) == 2
 				       || sizeof (gdb_wchar_t) == 4)
 				      ? 1 : -1];
 
-/* intermediate_encoding returns the charset unsed internally by
+/* intermediate_encoding returns the charset used internally by
    GDB to convert between target and host encodings. As the test above
    compiled, sizeof (gdb_wchar_t) is either 2 or 4 bytes.
    UTF-16/32 is tested first, UCS-2/4 is tested as a second option,

@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2013 Free Software Foundation, Inc.
+# Copyright (C) 2008-2016 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -41,7 +41,7 @@ if { [gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile} executable $exec_opt
 
 # Start with a fresh gdb.
 clean_restart $testfile
-gdb_load_shlibs ${library}
+gdb_load_shlib ${library}
 
 # Skip all tests if Python scripting is not enabled.
 if { [skip_python_tests] } { continue }

@@ -1,7 +1,6 @@
 /* BFD library -- caching of file descriptors.
 
-   Copyright 1990, 1991, 1992, 1993, 1994, 1996, 2000, 2001, 2002,
-   2003, 2004, 2005, 2007, 2008, 2009 Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    Hacked by Steve Chamberlain of Cygnus Support (steve@cygnus.com).
 
@@ -79,18 +78,36 @@ bfd_cache_max_open (void)
   if (max_open_files == 0)
     {
       int max;
+#if defined(__sun) && !defined(__sparcv9) && !defined(__x86_64__)
+      /* PR ld/19260: 32-bit Solaris has very inelegant handling of the 255
+	 file descriptor limit.  The problem is that setrlimit(2) can raise
+	 RLIMIT_NOFILE to a value that is not supported by libc, resulting
+         in "Too many open files" errors.  This can happen here even though
+	 max_open_files is set to rlim.rlim_cur / 8.  For example, if
+	 a parent process has set rlim.rlim_cur to 65536, then max_open_files
+	 will be computed as 8192.
+
+	 This check essentially reverts to the behavior from binutils 2.23.1
+         for 32-bit Solaris only.  (It is hoped that the 32-bit libc
+	 limitation will be removed soon).  64-bit Solaris libc does not have
+	 this limitation.  */
+      max = 16;
+#else
 #ifdef HAVE_GETRLIMIT
       struct rlimit rlim;
+
       if (getrlimit (RLIMIT_NOFILE, &rlim) == 0
-	  && rlim.rlim_cur != RLIM_INFINITY)
+	  && rlim.rlim_cur != (rlim_t) RLIM_INFINITY)
 	max = rlim.rlim_cur / 8;
       else
-#endif /* HAVE_GETRLIMIT */
+#endif
 #ifdef _SC_OPEN_MAX
 	max = sysconf (_SC_OPEN_MAX) / 8;
 #else
-	max = 10;
-#endif /* _SC_OPEN_MAX */
+        max = 10;
+#endif
+#endif /* not 32-bit Solaris */
+
       max_open_files = max < 10 ? 10 : max;
     }
 
@@ -311,7 +328,7 @@ cache_bread_1 (struct bfd *abfd, void *buf, file_ptr nbytes)
   if (nread == (file_ptr)-1)
     {
       bfd_set_error (bfd_error_system_call);
-      return -1;
+      return nread;
     }
 #else
   nread = fread (buf, 1, nbytes, f);
@@ -321,7 +338,7 @@ cache_bread_1 (struct bfd *abfd, void *buf, file_ptr nbytes)
   if (nread < nbytes && ferror (f))
     {
       bfd_set_error (bfd_error_system_call);
-      return -1;
+      return nread;
     }
 #endif
   if (nread < nbytes)
@@ -549,7 +566,7 @@ RETURNS
 */
 
 bfd_boolean
-bfd_cache_close_all ()
+bfd_cache_close_all (void)
 {
   bfd_boolean ret = TRUE;
 

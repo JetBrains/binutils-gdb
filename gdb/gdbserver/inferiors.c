@@ -1,5 +1,5 @@
 /* Inferior process information for the remote server for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -18,8 +18,6 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#include <stdlib.h>
-
 #include "server.h"
 #include "gdbthread.h"
 #include "dll.h"
@@ -27,7 +25,7 @@
 struct inferior_list all_processes;
 struct inferior_list all_threads;
 
-struct thread_info *current_inferior;
+struct thread_info *current_thread;
 
 #define get_thread(inf) ((struct thread_info *)(inf))
 
@@ -59,6 +57,24 @@ for_each_inferior (struct inferior_list *list,
     }
 }
 
+/* Invoke ACTION for each inferior in LIST, passing DATA to ACTION.  */
+
+void
+for_each_inferior_with_data (struct inferior_list *list,
+			     void (*action) (struct inferior_list_entry *,
+					     void *),
+			     void *data)
+{
+  struct inferior_list_entry *cur = list->head, *next;
+
+  while (cur != NULL)
+    {
+      next = cur->next;
+      (*action) (cur, data);
+      cur = next;
+    }
+}
+
 void
 remove_inferior (struct inferior_list *list,
 		 struct inferior_list_entry *entry)
@@ -86,38 +102,23 @@ remove_inferior (struct inferior_list *list,
     list->tail = *cur;
 }
 
-void
+struct thread_info *
 add_thread (ptid_t thread_id, void *target_data)
 {
-  struct thread_info *new_thread = xmalloc (sizeof (*new_thread));
-
-  memset (new_thread, 0, sizeof (*new_thread));
+  struct thread_info *new_thread = XCNEW (struct thread_info);
 
   new_thread->entry.id = thread_id;
   new_thread->last_resume_kind = resume_continue;
   new_thread->last_status.kind = TARGET_WAITKIND_IGNORE;
 
-  add_inferior_to_list (&all_threads, & new_thread->entry);
+  add_inferior_to_list (&all_threads, &new_thread->entry);
 
-  if (current_inferior == NULL)
-    current_inferior = new_thread;
+  if (current_thread == NULL)
+    current_thread = new_thread;
 
   new_thread->target_data = target_data;
-}
 
-ptid_t
-thread_id_to_gdb_id (ptid_t thread_id)
-{
-  struct inferior_list_entry *inf = all_threads.head;
-
-  while (inf != NULL)
-    {
-      if (ptid_equal (inf->id, thread_id))
-	return thread_id;
-      inf = inf->next;
-    }
-
-  return null_ptid;
+  return new_thread;
 }
 
 ptid_t
@@ -126,20 +127,62 @@ thread_to_gdb_id (struct thread_info *thread)
   return thread->entry.id;
 }
 
+/* Wrapper around get_first_inferior to return a struct thread_info *.  */
+
+struct thread_info *
+get_first_thread (void)
+{
+  return (struct thread_info *) get_first_inferior (&all_threads);
+}
+
 struct thread_info *
 find_thread_ptid (ptid_t ptid)
 {
-  struct inferior_list_entry *inf = all_threads.head;
+  return (struct thread_info *) find_inferior_id (&all_threads, ptid);
+}
 
-  while (inf != NULL)
-    {
-      struct thread_info *thread = get_thread (inf);
-      if (ptid_equal (thread->entry.id, ptid))
-	return thread;
-      inf = inf->next;
-    }
+/* Predicate function for matching thread entry's pid to the given
+   pid value passed by address in ARGS.  */
 
-  return NULL;
+static int
+thread_pid_matches_callback (struct inferior_list_entry *entry, void *args)
+{
+  return (ptid_get_pid (entry->id) == *(pid_t *)args);
+}
+
+/* Find a thread associated with the given PROCESS, or NULL if no
+   such thread exists.  */
+
+static struct thread_info *
+find_thread_process (const struct process_info *const process)
+{
+  pid_t pid = ptid_get_pid (ptid_of (process));
+
+  return (struct thread_info *)
+    find_inferior (&all_threads, thread_pid_matches_callback, &pid);
+}
+
+/* Helper for find_any_thread_of_pid.  Returns true if a thread
+   matches a PID.  */
+
+static int
+thread_of_pid (struct inferior_list_entry *entry, void *pid_p)
+{
+  int pid = *(int *) pid_p;
+
+  return (ptid_get_pid (entry->id) == pid);
+}
+
+/* See gdbthread.h.  */
+
+struct thread_info *
+find_any_thread_of_pid (int pid)
+{
+  struct inferior_list_entry *entry;
+
+  entry = find_inferior (&all_threads, thread_of_pid, &pid);
+
+  return (struct thread_info *) entry;
 }
 
 ptid_t
@@ -164,8 +207,23 @@ remove_thread (struct thread_info *thread)
   if (thread->btrace != NULL)
     target_disable_btrace (thread->btrace);
 
+  discard_queued_stop_replies (ptid_of (thread));
   remove_inferior (&all_threads, (struct inferior_list_entry *) thread);
   free_one_thread (&thread->entry);
+  if (current_thread == thread)
+    current_thread = NULL;
+}
+
+/* Return a pointer to the first inferior in LIST, or NULL if there isn't one.
+   This is for cases where the caller needs a thread, but doesn't care
+   which one.  */
+
+struct inferior_list_entry *
+get_first_inferior (struct inferior_list *list)
+{
+  if (list->head != NULL)
+    return list->head;
+  return NULL;
 }
 
 /* Find the first inferior_list_entry E in LIST for which FUNC (E, ARG)
@@ -217,43 +275,55 @@ set_inferior_target_data (struct thread_info *inferior, void *data)
   inferior->target_data = data;
 }
 
-void *
+struct regcache *
 inferior_regcache_data (struct thread_info *inferior)
 {
   return inferior->regcache_data;
 }
 
 void
-set_inferior_regcache_data (struct thread_info *inferior, void *data)
+set_inferior_regcache_data (struct thread_info *inferior, struct regcache *data)
 {
   inferior->regcache_data = data;
 }
 
-#define clear_list(LIST) \
-  do { (LIST)->head = (LIST)->tail = NULL; } while (0)
+/* Return true if LIST has exactly one entry.  */
+
+int
+one_inferior_p (struct inferior_list *list)
+{
+  return list->head != NULL && list->head == list->tail;
+}
+
+/* Reset head,tail of LIST, assuming all entries have already been freed.  */
+
+void
+clear_inferior_list (struct inferior_list *list)
+{
+  list->head = NULL;
+  list->tail = NULL;
+}
 
 void
 clear_inferiors (void)
 {
   for_each_inferior (&all_threads, free_one_thread);
-  clear_list (&all_threads);
+  clear_inferior_list (&all_threads);
 
   clear_dlls ();
 
-  current_inferior = NULL;
+  current_thread = NULL;
 }
 
 struct process_info *
 add_process (int pid, int attached)
 {
-  struct process_info *process;
+  struct process_info *process = XCNEW (struct process_info);
 
-  process = xcalloc (1, sizeof (*process));
-
-  process->head.id = pid_to_ptid (pid);
+  process->entry.id = pid_to_ptid (pid);
   process->attached = attached;
 
-  add_inferior_to_list (&all_processes, &process->head);
+  add_inferior_to_list (&all_processes, &process->entry);
 
   return process;
 }
@@ -267,7 +337,9 @@ remove_process (struct process_info *process)
 {
   clear_symbol_cache (&process->symbol_cache);
   free_all_breakpoints (process);
-  remove_inferior (&all_processes, &process->head);
+  gdb_assert (find_thread_process (process) == NULL);
+  remove_inferior (&all_processes, &process->entry);
+  VEC_free (int, process->syscalls_to_catch);
   free (process);
 }
 
@@ -276,6 +348,14 @@ find_process_pid (int pid)
 {
   return (struct process_info *)
     find_inferior_id (&all_processes, pid_to_ptid (pid));
+}
+
+/* Wrapper around get_first_inferior to return a struct process_info *.  */
+
+struct process_info *
+get_first_process (void)
+{
+  return (struct process_info *) get_first_inferior (&all_processes);
 }
 
 /* Return non-zero if INF, a struct process_info, was started by us,
@@ -328,8 +408,6 @@ get_thread_process (struct thread_info *thread)
 struct process_info *
 current_process (void)
 {
-  if (current_inferior == NULL)
-    fatal ("Current inferior requested, but current_inferior is NULL\n");
-
-  return get_thread_process (current_inferior);
+  gdb_assert (current_thread != NULL);
+  return get_thread_process (current_thread);
 }

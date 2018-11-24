@@ -1,6 +1,5 @@
 /* BFD support for Sparc binaries under LynxOS.
-   Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1997, 1998, 2000,
-   2001, 2002, 2003, 2005, 2007, 2012 Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -23,7 +22,7 @@
 /* Do not "beautify" the CONCAT* macro args.  Traditional C will not
    remove whitespace added here, and thus will fail to concatenate
    the tokens.  */
-#define MY(OP) CONCAT2 (sparclynx_aout_,OP)
+#define MY(OP) CONCAT2 (sparc_aout_lynx_,OP)
 #define TARGETNAME "a.out-sparc-lynx"
 
 #include "sysdep.h"
@@ -121,8 +120,8 @@ NAME(lynx,set_arch_mach) (bfd *abfd, unsigned long machtype)
   bfd_set_arch_mach (abfd, arch, machine);
 }
 
-#define SET_ARCH_MACH(ABFD, EXEC) \
-  NAME(lynx,set_arch_mach) (ABFD, N_MACHTYPE (EXEC)); \
+#define SET_ARCH_MACH(ABFD, EXECP) \
+  NAME(lynx,set_arch_mach) (ABFD, N_MACHTYPE (EXECP)); \
   choose_reloc_size(ABFD);
 
 /* Determine the size of a relocation entry, based on the architecture.  */
@@ -158,27 +157,27 @@ NAME(aout,sparclynx_write_object_contents) (bfd *abfd)
       switch (bfd_get_mach (abfd))
 	{
 	case bfd_mach_m68010:
-	  N_SET_MACHTYPE (*execp, M_68010);
+	  N_SET_MACHTYPE (execp, M_68010);
 	  break;
 	default:
 	case bfd_mach_m68020:
-	  N_SET_MACHTYPE (*execp, M_68020);
+	  N_SET_MACHTYPE (execp, M_68020);
 	  break;
 	}
       break;
     case bfd_arch_sparc:
-      N_SET_MACHTYPE (*execp, M_SPARC);
+      N_SET_MACHTYPE (execp, M_SPARC);
       break;
     case bfd_arch_i386:
-      N_SET_MACHTYPE (*execp, M_386);
+      N_SET_MACHTYPE (execp, M_386);
       break;
     default:
-      N_SET_MACHTYPE (*execp, M_UNKNOWN);
+      N_SET_MACHTYPE (execp, M_UNKNOWN);
     }
 
   choose_reloc_size (abfd);
 
-  N_SET_FLAGS (*execp, aout_backend_info (abfd)->exec_hdr_flags);
+  N_SET_FLAGS (execp, aout_backend_info (abfd)->exec_hdr_flags);
 
   WRITE_HEADERS (abfd, execp);
 

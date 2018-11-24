@@ -1,6 +1,6 @@
 /* Go language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 2012-2013 Free Software Foundation, Inc.
+   Copyright (C) 2012-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -32,9 +32,7 @@
 */
 
 #include "defs.h"
-#include "gdb_assert.h"
 #include "gdb_obstack.h"
-#include <string.h>
 #include "block.h"
 #include "symtab.h"
 #include "language.h"
@@ -56,10 +54,10 @@ static const char GO_MAIN_MAIN[] = "main.main";
 const char *
 go_main_name (void)
 {
-  struct minimal_symbol *msym;
+  struct bound_minimal_symbol msym;
 
   msym = lookup_minimal_symbol (GO_MAIN_MAIN, NULL, NULL);
-  if (msym != NULL)
+  if (msym.minsym != NULL)
     return GO_MAIN_MAIN;
 
   /* No known entry procedure found, the main program is probably not Go.  */
@@ -79,8 +77,8 @@ gccgo_string_p (struct type *type)
       struct type *type0 = TYPE_FIELD_TYPE (type, 0);
       struct type *type1 = TYPE_FIELD_TYPE (type, 1);
 
-      CHECK_TYPEDEF (type0);
-      CHECK_TYPEDEF (type1);
+      type0 = check_typedef (type0);
+      type1 = check_typedef (type1);
 
       if (TYPE_CODE (type0) == TYPE_CODE_PTR
 	  && strcmp (TYPE_FIELD_NAME (type, 0), "__data") == 0
@@ -89,7 +87,7 @@ gccgo_string_p (struct type *type)
 	{
 	  struct type *target_type = TYPE_TARGET_TYPE (type0);
 
-	  CHECK_TYPEDEF (target_type);
+	  target_type = check_typedef (target_type);
 
 	  if (TYPE_CODE (target_type) == TYPE_CODE_INT
 	      && TYPE_LENGTH (target_type) == 1
@@ -121,7 +119,7 @@ sixg_string_p (struct type *type)
 enum go_type
 go_classify_struct_type (struct type *type)
 {
-  CHECK_TYPEDEF (type);
+  type = check_typedef (type);
 
   /* Recognize strings as they're useful to be able to print without
      pretty-printers.  */
@@ -197,9 +195,9 @@ unpack_mangled_go_symbol (const char *mangled_name,
   /* Pointer to "N" if valid "N<digit(s)>_" found.  */
   char *method_type;
   /* Pointer to the first '.'.  */
-  char *first_dot;
+  const char *first_dot;
   /* Pointer to the last '.'.  */
-  char *last_dot;
+  const char *last_dot;
   /* Non-zero if we saw a pointer indicator.  */
   int saw_pointer;
 
@@ -235,8 +233,8 @@ unpack_mangled_go_symbol (const char *mangled_name,
      libgo_.*: used by gccgo's runtime
 
      Thus we don't support -fgo-prefix (except as used by the runtime).  */
-  if (strncmp (mangled_name, "go.", 3) != 0
-      && strncmp (mangled_name, "libgo_", 6) != 0)
+  if (!startswith (mangled_name, "go.")
+      && !startswith (mangled_name, "libgo_"))
     return NULL;
 
   /* Quick check for whether a search may be fruitful.  */
@@ -381,7 +379,7 @@ go_demangle (const char *mangled_name, int options)
     }
   obstack_grow_str0 (&tempbuf, "");
 
-  result = xstrdup (obstack_finish (&tempbuf));
+  result = xstrdup ((const char *) obstack_finish (&tempbuf));
   obstack_free (&tempbuf, NULL);
   xfree (name_buf);
   return result;
@@ -480,7 +478,7 @@ static const struct op_print go_op_print_tab[] =
   {"unsafe.Sizeof ", UNOP_SIZEOF, PREC_PREFIX, 0},
   {"++", UNOP_POSTINCREMENT, PREC_SUFFIX, 0},
   {"--", UNOP_POSTDECREMENT, PREC_SUFFIX, 0},
-  {NULL, 0, 0, 0}
+  {NULL, OP_NULL, PREC_SUFFIX, 0}
 };
 
 enum go_primitive_types {
@@ -569,7 +567,7 @@ static const struct language_defn go_language_defn =
   macro_expansion_no,
   &exp_descriptor_c,
   go_parse,
-  go_error,
+  go_yyerror,
   null_post_parser,
   c_printchar,			/* Print a character constant.  */
   c_printstr,			/* Function to print string constant.  */
@@ -599,6 +597,8 @@ static const struct language_defn go_language_defn =
   NULL,
   iterate_over_symbols,
   &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -655,7 +655,7 @@ static struct gdbarch_data *go_type_data;
 const struct builtin_go_type *
 builtin_go_type (struct gdbarch *gdbarch)
 {
-  return gdbarch_data (gdbarch, go_type_data);
+  return (const struct builtin_go_type *) gdbarch_data (gdbarch, go_type_data);
 }
 
 extern initialize_file_ftype _initialize_go_language;

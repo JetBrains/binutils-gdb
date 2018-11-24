@@ -1,6 +1,5 @@
 /* Declarations for Intel 80386 opcode table
-   Copyright 2007, 2008, 2009, 2010, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2007-2016 Free Software Foundation, Inc.
 
    This file is part of the GNU opcodes library.
 
@@ -103,10 +102,18 @@ enum
   CpuAVX512ER,
   /* Intel AVX-512 Prefetch Instructions support required */
   CpuAVX512PF,
+  /* Intel AVX-512 VL Instructions support required.  */
+  CpuAVX512VL,
+  /* Intel AVX-512 DQ Instructions support required.  */
+  CpuAVX512DQ,
+  /* Intel AVX-512 BW Instructions support required.  */
+  CpuAVX512BW,
   /* Intel L1OM support required */
   CpuL1OM,
   /* Intel K1OM support required */
   CpuK1OM,
+  /* Intel IAMCU support required */
+  CpuIAMCU,
   /* Xsave/xrstor New Instructions support required */
   CpuXsave,
   /* Xsaveopt New Instructions support required */
@@ -169,6 +176,42 @@ enum
   CpuSHA,
   /* VREX support required  */
   CpuVREX,
+  /* CLFLUSHOPT instruction required */
+  CpuClflushOpt,
+  /* XSAVES/XRSTORS instruction required */
+  CpuXSAVES,
+  /* XSAVEC instruction required */
+  CpuXSAVEC,
+  /* PREFETCHWT1 instruction required */
+  CpuPREFETCHWT1,
+  /* SE1 instruction required */
+  CpuSE1,
+  /* CLWB instruction required */
+  CpuCLWB,
+  /* PCOMMIT instruction required */
+  CpuPCOMMIT,
+  /* Intel AVX-512 IFMA Instructions support required.  */
+  CpuAVX512IFMA,
+  /* Intel AVX-512 VBMI Instructions support required.  */
+  CpuAVX512VBMI,
+  /* mwaitx instruction required */
+  CpuMWAITX,
+  /* Clzero instruction required */
+  CpuCLZERO,
+  /* OSPKE instruction required */
+  CpuOSPKE,
+  /* RDPID instruction required */
+  CpuRDPID,
+  /* MMX register support required */
+  CpuRegMMX,
+  /* XMM register support required */
+  CpuRegXMM,
+  /* YMM register support required */
+  CpuRegYMM,
+  /* ZMM register support required */
+  CpuRegZMM,
+  /* Mask register support required */
+  CpuRegMask,
   /* 64bit support required  */
   Cpu64,
   /* Not supported in the 64bit mode  */
@@ -227,8 +270,12 @@ typedef union i386_cpu_flags
       unsigned int cpuavx512cd:1;
       unsigned int cpuavx512er:1;
       unsigned int cpuavx512pf:1;
+      unsigned int cpuavx512vl:1;
+      unsigned int cpuavx512dq:1;
+      unsigned int cpuavx512bw:1;
       unsigned int cpul1om:1;
       unsigned int cpuk1om:1;
+      unsigned int cpuiamcu:1;
       unsigned int cpuxsave:1;
       unsigned int cpuxsaveopt:1;
       unsigned int cpuaes:1;
@@ -260,6 +307,24 @@ typedef union i386_cpu_flags
       unsigned int cpusmap:1;
       unsigned int cpusha:1;
       unsigned int cpuvrex:1;
+      unsigned int cpuclflushopt:1;
+      unsigned int cpuxsaves:1;
+      unsigned int cpuxsavec:1;
+      unsigned int cpuprefetchwt1:1;
+      unsigned int cpuse1:1;
+      unsigned int cpuclwb:1;
+      unsigned int cpupcommit:1;
+      unsigned int cpuavx512ifma:1;
+      unsigned int cpuavx512vbmi:1;
+      unsigned int cpumwaitx:1;
+      unsigned int cpuclzero:1;
+      unsigned int cpuospke:1;
+      unsigned int cpurdpid:1;
+      unsigned int cpuregmmx:1;
+      unsigned int cpuregxmm:1;
+      unsigned int cpuregymm:1;
+      unsigned int cpuregzmm:1;
+      unsigned int cpuregmask:1;
       unsigned int cpu64:1;
       unsigned int cpuno64:1;
 #ifdef CpuUnused
@@ -478,6 +543,8 @@ enum
 #define NO_BROADCAST	0
 #define BROADCAST_1TO16	1
 #define BROADCAST_1TO8	2
+#define BROADCAST_1TO4	3
+#define BROADCAST_1TO2	4
   Broadcast,
 
   /* Static rounding control is supported.  */
@@ -500,6 +567,10 @@ enum
   ATTSyntax,
   /* Intel syntax.  */
   IntelSyntax,
+  /* AMD64.  */
+  AMD64,
+  /* Intel64.  */
+  Intel64,
   /* The last bitfield in i386_opcode_modifier.  */
   Opcode_Modifier_Max
 };
@@ -568,6 +639,8 @@ typedef struct i386_opcode_modifier
   unsigned int attmnemonic:1;
   unsigned int attsyntax:1;
   unsigned int intelsyntax:1;
+  unsigned int amd64:1;
+  unsigned int intel64:1;
 } i386_opcode_modifier;
 
 /* Position of operand_type bits.  */

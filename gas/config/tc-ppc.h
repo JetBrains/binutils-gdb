@@ -1,6 +1,5 @@
 /* tc-ppc.h -- Header file for tc-ppc.c.
-   Copyright 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2008, 2009 Free Software Foundation, Inc.
+   Copyright (C) 1994-2016 Free Software Foundation, Inc.
    Written by Ian Lance Taylor, Cygnus Support.
 
    This file is part of GAS, the GNU Assembler.
@@ -52,7 +51,7 @@ extern int target_big_endian;
 
 /* The target BFD format.  */
 #define TARGET_FORMAT (ppc_target_format ())
-extern char *ppc_target_format (void);
+extern const char *ppc_target_format (void);
 
 /* Permit temporary numeric labels.  */
 #define LOCAL_LABELS_FB 1
@@ -86,7 +85,9 @@ extern char *ppc_target_format (void);
 extern void ppc_handle_align (struct frag *);
 extern void ppc_frag_check (struct frag *);
 
+#ifdef OBJ_ELF
 #define SUB_SEGMENT_ALIGN(SEG, FRCHAIN) 0
+#endif
 
 #define md_frag_check(FRAGP) ppc_frag_check (FRAGP)
 
@@ -232,6 +233,14 @@ extern int ppc_fix_adjustable (struct fix *);
 /* Values passed to md_apply_fix don't include symbol values.  */
 #define MD_APPLY_SYM_VALUE(FIX) 0
 
+#define TC_PARSE_CONS_EXPRESSION(EXP, NBYTES) \
+  ppc_elf_parse_cons (EXP, NBYTES)
+extern bfd_reloc_code_real_type ppc_elf_parse_cons (expressionS *,
+						    unsigned int);
+#define TC_CONS_FIX_CHECK(EXP, NBYTES, FIX) \
+  ppc_elf_cons_fix_check (EXP, NBYTES, FIX)
+extern void ppc_elf_cons_fix_check (expressionS *, unsigned int, struct fix *);
+
 #define tc_frob_file_before_adjust ppc_frob_file_before_adjust
 extern void ppc_frob_file_before_adjust (void);
 
@@ -260,11 +269,24 @@ extern int ppc_parse_name (const char *, struct expressionS *);
 #define md_cleanup() ppc_cleanup ()
 extern void ppc_cleanup (void);
 
+#if (defined TE_AIX5 || defined TE_AIX					\
+     || defined TE_FreeBSD || defined TE_NetBSD || defined TE_LYNX)
 /* ppc uses different register numbers between .eh_frame and .debug_frame.
    This macro translates the .eh_frame register numbers to .debug_frame
    register numbers.  */
-#define md_reg_eh_frame_to_debug_frame(regno) \
-  ((regno) == 70 ? 64 /* cr2 */ : (regno))
+#define md_reg_eh_frame_to_debug_frame(regno)				\
+  ((regno) == 70 ? 64	/* cr2 */					\
+   : (regno) == 65 ? 108 /* lr */					\
+   : (regno) == 66 ? 109 /* ctr */					\
+   : (regno) >= 68 && (regno) <= 75 ? (regno) + 86 - 68 /* crN */	\
+   : (regno) == 76 ? 101 /* xer */					\
+   : (regno) >= 77 && (regno) <= 108 ? (regno) + 1124 - 77 /* vrN */	\
+   : (regno) == 109 ? 356 /* vrsave */					\
+   : (regno) == 110 ? 67 /* vscr */					\
+   : (regno) == 111 ? 99 /* spe_acc */					\
+   : (regno) == 112 ? 612 /* spefscr */					\
+   : (regno))
+#endif
 
 #define TARGET_USE_CFIPOP 1
 

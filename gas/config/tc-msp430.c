@@ -1,6 +1,6 @@
 /* tc-msp430.c -- Assembler code for the Texas Instruments MSP430
 
-  Copyright (C) 2002-2013 Free Software Foundation, Inc.
+  Copyright (C) 2002-2016 Free Software Foundation, Inc.
   Contributed by Dmitry Diky <diwil@mail.ru>
 
   This file is part of GAS, the GNU Assembler.
@@ -22,12 +22,12 @@
 
 #include "as.h"
 #include <limits.h>
-#define PUSH_1X_WORKAROUND
 #include "subsegs.h"
 #include "opcode/msp430.h"
 #include "safe-ctype.h"
 #include "dwarf2dbg.h"
 #include "elf/msp430.h"
+#include "libiberty.h"
 
 /* We will disable polymorphs by default because it is dangerous.
    The potential problem here is the following: assume we got the
@@ -69,9 +69,6 @@
 int msp430_enable_relax;
 int msp430_enable_polys;
 
-/*  Set linkrelax here to avoid fixups in most sections.  */
-int linkrelax = 1;
-
 /* GCC uses the some condition codes which we'll
    implement as new polymorph instructions.
 
@@ -105,7 +102,7 @@ int linkrelax = 1;
 
 struct rcodes_s
 {
-  char * name;
+  const char * name;
   int    index;	/* Corresponding insn_opnumb.  */
   int    sop;	/* Opcode if jump length is short.  */
   long   lpos;	/* Label position.  */
@@ -160,7 +157,7 @@ static struct rcodes_s msp430x_rcodes[] =
 
 struct hcodes_s
 {
-  char * name;
+  const char * name;
   int    index;		/* Corresponding insn_opnumb.  */
   int    tlab;		/* Number of labels in short mode.  */
   int    op0;		/* Opcode for first word of short jump.  */
@@ -255,7 +252,7 @@ relax_typeS md_relax_table[] =
 };
 
 
-#define MAX_OP_LEN	256
+#define MAX_OP_LEN	4096
 
 typedef enum msp_isa
 {
@@ -264,490 +261,36 @@ typedef enum msp_isa
   MSP_ISA_430Xv2
 } msp_isa;
 
-struct mcu_type_s
-{
-  char *  name;
-  msp_isa isa;
-};
-
-static struct mcu_type_s mcu_types[] =
-{
-  {"msp430afe221", MSP_ISA_430},
-  {"msp430afe222", MSP_ISA_430},
-  {"msp430afe223", MSP_ISA_430},
-  {"msp430afe231", MSP_ISA_430},
-  {"msp430afe232", MSP_ISA_430},
-  {"msp430afe233", MSP_ISA_430},
-  {"msp430afe251", MSP_ISA_430},
-  {"msp430afe252", MSP_ISA_430},
-  {"msp430afe253", MSP_ISA_430},
-  {"msp430c091",   MSP_ISA_430},
-  {"msp430c092",   MSP_ISA_430},
-  {"msp430c111",   MSP_ISA_430},
-  {"msp430c1111",  MSP_ISA_430},
-  {"msp430c112",   MSP_ISA_430},
-  {"msp430c1121",  MSP_ISA_430},
-  {"msp430e112",   MSP_ISA_430},
-  {"msp430c1331", MSP_ISA_430},
-  {"msp430c1351", MSP_ISA_430},
-  {"msp430c311s", MSP_ISA_430},
-  {"msp430c312",  MSP_ISA_430},
-  {"msp430c313",  MSP_ISA_430},
-  {"msp430c314",  MSP_ISA_430},
-  {"msp430c315", MSP_ISA_430},
-  {"msp430c323", MSP_ISA_430},
-  {"msp430c325", MSP_ISA_430},
-  {"msp430c336", MSP_ISA_430},
-  {"msp430c337", MSP_ISA_430},
-  {"msp430c412", MSP_ISA_430},
-  {"msp430c413", MSP_ISA_430},
-  {"msp430e313", MSP_ISA_430},
-  {"msp430e315", MSP_ISA_430},
-  {"msp430e325", MSP_ISA_430},
-  {"msp430e337", MSP_ISA_430},
-  {"msp430f110", MSP_ISA_430},
-  {"msp430f1101", MSP_ISA_430},
-  {"msp430f1101a", MSP_ISA_430},
-  {"msp430f1111", MSP_ISA_430},
-  {"msp430f1111a", MSP_ISA_430},
-  {"msp430f112", MSP_ISA_430},
-  {"msp430f1121", MSP_ISA_430},
-  {"msp430f1121a", MSP_ISA_430},
-  {"msp430f1122", MSP_ISA_430},
-  {"msp430f1132", MSP_ISA_430},
-  {"msp430f122", MSP_ISA_430},
-  {"msp430f1222", MSP_ISA_430},
-  {"msp430f123", MSP_ISA_430},
-  {"msp430f1232", MSP_ISA_430},
-  {"msp430f133", MSP_ISA_430},
-  {"msp430f135", MSP_ISA_430},
-  {"msp430f147", MSP_ISA_430},
-  {"msp430f1471", MSP_ISA_430},
-  {"msp430f148", MSP_ISA_430},
-  {"msp430f1481", MSP_ISA_430},
-  {"msp430f149", MSP_ISA_430},
-  {"msp430f1491", MSP_ISA_430},
-  {"msp430f155", MSP_ISA_430},
-  {"msp430f156", MSP_ISA_430},
-  {"msp430f157", MSP_ISA_430},
-  {"msp430f1610", MSP_ISA_430},
-  {"msp430f1611", MSP_ISA_430},
-  {"msp430f1612", MSP_ISA_430},
-  {"msp430f167", MSP_ISA_430},
-  {"msp430f168", MSP_ISA_430},
-  {"msp430f169", MSP_ISA_430},
-  {"msp430f2001", MSP_ISA_430},
-  {"msp430f2002", MSP_ISA_430},
-  {"msp430f2003", MSP_ISA_430},
-  {"msp430f2011", MSP_ISA_430},
-  {"msp430f2012", MSP_ISA_430},
-  {"msp430f2013", MSP_ISA_430},
-  {"msp430f2101", MSP_ISA_430},
-  {"msp430f2111", MSP_ISA_430},
-  {"msp430f2112", MSP_ISA_430},
-  {"msp430f2121", MSP_ISA_430},
-  {"msp430f2122", MSP_ISA_430},
-  {"msp430f2131", MSP_ISA_430},
-  {"msp430f2132", MSP_ISA_430},
-  {"msp430f2232", MSP_ISA_430},
-  {"msp430f2234", MSP_ISA_430},
-  {"msp430f2252", MSP_ISA_430},
-  {"msp430f2254", MSP_ISA_430},
-  {"msp430f2272", MSP_ISA_430},
-  {"msp430f2274", MSP_ISA_430},
-  {"msp430f233", MSP_ISA_430},
-  {"msp430f2330", MSP_ISA_430},
-  {"msp430f235", MSP_ISA_430},
-  {"msp430f2350", MSP_ISA_430},
-  {"msp430f2370", MSP_ISA_430},
-  {"msp430f2410", MSP_ISA_430},
-  {"msp430f247", MSP_ISA_430},
-  {"msp430f2471", MSP_ISA_430},
-  {"msp430f248", MSP_ISA_430},
-  {"msp430f2481", MSP_ISA_430},
-  {"msp430f249", MSP_ISA_430},
-  {"msp430f2491", MSP_ISA_430},
-  {"msp430f412", MSP_ISA_430},
-  {"msp430f413", MSP_ISA_430},
-  {"msp430f4132", MSP_ISA_430},
-  {"msp430f415", MSP_ISA_430},
-  {"msp430f4152", MSP_ISA_430},
-  {"msp430f417", MSP_ISA_430},
-  {"msp430f423", MSP_ISA_430},
-  {"msp430f423a", MSP_ISA_430},
-  {"msp430f425",  MSP_ISA_430},
-  {"msp430f4250", MSP_ISA_430},
-  {"msp430f425a", MSP_ISA_430},
-  {"msp430f4260", MSP_ISA_430},
-  {"msp430f427",  MSP_ISA_430},
-  {"msp430f4270", MSP_ISA_430},
-  {"msp430f427a", MSP_ISA_430},
-  {"msp430f435", MSP_ISA_430},
-  {"msp430f4351", MSP_ISA_430},
-  {"msp430f436", MSP_ISA_430},
-  {"msp430f4361", MSP_ISA_430},
-  {"msp430f437", MSP_ISA_430},
-  {"msp430f4371", MSP_ISA_430},
-  {"msp430f438", MSP_ISA_430},
-  {"msp430f439", MSP_ISA_430},
-  {"msp430f447", MSP_ISA_430},
-  {"msp430f448", MSP_ISA_430},
-  {"msp430f4481", MSP_ISA_430},
-  {"msp430f449", MSP_ISA_430},
-  {"msp430f4491", MSP_ISA_430},
-  {"msp430f477", MSP_ISA_430},
-  {"msp430f478", MSP_ISA_430},
-  {"msp430f4783", MSP_ISA_430},
-  {"msp430f4784", MSP_ISA_430},
-  {"msp430f479", MSP_ISA_430},
-  {"msp430f4793", MSP_ISA_430},
-  {"msp430f4794", MSP_ISA_430},
-  {"msp430fe423", MSP_ISA_430},
-  {"msp430fe4232", MSP_ISA_430},
-  {"msp430fe423a", MSP_ISA_430},
-  {"msp430fe4242", MSP_ISA_430},
-  {"msp430fe425", MSP_ISA_430},
-  {"msp430fe4252", MSP_ISA_430},
-  {"msp430fe425a", MSP_ISA_430},
-  {"msp430fe427", MSP_ISA_430},
-  {"msp430fe4272", MSP_ISA_430},
-  {"msp430fe427a", MSP_ISA_430},
-  {"msp430fg4250", MSP_ISA_430},
-  {"msp430fg4260", MSP_ISA_430},
-  {"msp430fg4270", MSP_ISA_430},
-  {"msp430fg437", MSP_ISA_430},
-  {"msp430fg438", MSP_ISA_430},
-  {"msp430fg439", MSP_ISA_430},
-  {"msp430fg477", MSP_ISA_430},
-  {"msp430fg478", MSP_ISA_430},
-  {"msp430fg479", MSP_ISA_430},
-  {"msp430fw423", MSP_ISA_430},
-  {"msp430fw425", MSP_ISA_430},
-  {"msp430fw427", MSP_ISA_430},
-  {"msp430fw428", MSP_ISA_430},
-  {"msp430fw429", MSP_ISA_430},
-  {"msp430g2001", MSP_ISA_430},
-  {"msp430g2101", MSP_ISA_430},
-  {"msp430g2102", MSP_ISA_430},
-  {"msp430g2111", MSP_ISA_430},
-  {"msp430g2112", MSP_ISA_430},
-  {"msp430g2113", MSP_ISA_430},
-  {"msp430g2121", MSP_ISA_430},
-  {"msp430g2131", MSP_ISA_430},
-  {"msp430g2132", MSP_ISA_430},
-  {"msp430g2152", MSP_ISA_430},
-  {"msp430g2153", MSP_ISA_430},
-  {"msp430g2201", MSP_ISA_430},
-  {"msp430g2202", MSP_ISA_430},
-  {"msp430g2203", MSP_ISA_430},
-  {"msp430g2210", MSP_ISA_430},
-  {"msp430g2211", MSP_ISA_430},
-  {"msp430g2212", MSP_ISA_430},
-  {"msp430g2213", MSP_ISA_430},
-  {"msp430g2221", MSP_ISA_430},
-  {"msp430g2230", MSP_ISA_430},
-  {"msp430g2231", MSP_ISA_430},
-  {"msp430g2232", MSP_ISA_430},
-  {"msp430g2233", MSP_ISA_430},
-  {"msp430g2252", MSP_ISA_430},
-  {"msp430g2253", MSP_ISA_430},
-  {"msp430g2302", MSP_ISA_430},
-  {"msp430g2303", MSP_ISA_430},
-  {"msp430g2312", MSP_ISA_430},
-  {"msp430g2313", MSP_ISA_430},
-  {"msp430g2332", MSP_ISA_430},
-  {"msp430g2333", MSP_ISA_430},
-  {"msp430g2352", MSP_ISA_430},
-  {"msp430g2353", MSP_ISA_430},
-  {"msp430g2402", MSP_ISA_430},
-  {"msp430g2403", MSP_ISA_430},
-  {"msp430g2412", MSP_ISA_430},
-  {"msp430g2413", MSP_ISA_430},
-  {"msp430g2432", MSP_ISA_430},
-  {"msp430g2433", MSP_ISA_430},
-  {"msp430g2444", MSP_ISA_430},
-  {"msp430g2452", MSP_ISA_430},
-  {"msp430g2453", MSP_ISA_430},
-  {"msp430g2513", MSP_ISA_430},
-  {"msp430g2533", MSP_ISA_430},
-  {"msp430g2544", MSP_ISA_430},
-  {"msp430g2553", MSP_ISA_430},
-  {"msp430g2744", MSP_ISA_430},
-  {"msp430g2755", MSP_ISA_430},
-  {"msp430g2855", MSP_ISA_430},
-  {"msp430g2955", MSP_ISA_430},
-  {"msp430l092",  MSP_ISA_430},
-  {"msp430p112",  MSP_ISA_430},
-  {"msp430p313",  MSP_ISA_430},
-  {"msp430p315",  MSP_ISA_430},
-  {"msp430p315s", MSP_ISA_430},
-  {"msp430p325",  MSP_ISA_430},
-  {"msp430p337",  MSP_ISA_430},
-  {"msp430tch5e", MSP_ISA_430},
-
-  /* NB/ This section of the list should be kept in sync with the ones in:
-       gcc/config/msp430/t-msp430
-       gcc/config/msp430/msp430.c  */
-
-  {"msp430cg4616", MSP_ISA_430X},
-  {"msp430cg4617", MSP_ISA_430X},
-  {"msp430cg4618", MSP_ISA_430X},
-  {"msp430cg4619", MSP_ISA_430X},
-  {"msp430f2416", MSP_ISA_430X},
-  {"msp430f2417", MSP_ISA_430X},
-  {"msp430f2418", MSP_ISA_430X},
-  {"msp430f2419", MSP_ISA_430X},
-  {"msp430f2616", MSP_ISA_430X},
-  {"msp430f2617", MSP_ISA_430X},
-  {"msp430f2618", MSP_ISA_430X},
-  {"msp430f2619", MSP_ISA_430X},
-  {"msp430f47126", MSP_ISA_430X},
-  {"msp430f47127", MSP_ISA_430X},
-  {"msp430f47163", MSP_ISA_430X},
-  {"msp430f47173", MSP_ISA_430X},
-  {"msp430f47183", MSP_ISA_430X},
-  {"msp430f47193", MSP_ISA_430X},
-  {"msp430f47166", MSP_ISA_430X},
-  {"msp430f47176", MSP_ISA_430X},
-  {"msp430f47186", MSP_ISA_430X},
-  {"msp430f47196", MSP_ISA_430X},
-  {"msp430f47167", MSP_ISA_430X},
-  {"msp430f47177", MSP_ISA_430X},
-  {"msp430f47187", MSP_ISA_430X},
-  {"msp430f47197", MSP_ISA_430X},
-  {"msp430f46161", MSP_ISA_430X},
-  {"msp430f46171", MSP_ISA_430X},
-  {"msp430f46181", MSP_ISA_430X},
-  {"msp430f46191", MSP_ISA_430X},
-  {"msp430f4616", MSP_ISA_430X},
-  {"msp430f4617", MSP_ISA_430X},
-  {"msp430f4618", MSP_ISA_430X},
-  {"msp430f4619", MSP_ISA_430X},
-  {"msp430fg4616", MSP_ISA_430X},
-  {"msp430fg4617", MSP_ISA_430X},
-  {"msp430fg4618", MSP_ISA_430X},
-  {"msp430fg4619", MSP_ISA_430X},
-
-  {"msp430f5418", MSP_ISA_430Xv2},
-  {"msp430f5419", MSP_ISA_430Xv2},
-  {"msp430f5435", MSP_ISA_430Xv2},
-  {"msp430f5436", MSP_ISA_430Xv2},
-  {"msp430f5437", MSP_ISA_430Xv2},
-  {"msp430f5438", MSP_ISA_430Xv2},
-  {"msp430f5418a", MSP_ISA_430Xv2},
-  {"msp430f5419a", MSP_ISA_430Xv2},
-  {"msp430f5435a", MSP_ISA_430Xv2},
-  {"msp430f5436a", MSP_ISA_430Xv2},
-  {"msp430f5437a", MSP_ISA_430Xv2},
-  {"msp430f5438a", MSP_ISA_430Xv2},
-  {"msp430f5212", MSP_ISA_430Xv2},
-  {"msp430f5213", MSP_ISA_430Xv2},
-  {"msp430f5214", MSP_ISA_430Xv2},
-  {"msp430f5217", MSP_ISA_430Xv2},
-  {"msp430f5218", MSP_ISA_430Xv2},
-  {"msp430f5219", MSP_ISA_430Xv2},
-  {"msp430f5222", MSP_ISA_430Xv2},
-  {"msp430f5223", MSP_ISA_430Xv2},
-  {"msp430f5224", MSP_ISA_430Xv2},
-  {"msp430f5227", MSP_ISA_430Xv2},
-  {"msp430f5228", MSP_ISA_430Xv2},
-  {"msp430f5229", MSP_ISA_430Xv2},
-  {"msp430f5304", MSP_ISA_430Xv2},
-  {"msp430f5308", MSP_ISA_430Xv2},
-  {"msp430f5309", MSP_ISA_430Xv2},
-  {"msp430f5310", MSP_ISA_430Xv2},
-  {"msp430f5340", MSP_ISA_430Xv2},
-  {"msp430f5341", MSP_ISA_430Xv2},
-  {"msp430f5342", MSP_ISA_430Xv2},
-  {"msp430f5324", MSP_ISA_430Xv2},
-  {"msp430f5325", MSP_ISA_430Xv2},
-  {"msp430f5326", MSP_ISA_430Xv2},
-  {"msp430f5327", MSP_ISA_430Xv2},
-  {"msp430f5328", MSP_ISA_430Xv2},
-  {"msp430f5329", MSP_ISA_430Xv2},
-  {"msp430f5500", MSP_ISA_430Xv2},
-  {"msp430f5501", MSP_ISA_430Xv2},
-  {"msp430f5502", MSP_ISA_430Xv2},
-  {"msp430f5503", MSP_ISA_430Xv2},
-  {"msp430f5504", MSP_ISA_430Xv2},
-  {"msp430f5505", MSP_ISA_430Xv2},
-  {"msp430f5506", MSP_ISA_430Xv2},
-  {"msp430f5507", MSP_ISA_430Xv2},
-  {"msp430f5508", MSP_ISA_430Xv2},
-  {"msp430f5509", MSP_ISA_430Xv2},
-  {"msp430f5510", MSP_ISA_430Xv2},
-  {"msp430f5513", MSP_ISA_430Xv2},
-  {"msp430f5514", MSP_ISA_430Xv2},
-  {"msp430f5515", MSP_ISA_430Xv2},
-  {"msp430f5517", MSP_ISA_430Xv2},
-  {"msp430f5519", MSP_ISA_430Xv2},
-  {"msp430f5521", MSP_ISA_430Xv2},
-  {"msp430f5522", MSP_ISA_430Xv2},
-  {"msp430f5524", MSP_ISA_430Xv2},
-  {"msp430f5525", MSP_ISA_430Xv2},
-  {"msp430f5526", MSP_ISA_430Xv2},
-  {"msp430f5527", MSP_ISA_430Xv2},
-  {"msp430f5528", MSP_ISA_430Xv2},
-  {"msp430f5529", MSP_ISA_430Xv2},
-  {"cc430f5133", MSP_ISA_430Xv2},
-  {"cc430f5135", MSP_ISA_430Xv2},
-  {"cc430f5137", MSP_ISA_430Xv2},
-  {"cc430f6125", MSP_ISA_430Xv2},
-  {"cc430f6126", MSP_ISA_430Xv2},
-  {"cc430f6127", MSP_ISA_430Xv2},
-  {"cc430f6135", MSP_ISA_430Xv2},
-  {"cc430f6137", MSP_ISA_430Xv2},
-  {"cc430f5123", MSP_ISA_430Xv2},
-  {"cc430f5125", MSP_ISA_430Xv2},
-  {"cc430f5143", MSP_ISA_430Xv2},
-  {"cc430f5145", MSP_ISA_430Xv2},
-  {"cc430f5147", MSP_ISA_430Xv2},
-  {"cc430f6143", MSP_ISA_430Xv2},
-  {"cc430f6145", MSP_ISA_430Xv2},
-  {"cc430f6147", MSP_ISA_430Xv2},
-  {"msp430f5333", MSP_ISA_430Xv2},
-  {"msp430f5335", MSP_ISA_430Xv2},
-  {"msp430f5336", MSP_ISA_430Xv2},
-  {"msp430f5338", MSP_ISA_430Xv2},
-  {"msp430f5630", MSP_ISA_430Xv2},
-  {"msp430f5631", MSP_ISA_430Xv2},
-  {"msp430f5632", MSP_ISA_430Xv2},
-  {"msp430f5633", MSP_ISA_430Xv2},
-  {"msp430f5634", MSP_ISA_430Xv2},
-  {"msp430f5635", MSP_ISA_430Xv2},
-  {"msp430f5636", MSP_ISA_430Xv2},
-  {"msp430f5637", MSP_ISA_430Xv2},
-  {"msp430f5638", MSP_ISA_430Xv2},
-  {"msp430f6433", MSP_ISA_430Xv2},
-  {"msp430f6435", MSP_ISA_430Xv2},
-  {"msp430f6436", MSP_ISA_430Xv2},
-  {"msp430f6438", MSP_ISA_430Xv2},
-  {"msp430f6630", MSP_ISA_430Xv2},
-  {"msp430f6631", MSP_ISA_430Xv2},
-  {"msp430f6632", MSP_ISA_430Xv2},
-  {"msp430f6633", MSP_ISA_430Xv2},
-  {"msp430f6634", MSP_ISA_430Xv2},
-  {"msp430f6635", MSP_ISA_430Xv2},
-  {"msp430f6636", MSP_ISA_430Xv2},
-  {"msp430f6637", MSP_ISA_430Xv2},
-  {"msp430f6638", MSP_ISA_430Xv2},
-  {"msp430f5358", MSP_ISA_430Xv2},
-  {"msp430f5359", MSP_ISA_430Xv2},
-  {"msp430f5658", MSP_ISA_430Xv2},
-  {"msp430f5659", MSP_ISA_430Xv2},
-  {"msp430f6458", MSP_ISA_430Xv2},
-  {"msp430f6459", MSP_ISA_430Xv2},
-  {"msp430f6658", MSP_ISA_430Xv2},
-  {"msp430f6659", MSP_ISA_430Xv2},
-  {"msp430f5131", MSP_ISA_430Xv2},
-  {"msp430f5151", MSP_ISA_430Xv2},
-  {"msp430f5171", MSP_ISA_430Xv2},
-  {"msp430f5132", MSP_ISA_430Xv2},
-  {"msp430f5152", MSP_ISA_430Xv2},
-  {"msp430f5172", MSP_ISA_430Xv2},
-  {"msp430f6720", MSP_ISA_430Xv2},
-  {"msp430f6721", MSP_ISA_430Xv2},
-  {"msp430f6723", MSP_ISA_430Xv2},
-  {"msp430f6724", MSP_ISA_430Xv2},
-  {"msp430f6725", MSP_ISA_430Xv2},
-  {"msp430f6726", MSP_ISA_430Xv2},
-  {"msp430f6730", MSP_ISA_430Xv2},
-  {"msp430f6731", MSP_ISA_430Xv2},
-  {"msp430f6733", MSP_ISA_430Xv2},
-  {"msp430f6734", MSP_ISA_430Xv2},
-  {"msp430f6735", MSP_ISA_430Xv2},
-  {"msp430f6736", MSP_ISA_430Xv2},
-  {"msp430f67451", MSP_ISA_430Xv2},
-  {"msp430f67651", MSP_ISA_430Xv2},
-  {"msp430f67751", MSP_ISA_430Xv2},
-  {"msp430f67461", MSP_ISA_430Xv2},
-  {"msp430f67661", MSP_ISA_430Xv2},
-  {"msp430f67761", MSP_ISA_430Xv2},
-  {"msp430f67471", MSP_ISA_430Xv2},
-  {"msp430f67671", MSP_ISA_430Xv2},
-  {"msp430f67771", MSP_ISA_430Xv2},
-  {"msp430f67481", MSP_ISA_430Xv2},
-  {"msp430f67681", MSP_ISA_430Xv2},
-  {"msp430f67781", MSP_ISA_430Xv2},
-  {"msp430f67491", MSP_ISA_430Xv2},
-  {"msp430f67691", MSP_ISA_430Xv2},
-  {"msp430f67791", MSP_ISA_430Xv2},
-  {"msp430f6745", MSP_ISA_430Xv2},
-  {"msp430f6765", MSP_ISA_430Xv2},
-  {"msp430f6775", MSP_ISA_430Xv2},
-  {"msp430f6746", MSP_ISA_430Xv2},
-  {"msp430f6766", MSP_ISA_430Xv2},
-  {"msp430f6776", MSP_ISA_430Xv2},
-  {"msp430f6747", MSP_ISA_430Xv2},
-  {"msp430f6767", MSP_ISA_430Xv2},
-  {"msp430f6777", MSP_ISA_430Xv2},
-  {"msp430f6748", MSP_ISA_430Xv2},
-  {"msp430f6768", MSP_ISA_430Xv2},
-  {"msp430f6778", MSP_ISA_430Xv2},
-  {"msp430f6749", MSP_ISA_430Xv2},
-  {"msp430f6769", MSP_ISA_430Xv2},
-  {"msp430f6779", MSP_ISA_430Xv2},
-  {"msp430fr5720", MSP_ISA_430Xv2},
-  {"msp430fr5721", MSP_ISA_430Xv2},
-  {"msp430fr5722", MSP_ISA_430Xv2},
-  {"msp430fr5723", MSP_ISA_430Xv2},
-  {"msp430fr5724", MSP_ISA_430Xv2},
-  {"msp430fr5725", MSP_ISA_430Xv2},
-  {"msp430fr5726", MSP_ISA_430Xv2},
-  {"msp430fr5727", MSP_ISA_430Xv2},
-  {"msp430fr5728", MSP_ISA_430Xv2},
-  {"msp430fr5729", MSP_ISA_430Xv2},
-  {"msp430fr5730", MSP_ISA_430Xv2},
-  {"msp430fr5731", MSP_ISA_430Xv2},
-  {"msp430fr5732", MSP_ISA_430Xv2},
-  {"msp430fr5733", MSP_ISA_430Xv2},
-  {"msp430fr5734", MSP_ISA_430Xv2},
-  {"msp430fr5735", MSP_ISA_430Xv2},
-  {"msp430fr5736", MSP_ISA_430Xv2},
-  {"msp430fr5737", MSP_ISA_430Xv2},
-  {"msp430fr5738", MSP_ISA_430Xv2},
-  {"msp430fr5739", MSP_ISA_430Xv2},
-  {"msp430bt5190", MSP_ISA_430Xv2},
-  {"msp430fr5949", MSP_ISA_430Xv2},
-  {"msp430fr5969", MSP_ISA_430Xv2},
-  {"msp430sl5438a", MSP_ISA_430Xv2},
-
-  /* Generic names.  */
-  {"msp430",    MSP_ISA_430},
-  {"msp430X",   MSP_ISA_430X},
-  {"msp430Xv2", MSP_ISA_430Xv2},
-
-  {NULL, 0}
-};
-
-static struct mcu_type_s default_mcu   = { "msp430x11", MSP_ISA_430 };
-static struct mcu_type_s msp430x_mcu   = { "msp430x",   MSP_ISA_430X };
-static struct mcu_type_s msp430xv2_mcu = { "msp430xv2", MSP_ISA_430Xv2 };
-
-static struct mcu_type_s * msp430_mcu = & default_mcu;
+static enum msp_isa selected_isa = MSP_ISA_430Xv2;
 
 static inline bfd_boolean
 target_is_430x (void)
 {
-  return msp430_mcu->isa >= MSP_ISA_430X;
+  return selected_isa >= MSP_ISA_430X;
 }
 
 static inline bfd_boolean
 target_is_430xv2 (void)
 {
-  return msp430_mcu->isa == MSP_ISA_430Xv2;
+  return selected_isa == MSP_ISA_430Xv2;
 }
 
-/* Generate a 16-bit relocation.
-   For the 430X we generate a relocation without linkwer range checking
-   if the value is being used in an extended (ie 20-bit) instruction.
+/* Generate an absolute 16-bit relocation.
+   For the 430X we generate a relocation without linker range checking
+    if the value is being used in an extended (ie 20-bit) instruction,
+    otherwise if have a shifted expression we use a HI reloc.
    For the 430 we generate a relocation without assembler range checking
-   if we are handling an immediate value or a byte-width instruction.  */
+    if we are handling an immediate value or a byte-width instruction.  */
+
 #undef  CHECK_RELOC_MSP430
-#define CHECK_RELOC_MSP430				     \
-  (target_is_430x ()					     \
-   ? (extended_op ? BFD_RELOC_16 : BFD_RELOC_MSP430X_ABS16)  \
-   : ((imm_op || byte_op)				     \
+#define CHECK_RELOC_MSP430(OP)				\
+  (target_is_430x ()					\
+  ? (extended_op					\
+     ? BFD_RELOC_16					\
+     : ((OP).vshift == 1)				\
+     ? BFD_RELOC_MSP430_ABS_HI16			\
+     : BFD_RELOC_MSP430X_ABS16)				\
+   : ((imm_op || byte_op)				\
       ? BFD_RELOC_MSP430_16_BYTE : BFD_RELOC_MSP430_16))
 
 /* Generate a 16-bit pc-relative relocation.
@@ -1125,15 +668,34 @@ extract_word (char * from, char * to, int limit)
 #define OPTION_LARGE 'l'
 static bfd_boolean large_model = FALSE;
 #define OPTION_NO_INTR_NOPS 'N'
-static bfd_boolean gen_interrupt_nops = TRUE;
+#define OPTION_INTR_NOPS 'n'
+static bfd_boolean gen_interrupt_nops = FALSE;
+#define OPTION_WARN_INTR_NOPS 'y'
+#define OPTION_NO_WARN_INTR_NOPS 'Y'
+static bfd_boolean warn_interrupt_nops = TRUE;
 #define OPTION_MCPU 'c'
 #define OPTION_MOVE_DATA 'd'
 static bfd_boolean move_data = FALSE;
 
+enum
+{
+  OPTION_SILICON_ERRATA = OPTION_MD_BASE,
+  OPTION_SILICON_ERRATA_WARN,
+};
+
+static unsigned int silicon_errata_fix = 0;
+static unsigned int silicon_errata_warn = 0;
+#define SILICON_ERRATA_CPU4 		(1 << 0)
+#define SILICON_ERRATA_CPU8		(1 << 1)
+#define SILICON_ERRATA_CPU11 		(1 << 2)
+#define SILICON_ERRATA_CPU12 		(1 << 3)
+#define SILICON_ERRATA_CPU13 		(1 << 4)
+#define SILICON_ERRATA_CPU19 		(1 << 5)
+
 static void
 msp430_set_arch (int option)
 {
-  char *str = (char *) alloca (32);	/* 32 for good measure.  */
+  char str[32];	/* 32 for good measure.  */
 
   input_line_pointer = extract_word (input_line_pointer, str, 32);
 
@@ -1142,63 +704,720 @@ msp430_set_arch (int option)
 		     target_is_430x () ? bfd_mach_msp430x : bfd_mach_msp11);
 }
 
-static void
-show_mcu_list (FILE * stream)
+/* This is a copy of the same data structure found in gcc/config/msp430/msp430.c
+   Keep these two structures in sync.
+   The data in this structure has been extracted from the devices.csv file
+   released by TI, updated as of March 2016.  */
+
+struct msp430_mcu_data
 {
-  int i;
-
-  fprintf (stream, _("Known MCU names:\n"));
-
-  for (i = 0; mcu_types[i].name; i++)
-    {
-      fprintf (stream, "%14.14s", mcu_types[i].name);
-      if ((i % 6) == 5)
-	fprintf (stream, "\n");
-    }
-
-  fprintf (stream, "\n");
+  const char * name;
+  unsigned int revision; /* 0=> MSP430, 1=>MSP430X, 2=> MSP430Xv2.  */
+  unsigned int hwmpy;    /* 0=>none, 1=>16-bit, 2=>16-bit w/sign extend, 4=>32-bit, 8=> 32-bit (5xx).  */
 }
+msp430_mcu_data [] =
+{
+  { "cc430f5123",2,8 },
+  { "cc430f5125",2,8 },
+  { "cc430f5133",2,8 },
+  { "cc430f5135",2,8 },
+  { "cc430f5137",2,8 },
+  { "cc430f5143",2,8 },
+  { "cc430f5145",2,8 },
+  { "cc430f5147",2,8 },
+  { "cc430f6125",2,8 },
+  { "cc430f6126",2,8 },
+  { "cc430f6127",2,8 },
+  { "cc430f6135",2,8 },
+  { "cc430f6137",2,8 },
+  { "cc430f6143",2,8 },
+  { "cc430f6145",2,8 },
+  { "cc430f6147",2,8 },
+  { "msp430afe221",0,2 },
+  { "msp430afe222",0,2 },
+  { "msp430afe223",0,2 },
+  { "msp430afe231",0,2 },
+  { "msp430afe232",0,2 },
+  { "msp430afe233",0,2 },
+  { "msp430afe251",0,2 },
+  { "msp430afe252",0,2 },
+  { "msp430afe253",0,2 },
+  { "msp430bt5190",2,8 },
+  { "msp430c091",0,0 },
+  { "msp430c092",0,0 },
+  { "msp430c111",0,0 },
+  { "msp430c1111",0,0 },
+  { "msp430c112",0,0 },
+  { "msp430c1121",0,0 },
+  { "msp430c1331",0,0 },
+  { "msp430c1351",0,0 },
+  { "msp430c311s",0,0 },
+  { "msp430c312",0,0 },
+  { "msp430c313",0,0 },
+  { "msp430c314",0,0 },
+  { "msp430c315",0,0 },
+  { "msp430c323",0,0 },
+  { "msp430c325",0,0 },
+  { "msp430c336",0,1 },
+  { "msp430c337",0,1 },
+  { "msp430c412",0,0 },
+  { "msp430c413",0,0 },
+  { "msp430cg4616",1,1 },
+  { "msp430cg4617",1,1 },
+  { "msp430cg4618",1,1 },
+  { "msp430cg4619",1,1 },
+  { "msp430e112",0,0 },
+  { "msp430e313",0,0 },
+  { "msp430e315",0,0 },
+  { "msp430e325",0,0 },
+  { "msp430e337",0,1 },
+  { "msp430f110",0,0 },
+  { "msp430f1101",0,0 },
+  { "msp430f1101a",0,0 },
+  { "msp430f1111",0,0 },
+  { "msp430f1111a",0,0 },
+  { "msp430f112",0,0 },
+  { "msp430f1121",0,0 },
+  { "msp430f1121a",0,0 },
+  { "msp430f1122",0,0 },
+  { "msp430f1132",0,0 },
+  { "msp430f122",0,0 },
+  { "msp430f1222",0,0 },
+  { "msp430f123",0,0 },
+  { "msp430f1232",0,0 },
+  { "msp430f133",0,0 },
+  { "msp430f135",0,0 },
+  { "msp430f147",0,1 },
+  { "msp430f1471",0,1 },
+  { "msp430f148",0,1 },
+  { "msp430f1481",0,1 },
+  { "msp430f149",0,1 },
+  { "msp430f1491",0,1 },
+  { "msp430f155",0,0 },
+  { "msp430f156",0,0 },
+  { "msp430f157",0,0 },
+  { "msp430f1610",0,1 },
+  { "msp430f1611",0,1 },
+  { "msp430f1612",0,1 },
+  { "msp430f167",0,1 },
+  { "msp430f168",0,1 },
+  { "msp430f169",0,1 },
+  { "msp430f2001",0,0 },
+  { "msp430f2002",0,0 },
+  { "msp430f2003",0,0 },
+  { "msp430f2011",0,0 },
+  { "msp430f2012",0,0 },
+  { "msp430f2013",0,0 },
+  { "msp430f2101",0,0 },
+  { "msp430f2111",0,0 },
+  { "msp430f2112",0,0 },
+  { "msp430f2121",0,0 },
+  { "msp430f2122",0,0 },
+  { "msp430f2131",0,0 },
+  { "msp430f2132",0,0 },
+  { "msp430f2232",0,0 },
+  { "msp430f2234",0,0 },
+  { "msp430f2252",0,0 },
+  { "msp430f2254",0,0 },
+  { "msp430f2272",0,0 },
+  { "msp430f2274",0,0 },
+  { "msp430f233",0,2 },
+  { "msp430f2330",0,2 },
+  { "msp430f235",0,2 },
+  { "msp430f2350",0,2 },
+  { "msp430f2370",0,2 },
+  { "msp430f2410",0,2 },
+  { "msp430f2416",1,2 },
+  { "msp430f2417",1,2 },
+  { "msp430f2418",1,2 },
+  { "msp430f2419",1,2 },
+  { "msp430f247",0,2 },
+  { "msp430f2471",0,2 },
+  { "msp430f248",0,2 },
+  { "msp430f2481",0,2 },
+  { "msp430f249",0,2 },
+  { "msp430f2491",0,2 },
+  { "msp430f2616",1,2 },
+  { "msp430f2617",1,2 },
+  { "msp430f2618",1,2 },
+  { "msp430f2619",1,2 },
+  { "msp430f412",0,0 },
+  { "msp430f413",0,0 },
+  { "msp430f4132",0,0 },
+  { "msp430f415",0,0 },
+  { "msp430f4152",0,0 },
+  { "msp430f417",0,0 },
+  { "msp430f423",0,1 },
+  { "msp430f423a",0,1 },
+  { "msp430f425",0,1 },
+  { "msp430f4250",0,0 },
+  { "msp430f425a",0,1 },
+  { "msp430f4260",0,0 },
+  { "msp430f427",0,1 },
+  { "msp430f4270",0,0 },
+  { "msp430f427a",0,1 },
+  { "msp430f435",0,0 },
+  { "msp430f4351",0,0 },
+  { "msp430f436",0,0 },
+  { "msp430f4361",0,0 },
+  { "msp430f437",0,0 },
+  { "msp430f4371",0,0 },
+  { "msp430f438",0,0 },
+  { "msp430f439",0,0 },
+  { "msp430f447",0,1 },
+  { "msp430f448",0,1 },
+  { "msp430f4481",0,1 },
+  { "msp430f449",0,1 },
+  { "msp430f4491",0,1 },
+  { "msp430f4616",1,1 },
+  { "msp430f46161",1,1 },
+  { "msp430f4617",1,1 },
+  { "msp430f46171",1,1 },
+  { "msp430f4618",1,1 },
+  { "msp430f46181",1,1 },
+  { "msp430f4619",1,1 },
+  { "msp430f46191",1,1 },
+  { "msp430f47126",1,4 },
+  { "msp430f47127",1,4 },
+  { "msp430f47163",1,4 },
+  { "msp430f47166",1,4 },
+  { "msp430f47167",1,4 },
+  { "msp430f47173",1,4 },
+  { "msp430f47176",1,4 },
+  { "msp430f47177",1,4 },
+  { "msp430f47183",1,4 },
+  { "msp430f47186",1,4 },
+  { "msp430f47187",1,4 },
+  { "msp430f47193",1,4 },
+  { "msp430f47196",1,4 },
+  { "msp430f47197",1,4 },
+  { "msp430f477",0,0 },
+  { "msp430f478",0,0 },
+  { "msp430f4783",0,4 },
+  { "msp430f4784",0,4 },
+  { "msp430f479",0,0 },
+  { "msp430f4793",0,4 },
+  { "msp430f4794",0,4 },
+  { "msp430f5131",2,8 },
+  { "msp430f5132",2,8 },
+  { "msp430f5151",2,8 },
+  { "msp430f5152",2,8 },
+  { "msp430f5171",2,8 },
+  { "msp430f5172",2,8 },
+  { "msp430f5212",2,8 },
+  { "msp430f5213",2,8 },
+  { "msp430f5214",2,8 },
+  { "msp430f5217",2,8 },
+  { "msp430f5218",2,8 },
+  { "msp430f5219",2,8 },
+  { "msp430f5222",2,8 },
+  { "msp430f5223",2,8 },
+  { "msp430f5224",2,8 },
+  { "msp430f5227",2,8 },
+  { "msp430f5228",2,8 },
+  { "msp430f5229",2,8 },
+  { "msp430f5232",2,8 },
+  { "msp430f5234",2,8 },
+  { "msp430f5237",2,8 },
+  { "msp430f5239",2,8 },
+  { "msp430f5242",2,8 },
+  { "msp430f5244",2,8 },
+  { "msp430f5247",2,8 },
+  { "msp430f5249",2,8 },
+  { "msp430f5252",2,8 },
+  { "msp430f5253",2,8 },
+  { "msp430f5254",2,8 },
+  { "msp430f5255",2,8 },
+  { "msp430f5256",2,8 },
+  { "msp430f5257",2,8 },
+  { "msp430f5258",2,8 },
+  { "msp430f5259",2,8 },
+  { "msp430f5304",2,8 },
+  { "msp430f5308",2,8 },
+  { "msp430f5309",2,8 },
+  { "msp430f5310",2,8 },
+  { "msp430f5324",2,8 },
+  { "msp430f5325",2,8 },
+  { "msp430f5326",2,8 },
+  { "msp430f5327",2,8 },
+  { "msp430f5328",2,8 },
+  { "msp430f5329",2,8 },
+  { "msp430f5333",2,8 },
+  { "msp430f5335",2,8 },
+  { "msp430f5336",2,8 },
+  { "msp430f5338",2,8 },
+  { "msp430f5340",2,8 },
+  { "msp430f5341",2,8 },
+  { "msp430f5342",2,8 },
+  { "msp430f5358",2,8 },
+  { "msp430f5359",2,8 },
+  { "msp430f5418",2,8 },
+  { "msp430f5418a",2,8 },
+  { "msp430f5419",2,8 },
+  { "msp430f5419a",2,8 },
+  { "msp430f5435",2,8 },
+  { "msp430f5435a",2,8 },
+  { "msp430f5436",2,8 },
+  { "msp430f5436a",2,8 },
+  { "msp430f5437",2,8 },
+  { "msp430f5437a",2,8 },
+  { "msp430f5438",2,8 },
+  { "msp430f5438a",2,8 },
+  { "msp430f5500",2,8 },
+  { "msp430f5501",2,8 },
+  { "msp430f5502",2,8 },
+  { "msp430f5503",2,8 },
+  { "msp430f5504",2,8 },
+  { "msp430f5505",2,8 },
+  { "msp430f5506",2,8 },
+  { "msp430f5507",2,8 },
+  { "msp430f5508",2,8 },
+  { "msp430f5509",2,8 },
+  { "msp430f5510",2,8 },
+  { "msp430f5513",2,8 },
+  { "msp430f5514",2,8 },
+  { "msp430f5515",2,8 },
+  { "msp430f5517",2,8 },
+  { "msp430f5519",2,8 },
+  { "msp430f5521",2,8 },
+  { "msp430f5522",2,8 },
+  { "msp430f5524",2,8 },
+  { "msp430f5525",2,8 },
+  { "msp430f5526",2,8 },
+  { "msp430f5527",2,8 },
+  { "msp430f5528",2,8 },
+  { "msp430f5529",2,8 },
+  { "msp430f5630",2,8 },
+  { "msp430f5631",2,8 },
+  { "msp430f5632",2,8 },
+  { "msp430f5633",2,8 },
+  { "msp430f5634",2,8 },
+  { "msp430f5635",2,8 },
+  { "msp430f5636",2,8 },
+  { "msp430f5637",2,8 },
+  { "msp430f5638",2,8 },
+  { "msp430f5658",2,8 },
+  { "msp430f5659",2,8 },
+  { "msp430f5xx_6xxgeneric",2,8 },
+  { "msp430f6433",2,8 },
+  { "msp430f6435",2,8 },
+  { "msp430f6436",2,8 },
+  { "msp430f6438",2,8 },
+  { "msp430f6458",2,8 },
+  { "msp430f6459",2,8 },
+  { "msp430f6630",2,8 },
+  { "msp430f6631",2,8 },
+  { "msp430f6632",2,8 },
+  { "msp430f6633",2,8 },
+  { "msp430f6634",2,8 },
+  { "msp430f6635",2,8 },
+  { "msp430f6636",2,8 },
+  { "msp430f6637",2,8 },
+  { "msp430f6638",2,8 },
+  { "msp430f6658",2,8 },
+  { "msp430f6659",2,8 },
+  { "msp430f6720",2,8 },
+  { "msp430f6720a",2,8 },
+  { "msp430f6721",2,8 },
+  { "msp430f6721a",2,8 },
+  { "msp430f6723",2,8 },
+  { "msp430f6723a",2,8 },
+  { "msp430f6724",2,8 },
+  { "msp430f6724a",2,8 },
+  { "msp430f6725",2,8 },
+  { "msp430f6725a",2,8 },
+  { "msp430f6726",2,8 },
+  { "msp430f6726a",2,8 },
+  { "msp430f6730",2,8 },
+  { "msp430f6730a",2,8 },
+  { "msp430f6731",2,8 },
+  { "msp430f6731a",2,8 },
+  { "msp430f6733",2,8 },
+  { "msp430f6733a",2,8 },
+  { "msp430f6734",2,8 },
+  { "msp430f6734a",2,8 },
+  { "msp430f6735",2,8 },
+  { "msp430f6735a",2,8 },
+  { "msp430f6736",2,8 },
+  { "msp430f6736a",2,8 },
+  { "msp430f6745",2,8 },
+  { "msp430f67451",2,8 },
+  { "msp430f67451a",2,8 },
+  { "msp430f6745a",2,8 },
+  { "msp430f6746",2,8 },
+  { "msp430f67461",2,8 },
+  { "msp430f67461a",2,8 },
+  { "msp430f6746a",2,8 },
+  { "msp430f6747",2,8 },
+  { "msp430f67471",2,8 },
+  { "msp430f67471a",2,8 },
+  { "msp430f6747a",2,8 },
+  { "msp430f6748",2,8 },
+  { "msp430f67481",2,8 },
+  { "msp430f67481a",2,8 },
+  { "msp430f6748a",2,8 },
+  { "msp430f6749",2,8 },
+  { "msp430f67491",2,8 },
+  { "msp430f67491a",2,8 },
+  { "msp430f6749a",2,8 },
+  { "msp430f67621",2,8 },
+  { "msp430f67621a",2,8 },
+  { "msp430f67641",2,8 },
+  { "msp430f67641a",2,8 },
+  { "msp430f6765",2,8 },
+  { "msp430f67651",2,8 },
+  { "msp430f67651a",2,8 },
+  { "msp430f6765a",2,8 },
+  { "msp430f6766",2,8 },
+  { "msp430f67661",2,8 },
+  { "msp430f67661a",2,8 },
+  { "msp430f6766a",2,8 },
+  { "msp430f6767",2,8 },
+  { "msp430f67671",2,8 },
+  { "msp430f67671a",2,8 },
+  { "msp430f6767a",2,8 },
+  { "msp430f6768",2,8 },
+  { "msp430f67681",2,8 },
+  { "msp430f67681a",2,8 },
+  { "msp430f6768a",2,8 },
+  { "msp430f6769",2,8 },
+  { "msp430f67691",2,8 },
+  { "msp430f67691a",2,8 },
+  { "msp430f6769a",2,8 },
+  { "msp430f6775",2,8 },
+  { "msp430f67751",2,8 },
+  { "msp430f67751a",2,8 },
+  { "msp430f6775a",2,8 },
+  { "msp430f6776",2,8 },
+  { "msp430f67761",2,8 },
+  { "msp430f67761a",2,8 },
+  { "msp430f6776a",2,8 },
+  { "msp430f6777",2,8 },
+  { "msp430f67771",2,8 },
+  { "msp430f67771a",2,8 },
+  { "msp430f6777a",2,8 },
+  { "msp430f6778",2,8 },
+  { "msp430f67781",2,8 },
+  { "msp430f67781a",2,8 },
+  { "msp430f6778a",2,8 },
+  { "msp430f6779",2,8 },
+  { "msp430f67791",2,8 },
+  { "msp430f67791a",2,8 },
+  { "msp430f6779a",2,8 },
+  { "msp430fe423",0,0 },
+  { "msp430fe4232",0,0 },
+  { "msp430fe423a",0,0 },
+  { "msp430fe4242",0,0 },
+  { "msp430fe425",0,0 },
+  { "msp430fe4252",0,0 },
+  { "msp430fe425a",0,0 },
+  { "msp430fe427",0,0 },
+  { "msp430fe4272",0,0 },
+  { "msp430fe427a",0,0 },
+  { "msp430fg4250",0,0 },
+  { "msp430fg4260",0,0 },
+  { "msp430fg4270",0,0 },
+  { "msp430fg437",0,0 },
+  { "msp430fg438",0,0 },
+  { "msp430fg439",0,0 },
+  { "msp430fg4616",1,1 },
+  { "msp430fg4617",1,1 },
+  { "msp430fg4618",1,1 },
+  { "msp430fg4619",1,1 },
+  { "msp430fg477",0,0 },
+  { "msp430fg478",0,0 },
+  { "msp430fg479",0,0 },
+  { "msp430fg6425",2,8 },
+  { "msp430fg6426",2,8 },
+  { "msp430fg6625",2,8 },
+  { "msp430fg6626",2,8 },
+  { "msp430fr2032",2,0 },
+  { "msp430fr2033",2,0 },
+  { "msp430fr2310",2,0 },
+  { "msp430fr2311",2,0 },
+  { "msp430fr2433",2,8 },
+  { "msp430fr2532",2,8 },
+  { "msp430fr2533",2,8 },
+  { "msp430fr2632",2,8 },
+  { "msp430fr2633",2,8 },
+  { "msp430fr2xx_4xxgeneric",2,8 },
+  { "msp430fr4131",2,0 },
+  { "msp430fr4132",2,0 },
+  { "msp430fr4133",2,0 },
+  { "msp430fr5720",2,8 },
+  { "msp430fr5721",2,8 },
+  { "msp430fr5722",2,8 },
+  { "msp430fr5723",2,8 },
+  { "msp430fr5724",2,8 },
+  { "msp430fr5725",2,8 },
+  { "msp430fr5726",2,8 },
+  { "msp430fr5727",2,8 },
+  { "msp430fr5728",2,8 },
+  { "msp430fr5729",2,8 },
+  { "msp430fr5730",2,8 },
+  { "msp430fr5731",2,8 },
+  { "msp430fr5732",2,8 },
+  { "msp430fr5733",2,8 },
+  { "msp430fr5734",2,8 },
+  { "msp430fr5735",2,8 },
+  { "msp430fr5736",2,8 },
+  { "msp430fr5737",2,8 },
+  { "msp430fr5738",2,8 },
+  { "msp430fr5739",2,8 },
+  { "msp430fr57xxgeneric",2,8 },
+  { "msp430fr5847",2,8 },
+  { "msp430fr58471",2,8 },
+  { "msp430fr5848",2,8 },
+  { "msp430fr5849",2,8 },
+  { "msp430fr5857",2,8 },
+  { "msp430fr5858",2,8 },
+  { "msp430fr5859",2,8 },
+  { "msp430fr5867",2,8 },
+  { "msp430fr5862",2,8 },
+  { "msp430fr5864",2,8 },
+  { "msp430fr58671",2,8 },
+  { "msp430fr5868",2,8 },
+  { "msp430fr5869",2,8 },
+  { "msp430fr5870",2,8 },
+  { "msp430fr5872",2,8 },
+  { "msp430fr58721",2,8 },
+  { "msp430fr5887",2,8 },
+  { "msp430fr5888",2,8 },
+  { "msp430fr5889",2,8 },
+  { "msp430fr58891",2,8 },
+  { "msp430fr5892",2,8 },
+  { "msp430fr5894",2,8 },
+  { "msp430fr5922",2,8 },
+  { "msp430fr59221",2,8 },
+  { "msp430fr5947",2,8 },
+  { "msp430fr59471",2,8 },
+  { "msp430fr5948",2,8 },
+  { "msp430fr5949",2,8 },
+  { "msp430fr5957",2,8 },
+  { "msp430fr5958",2,8 },
+  { "msp430fr5959",2,8 },
+  { "msp430fr5962",2,8 },
+  { "msp430fr5964",2,8 },
+  { "msp430fr5967",2,8 },
+  { "msp430fr5968",2,8 },
+  { "msp430fr5969",2,8 },
+  { "msp430fr59691",2,8 },
+  { "msp430fr5970",2,8 },
+  { "msp430fr5972",2,8 },
+  { "msp430fr59721",2,8 },
+  { "msp430fr5986",2,8 },
+  { "msp430fr5987",2,8 },
+  { "msp430fr5988",2,8 },
+  { "msp430fr5989",2,8 },
+  { "msp430fr59891",2,8 },
+  { "msp430fr5992",2,8 },
+  { "msp430fr5994",2,8 },
+  { "msp430fr5xx_6xxgeneric",2,8 },
+  { "msp430fr6820",2,8 },
+  { "msp430fr6822",2,8 },
+  { "msp430fr68221",2,8 },
+  { "msp430fr6870",2,8 },
+  { "msp430fr6872",2,8 },
+  { "msp430fr68721",2,8 },
+  { "msp430fr6877",2,8 },
+  { "msp430fr6879",2,8 },
+  { "msp430fr68791",2,8 },
+  { "msp430fr6887",2,8 },
+  { "msp430fr6888",2,8 },
+  { "msp430fr6889",2,8 },
+  { "msp430fr68891",2,8 },
+  { "msp430fr6920",2,8 },
+  { "msp430fr6922",2,8 },
+  { "msp430fr69221",2,8 },
+  { "msp430fr6927",2,8 },
+  { "msp430fr69271",2,8 },
+  { "msp430fr6928",2,8 },
+  { "msp430fr6970",2,8 },
+  { "msp430fr6972",2,8 },
+  { "msp430fr69721",2,8 },
+  { "msp430fr6977",2,8 },
+  { "msp430fr6979",2,8 },
+  { "msp430fr69791",2,8 },
+  { "msp430fr6987",2,8 },
+  { "msp430fr6988",2,8 },
+  { "msp430fr6989",2,8 },
+  { "msp430fr69891",2,8 },
+  { "msp430fw423",0,0 },
+  { "msp430fw425",0,0 },
+  { "msp430fw427",0,0 },
+  { "msp430fw428",0,0 },
+  { "msp430fw429",0,0 },
+  { "msp430g2001",0,0 },
+  { "msp430g2101",0,0 },
+  { "msp430g2102",0,0 },
+  { "msp430g2111",0,0 },
+  { "msp430g2112",0,0 },
+  { "msp430g2113",0,0 },
+  { "msp430g2121",0,0 },
+  { "msp430g2131",0,0 },
+  { "msp430g2132",0,0 },
+  { "msp430g2152",0,0 },
+  { "msp430g2153",0,0 },
+  { "msp430g2201",0,0 },
+  { "msp430g2202",0,0 },
+  { "msp430g2203",0,0 },
+  { "msp430g2210",0,0 },
+  { "msp430g2211",0,0 },
+  { "msp430g2212",0,0 },
+  { "msp430g2213",0,0 },
+  { "msp430g2221",0,0 },
+  { "msp430g2230",0,0 },
+  { "msp430g2231",0,0 },
+  { "msp430g2232",0,0 },
+  { "msp430g2233",0,0 },
+  { "msp430g2252",0,0 },
+  { "msp430g2253",0,0 },
+  { "msp430g2302",0,0 },
+  { "msp430g2303",0,0 },
+  { "msp430g2312",0,0 },
+  { "msp430g2313",0,0 },
+  { "msp430g2332",0,0 },
+  { "msp430g2333",0,0 },
+  { "msp430g2352",0,0 },
+  { "msp430g2353",0,0 },
+  { "msp430g2402",0,0 },
+  { "msp430g2403",0,0 },
+  { "msp430g2412",0,0 },
+  { "msp430g2413",0,0 },
+  { "msp430g2432",0,0 },
+  { "msp430g2433",0,0 },
+  { "msp430g2444",0,0 },
+  { "msp430g2452",0,0 },
+  { "msp430g2453",0,0 },
+  { "msp430g2513",0,0 },
+  { "msp430g2533",0,0 },
+  { "msp430g2544",0,0 },
+  { "msp430g2553",0,0 },
+  { "msp430g2744",0,0 },
+  { "msp430g2755",0,0 },
+  { "msp430g2855",0,0 },
+  { "msp430g2955",0,0 },
+  { "msp430i2020",0,2 },
+  { "msp430i2021",0,2 },
+  { "msp430i2030",0,2 },
+  { "msp430i2031",0,2 },
+  { "msp430i2040",0,2 },
+  { "msp430i2041",0,2 },
+  { "msp430i2xxgeneric",0,2 },
+  { "msp430l092",0,0 },
+  { "msp430p112",0,0 },
+  { "msp430p313",0,0 },
+  { "msp430p315",0,0 },
+  { "msp430p315s",0,0 },
+  { "msp430p325",0,0 },
+  { "msp430p337",0,1 },
+  { "msp430sl5438a",2,8 },
+  { "msp430tch5e",0,0 },
+  { "msp430xgeneric",2,8 },
+  { "rf430f5144",2,8 },
+  { "rf430f5155",2,8 },
+  { "rf430f5175",2,8 },
+  { "rf430frl152h",0,0 },
+  { "rf430frl152h_rom",0,0 },
+  { "rf430frl153h",0,0 },
+  { "rf430frl153h_rom",0,0 },
+  { "rf430frl154h",0,0 },
+  { "rf430frl154h_rom",0,0 }
+};  
 
 int
-md_parse_option (int c, char * arg)
+md_parse_option (int c, const char * arg)
 {
-  int i;
-
   switch (c)
     {
+    case OPTION_SILICON_ERRATA:
+    case OPTION_SILICON_ERRATA_WARN:
+      {
+	signed int i;
+	const struct
+	{
+	  const char *       name;
+	  unsigned int length;
+	  unsigned int bitfield;
+	} erratas[] =
+	{
+	  { STRING_COMMA_LEN ("cpu4"), SILICON_ERRATA_CPU4 },
+	  { STRING_COMMA_LEN ("cpu8"), SILICON_ERRATA_CPU8 },
+	  { STRING_COMMA_LEN ("cpu11"), SILICON_ERRATA_CPU11 },
+	  { STRING_COMMA_LEN ("cpu12"), SILICON_ERRATA_CPU12 },
+	  { STRING_COMMA_LEN ("cpu13"), SILICON_ERRATA_CPU13 },
+	  { STRING_COMMA_LEN ("cpu19"), SILICON_ERRATA_CPU19 },
+	};
+
+	do
+	  {
+	    for (i = ARRAY_SIZE (erratas); i--;)
+	      if (strncasecmp (arg, erratas[i].name, erratas[i].length) == 0)
+		{
+		  if (c == OPTION_SILICON_ERRATA)
+		    silicon_errata_fix |= erratas[i].bitfield;
+		  else
+		    silicon_errata_warn |= erratas[i].bitfield;
+		  arg += erratas[i].length;
+		  break;
+		}
+	    if (i < 0)
+	      {
+		as_warn (_("Unrecognised CPU errata name starting here: %s"), arg);
+		break;
+	      }
+	    if (*arg == 0)
+	      break;
+	    if (*arg != ',')
+	      as_warn (_("Expecting comma after CPU errata name, not: %s"), arg);
+	    else
+	      arg ++;
+	  }
+	while (*arg != 0);
+      }
+      return 1;
+
     case OPTION_MMCU:
       if (arg == NULL)
 	as_fatal (_("MCU option requires a name\n"));
 
-      for (i = 0; mcu_types[i].name; ++i)
-	if (strcasecmp (mcu_types[i].name, arg) == 0)
-	  break;
-
-      if (mcu_types[i].name == NULL)
-	{
-	  show_mcu_list (stderr);
-	  as_fatal (_("unknown MCU: %s\n"), arg);
-	}
-
-      /* Allow switching to the same or a lesser architecture.  */
-      if (msp430_mcu == &default_mcu || msp430_mcu->isa >= mcu_types[i].isa)
-	msp430_mcu = mcu_types + i;
+      if (strcasecmp ("msp430", arg) == 0)
+	selected_isa = MSP_ISA_430;
+      else if (strcasecmp ("msp430xv2", arg) == 0)
+	selected_isa = MSP_ISA_430Xv2;
+      else if (strcasecmp ("msp430x", arg) == 0)
+	selected_isa = MSP_ISA_430X;
       else
-	as_fatal (_("redefinition of mcu type '%s' to '%s'"),
-		  msp430_mcu->name, mcu_types[i].name);
+	{
+	  int i;
+
+	  for (i = ARRAY_SIZE (msp430_mcu_data); i--;)
+	    if (strcasecmp (msp430_mcu_data[i].name, arg) == 0)
+	      {
+		switch (msp430_mcu_data[i].revision)
+		  {
+		  case 0: selected_isa = MSP_ISA_430; break;
+		  case 1: selected_isa = MSP_ISA_430X; break;
+		  case 2: selected_isa = MSP_ISA_430Xv2; break;
+		  }
+		break;
+	    }
+	}
+      /* It is not an error if we do not match the MCU name.  */
       return 1;
 
     case OPTION_MCPU:
-      if (strcmp (arg, "430") == 0)
-	msp430_mcu = & default_mcu;
-      else if (strcmp (arg, "430x") == 0
-	       || strcmp (arg, "430X") == 0)
-	msp430_mcu = & msp430x_mcu;
-      else if (strcasecmp (arg, "430xv2") == 0)
-	msp430_mcu = & msp430xv2_mcu;
+      if (strcmp (arg, "430") == 0
+	  || strcasecmp (arg, "msp430") == 0)
+	selected_isa = MSP_ISA_430;
+      else if (strcasecmp (arg, "430x") == 0
+	       || strcasecmp (arg, "msp430x") == 0)
+	selected_isa = MSP_ISA_430X;
+      else if (strcasecmp (arg, "430xv2") == 0
+	       || strcasecmp (arg, "msp430xv2") == 0)
+	selected_isa = MSP_ISA_430Xv2;
       else
 	as_fatal (_("unrecognised argument to -mcpu option '%s'"), arg);
-
       return 1;
 
     case OPTION_RELAX:
@@ -1216,6 +1435,16 @@ md_parse_option (int c, char * arg)
     case OPTION_NO_INTR_NOPS:
       gen_interrupt_nops = FALSE;
       return 1;
+    case OPTION_INTR_NOPS:
+      gen_interrupt_nops = TRUE;
+      return 1;
+
+    case OPTION_WARN_INTR_NOPS:
+      warn_interrupt_nops = TRUE;
+      return 1;
+    case OPTION_NO_WARN_INTR_NOPS:
+      warn_interrupt_nops = FALSE;
+      return 1;
 
     case OPTION_MOVE_DATA:
       move_data = TRUE;
@@ -1225,23 +1454,89 @@ md_parse_option (int c, char * arg)
   return 0;
 }
 
-static void
-msp430_section (int arg)
-{
-  char * saved_ilp = input_line_pointer;
-  char * name = obj_elf_section_name ();
+/* The intention here is to have the mere presence of these sections
+   cause the object to have a reference to a well-known symbol.  This
+   reference pulls in the bits of the runtime (crt0) that initialize
+   these sections.  Thus, for example, the startup code to call
+   memset() to initialize .bss will only be linked in when there is a
+   non-empty .bss section.  Otherwise, the call would exist but have a
+   zero length parameter, which is a waste of memory and cycles.
 
+   The code which initializes these sections should have a global
+   label for these symbols, and should be marked with KEEP() in the
+   linker script.  */
+
+static void
+msp430_make_init_symbols (const char * name)
+{
   if (strncmp (name, ".bss", 4) == 0
       || strncmp (name, ".gnu.linkonce.b.", 16) == 0)
     (void) symbol_find_or_make ("__crt0_init_bss");
 
-  if (move_data
-      && (strncmp (name, ".data", 5) == 0
-	  || strncmp (name, ".gnu.linkonce.d.", 16) == 0))
+  if (strncmp (name, ".data", 5) == 0
+      || strncmp (name, ".gnu.linkonce.d.", 16) == 0)
     (void) symbol_find_or_make ("__crt0_movedata");
+
+  /* Note - data assigned to the .either.data section may end up being
+     placed in the .upper.data section if the .lower.data section is
+     full.  Hence the need to define the crt0 symbol.  */
+  if (strncmp (name, ".either.data", 12) == 0
+      || strncmp (name, ".upper.data", 11) == 0)
+    (void) symbol_find_or_make ("__crt0_move_highdata");
+
+  /* See note about .either.data above.  */
+  if (strncmp (name, ".upper.bss", 10) == 0
+      || strncmp (name, ".either.bss", 11) == 0)
+    (void) symbol_find_or_make ("__crt0_init_highbss");
+}
+
+static void
+msp430_section (int arg)
+{
+  char * saved_ilp = input_line_pointer;
+  const char * name = obj_elf_section_name ();
+
+  msp430_make_init_symbols (name);
 
   input_line_pointer = saved_ilp;
   obj_elf_section (arg);
+}
+
+void
+msp430_frob_section (asection *sec)
+{
+  const char *name = sec->name;
+
+  if (sec->size == 0)
+    return;
+
+  msp430_make_init_symbols (name);
+}
+
+static void
+msp430_lcomm (int ignore ATTRIBUTE_UNUSED)
+{
+  symbolS *symbolP = s_comm_internal (0, s_lcomm_internal);
+
+  if (symbolP)
+    symbol_get_bfdsym (symbolP)->flags |= BSF_OBJECT;
+  (void) symbol_find_or_make ("__crt0_init_bss");
+}
+
+static void
+msp430_comm (int needs_align)
+{
+  s_comm_internal (needs_align, elf_common_parse);
+  (void) symbol_find_or_make ("__crt0_init_bss");
+}
+
+static void
+msp430_refsym (int arg ATTRIBUTE_UNUSED)
+{
+  char sym_name[1024];
+  input_line_pointer = extract_word (input_line_pointer, sym_name, 1024);
+
+  (void) symbol_find_or_make (sym_name);
 }
 
 const pseudo_typeS md_pseudo_table[] =
@@ -1254,19 +1549,27 @@ const pseudo_typeS md_pseudo_table[] =
   {"sect", msp430_section, 0},
   {"sect.s", msp430_section, 0},
   {"pushsection", msp430_section, 1},
+  {"refsym", msp430_refsym, 0},
+  {"comm", msp430_comm, 0},
+  {"lcomm", msp430_lcomm, 0},
   {NULL, NULL, 0}
 };
 
-const char *md_shortopts = "mm:,mP,mQ,ml,mN";
+const char *md_shortopts = "mm:,mP,mQ,ml,mN,mn,my,mY";
 
 struct option md_longopts[] =
 {
+  {"msilicon-errata", required_argument, NULL, OPTION_SILICON_ERRATA},
+  {"msilicon-errata-warn", required_argument, NULL, OPTION_SILICON_ERRATA_WARN},
   {"mmcu", required_argument, NULL, OPTION_MMCU},
   {"mcpu", required_argument, NULL, OPTION_MCPU},
   {"mP", no_argument, NULL, OPTION_POLYMORPHS},
   {"mQ", no_argument, NULL, OPTION_RELAX},
   {"ml", no_argument, NULL, OPTION_LARGE},
   {"mN", no_argument, NULL, OPTION_NO_INTR_NOPS},
+  {"mn", no_argument, NULL, OPTION_INTR_NOPS},
+  {"mY", no_argument, NULL, OPTION_NO_WARN_INTR_NOPS},
+  {"my", no_argument, NULL, OPTION_WARN_INTR_NOPS},
   {"md", no_argument, NULL, OPTION_MOVE_DATA},
   {NULL, no_argument, NULL, 0}
 };
@@ -1281,16 +1584,24 @@ md_show_usage (FILE * stream)
 	     "  -mmcu=<msp430-name>     - select microcontroller type\n"
              "  -mcpu={430|430x|430xv2} - select microcontroller architecture\n"));
   fprintf (stream,
+	   _("  -msilicon-errata=<name>[,<name>...] - enable fixups for silicon errata\n"
+	     "  -msilicon-errata-warn=<name>[,<name>...] - warn when a fixup might be needed\n"
+	     "   supported errata names: cpu4, cpu8, cpu11, cpu12, cpu13, cpu19\n"));
+  fprintf (stream,
 	   _("  -mQ - enable relaxation at assembly time. DANGEROUS!\n"
 	     "  -mP - enable polymorph instructions\n"));
   fprintf (stream,
 	   _("  -ml - enable large code model\n"));
   fprintf (stream,
-	   _("  -mN - disable generation of NOP after changing interrupts\n"));
+	   _("  -mN - do not insert NOPs after changing interrupts (default)\n"));
+  fprintf (stream,
+	   _("  -mn - insert a NOP after changing interrupts\n"));
+  fprintf (stream,
+	   _("  -mY - do not warn about missing NOPs after changing interrupts\n"));
+  fprintf (stream,
+	   _("  -my - warn about missing NOPs after changing interrupts (default)\n"));
   fprintf (stream,
 	   _("  -md - Force copying of data from ROM to RAM at startup\n"));
-
-  show_mcu_list (stream);
 }
 
 symbolS *
@@ -1316,7 +1627,7 @@ extract_cmd (char * from, char * to, int limit)
   return from;
 }
 
-char *
+const char *
 md_atof (int type, char * litP, int * sizeP)
 {
   return ieee_md_atof (type, litP, sizeP, FALSE);
@@ -1333,6 +1644,9 @@ md_begin (void)
 
   bfd_set_arch_mach (stdoutput, TARGET_ARCH,
 		     target_is_430x () ? bfd_mach_msp430x : bfd_mach_msp11);
+
+  /*  Set linkrelax here to avoid fixups in most sections.  */
+  linkrelax = 1;
 }
 
 /* Returns the register number equivalent to the string T.
@@ -1375,7 +1689,7 @@ static int
 msp430_srcoperand (struct msp430_operand_s * op,
 		   char * l,
 		   int bin,
-		   int * imm_op,
+		   bfd_boolean * imm_op,
 		   bfd_boolean allow_20bit_values,
 		   bfd_boolean constants_allowed)
 {
@@ -1395,7 +1709,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	 hhi(x) - x = (x >> 48) & 0xffff
 	 The value _MUST_ be constant expression: #hlo(1231231231).  */
 
-      *imm_op = 1;
+      *imm_op = TRUE;
 
       if (strncasecmp (h, "#llo(", 5) == 0)
 	{
@@ -1430,9 +1744,10 @@ msp430_srcoperand (struct msp430_operand_s * op,
 
       op->reg = 0;		/* Reg PC.  */
       op->am = 3;
-      op->ol = 1;		/* Immediate  will follow an instruction.  */
+      op->ol = 1;		/* Immediate will follow an instruction.  */
       __tl = h + 1 + rval;
       op->mode = OP_EXP;
+      op->vshift = vshift;
 
       parse_exp (__tl, &(op->exp));
       if (op->exp.X_op == O_constant)
@@ -1448,6 +1763,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	    {
 	      x = (x >> 16) & 0xffff;
 	      op->exp.X_add_number = x;
+	      op->vshift = 0;
 	    }
 	  else if (vshift > 1)
 	    {
@@ -1456,11 +1772,12 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	      else
 		op->exp.X_add_number = 0;	/* Nothing left.  */
 	      x = op->exp.X_add_number;
+	      op->vshift = 0;
 	    }
 
 	  if (allow_20bit_values)
 	    {
-	      if (op->exp.X_add_number > 0xfffff || op->exp.X_add_number < - (0x7ffff))
+	      if (op->exp.X_add_number > 0xfffff || op->exp.X_add_number < -524288)
 		{
 		  as_bad (_("value 0x%x out of extended range."), x);
 		  return 1;
@@ -1510,14 +1827,14 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	    }
 	  else if (x == 4)
 	    {
-#ifdef PUSH_1X_WORKAROUND
-	      if (bin == 0x1200)
+	      if (bin == 0x1200 && ! target_is_430x ())
 		{
-		  /* Remove warning as confusing.
-		     as_warn (_("Hardware push bug workaround")); */
+		  /* CPU4: The shorter form of PUSH #4 is not supported on MSP430.  */
+		  if (silicon_errata_warn & SILICON_ERRATA_CPU4)
+		    as_warn (_("cpu4: not converting PUSH #4 to shorter form"));
+		  /* No need to check silicon_errata_fixes - this fix is always implemented.  */
 		}
 	      else
-#endif
 		{
 		  op->reg = 2;
 		  op->am = 2;
@@ -1527,14 +1844,13 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	    }
 	  else if (x == 8)
 	    {
-#ifdef PUSH_1X_WORKAROUND
-	      if (bin == 0x1200)
+	      if (bin == 0x1200 && ! target_is_430x ())
 		{
-		  /* Remove warning as confusing.
-		     as_warn (_("Hardware push bug workaround")); */
+		  /* CPU4: The shorter form of PUSH #8 is not supported on MSP430.  */
+		  if (silicon_errata_warn & SILICON_ERRATA_CPU4)
+		    as_warn (_("cpu4: not converting PUSH #8 to shorter form"));
 		}
 	      else
-#endif
 		{
 		  op->reg = 2;
 		  op->am = 3;
@@ -1545,16 +1861,20 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	}
       else if (op->exp.X_op == O_symbol)
 	{
+	  if (vshift > 1)
+	    as_bad (_("error: unsupported #foo() directive used on symbol"));
 	  op->mode = OP_EXP;
 	}
       else if (op->exp.X_op == O_big)
 	{
 	  short x;
+
 	  if (vshift != -1)
 	    {
 	      op->exp.X_op = O_constant;
 	      op->exp.X_add_number = 0xffff & generic_bignum[vshift];
 	      x = op->exp.X_add_number;
+	      op->vshift = 0;
 	    }
 	  else
 	    {
@@ -1628,6 +1948,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
       __tl = h + 1;
       parse_exp (__tl, &(op->exp));
       op->mode = OP_EXP;
+      op->vshift = 0;
       if (op->exp.X_op == O_constant)
 	{
 	  int x = op->exp.X_add_number;
@@ -1691,6 +2012,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	  as_bad (_("cannot use indirect addressing with the PC"));
 	  return 1;
 	}
+
       return 0;
     }
 
@@ -1701,7 +2023,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
       char *m = strrchr (l, ')');
       char *t;
 
-      *imm_op = 1;
+      *imm_op = TRUE;
 
       if (!h)
 	break;
@@ -1734,6 +2056,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
       __tl = l;
       *h = 0;
       op->mode = OP_EXP;
+      op->vshift = 0;
       parse_exp (__tl, &(op->exp));
       if (op->exp.X_op == O_constant)
 	{
@@ -1759,6 +2082,14 @@ msp430_srcoperand (struct msp430_operand_s * op,
 	      op->am = 2;
 	      op->ol = 0;
 	      return 0;
+	    }
+
+	  if (op->reg == 1 && (x & 1))
+	    {
+	      if (silicon_errata_fix & SILICON_ERRATA_CPU8)
+		as_bad (_("CPU8: Stack pointer accessed with an odd offset"));
+	      else if (silicon_errata_warn & SILICON_ERRATA_CPU8)
+		as_warn (_("CPU8: Stack pointer accessed with an odd offset"));
 	    }
 	}
       else if (op->exp.X_op == O_symbol)
@@ -1795,6 +2126,7 @@ msp430_srcoperand (struct msp430_operand_s * op,
       /* An expression starting with a minus sign is a constant, not an address.  */
       op->am = (*l == '-' ? 3 : 1);
       op->ol = 1;
+      op->vshift = 0;
       __tl = l;
       parse_exp (__tl, &(op->exp));
       return 0;
@@ -1824,11 +2156,12 @@ msp430_dstoperand (struct msp430_operand_s * op,
 
   if (op->am == 2)
     {
-      char *__tl = "0";
+      char *__tl = (char *) "0";
 
       op->mode = OP_EXP;
       op->am = 1;
       op->ol = 1;
+      op->vshift = 0;
       parse_exp (__tl, &(op->exp));
 
       if (op->exp.X_op != O_constant || op->exp.X_add_number != 0)
@@ -1848,7 +2181,6 @@ msp430_dstoperand (struct msp430_operand_s * op,
     }
   return 0;
 }
-
 
 /* Attempt to encode a MOVA instruction with the given operands.
    Returns the length of the encoded instruction if successful
@@ -2109,6 +2441,12 @@ try_encode_mova (bfd_boolean imm_op,
   return 0;
 }
 
+#define NOP_CHECK_INTERRUPT  (1 << 0)
+#define NOP_CHECK_CPU12      (1 << 1)
+#define NOP_CHECK_CPU19      (1 << 2)
+
+static signed int check_for_nop = 0;
+
 #define is_opcode(NAME) (strcmp (opcode->name, NAME) == 0)
 
 /* Parse instruction operands.
@@ -2125,7 +2463,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
   struct msp430_operand_s op1, op2;
   int res = 0;
   static short ZEROS = 0;
-  int byte_op, imm_op;
+  bfd_boolean byte_op, imm_op;
   int op_length = 0;
   int fmt;
   int extended = 0x1800;
@@ -2133,6 +2471,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
   bfd_boolean addr_op;
   const char * error_message;
   static signed int repeat_count = 0;
+  static bfd_boolean prev_insn_is_nop = FALSE;
   bfd_boolean fix_emitted;
 
   /* Opcode is the one from opcodes table
@@ -2141,7 +2480,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
      or
      .b @r2+, 5(R1).  */
 
-  byte_op = 0;
+  byte_op = FALSE;
   addr_op = FALSE;
   if (*line == '.')
     {
@@ -2153,7 +2492,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	case 'b':
 	  /* Byte operation.  */
 	  bin |= BYTE_OPERATION;
-	  byte_op = 1;
+	  byte_op = TRUE;
 	  check = TRUE;
 	  break;
 
@@ -2204,7 +2543,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
      support it for compatibility purposes.  */
   if (addr_op && opcode->fmt >= 0)
     {
-      char * old_name = opcode->name;
+      const char * old_name = opcode->name;
       char real_name[32];
 
       sprintf (real_name, "%sa", old_name);
@@ -2235,7 +2574,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
   memset (&op1, 0, sizeof (op1));
   memset (&op2, 0, sizeof (op2));
 
-  imm_op = 0;
+  imm_op = FALSE;
 
   if ((fmt = opcode->fmt) < 0)
     {
@@ -2245,7 +2584,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		  opcode->name);
 	  return 0;
 	}
-	
+
       fmt = (-fmt) - 1;
       extended_op = TRUE;
     }
@@ -2266,12 +2605,92 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
       repeat_count = 0;
     }
 
+  if (check_for_nop)
+    {
+      if (! is_opcode ("nop"))
+	{
+	  bfd_boolean doit = FALSE;
+
+	  do
+	    {
+	      switch (check_for_nop & - check_for_nop)
+		{
+		case NOP_CHECK_INTERRUPT:
+		  if (warn_interrupt_nops)
+		    {
+		      if (gen_interrupt_nops)
+			as_warn (_("NOP inserted between two instructions that change interrupt state"));
+		      else
+			as_warn (_("a NOP might be needed here because of successive changes in interrupt state"));
+		    }
+
+		  if (gen_interrupt_nops)
+		    /* Emit a NOP between interrupt enable/disable.
+		       See 1.3.4.1 of the MSP430x5xx User Guide.  */
+		    doit = TRUE;
+		  break;
+
+		case NOP_CHECK_CPU12:
+		  if (silicon_errata_warn & SILICON_ERRATA_CPU12)
+		    as_warn (_("CPU12: CMP/BIT with PC destinstion ignores next instruction"));
+
+		  if (silicon_errata_fix & SILICON_ERRATA_CPU12)
+		    doit = TRUE;
+		  break;
+
+		case NOP_CHECK_CPU19:
+		  if (silicon_errata_warn & SILICON_ERRATA_CPU19)
+		    as_warn (_("CPU19: Instruction setting CPUOFF must be followed by a NOP"));
+
+		  if (silicon_errata_fix & SILICON_ERRATA_CPU19)
+		    doit = TRUE;
+		  break;
+		  
+		default:
+		  as_bad (_("internal error: unknown nop check state"));
+		  break;
+		}
+	      check_for_nop &= ~ (check_for_nop & - check_for_nop);
+	    }
+	  while (check_for_nop);
+	  
+	  if (doit)
+	    {
+	      frag = frag_more (2);
+	      bfd_putl16 ((bfd_vma) 0x4303 /* NOP */, frag);
+	      dwarf2_emit_insn (2);
+	    }
+	}
+
+      check_for_nop = 0;
+    }
+
   switch (fmt)
     {
     case 0:			/* Emulated.  */
       switch (opcode->insn_opnumb)
 	{
 	case 0:
+	  if (is_opcode ("eint"))
+	    {
+	      if (! prev_insn_is_nop)
+		{
+		  if (gen_interrupt_nops)
+		    {
+		      frag = frag_more (2);
+		      bfd_putl16 ((bfd_vma) 0x4303 /* NOP */, frag);
+		      dwarf2_emit_insn (2);
+
+		      if (warn_interrupt_nops)
+			as_warn (_("inserting a NOP before EINT"));
+		    }
+		  else if (warn_interrupt_nops)
+		    as_warn (_("a NOP might be needed before the EINT"));
+		}
+	    }
+	  else if (is_opcode ("dint"))
+	    check_for_nop |= NOP_CHECK_INTERRUPT;
+
 	  /* Set/clear bits instructions.  */
 	  if (extended_op)
 	    {
@@ -2280,26 +2699,13 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 
 	      /* Emit the extension word.  */
 	      insn_length += 2;
-	      frag = frag_more (insn_length);
+	      frag = frag_more (2);
 	      bfd_putl16 (extended, frag);
 	    }
 
 	  insn_length += 2;
-	  frag = frag_more (insn_length);
+	  frag = frag_more (2);
 	  bfd_putl16 ((bfd_vma) bin, frag);
-
-	  if (gen_interrupt_nops
-	      && target_is_430xv2 ()
-	      && (is_opcode ("eint") || is_opcode ("dint")))
-	    {
-	      /* Emit a NOP following interrupt enable/disable.
-		 See 1.3.4.1 of the MSP430x5xx User Guide.  */
-	      insn_length += 2;
-	      frag = frag_more (2);
-	      as_warn (_("a NOP instruction has been inserted after %s"),
-		       opcode->name);
-	      bfd_putl16 ((bfd_vma) 0x4303 /* NOP */, frag);
-	    }
 	  dwarf2_emit_insn (insn_length);
 	  break;
 
@@ -2310,9 +2716,44 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  if (res)
 	    break;
 
+	  bin |= (op1.reg | (op1.am << 7));
+
+	  /* If the PC is the destination...  */
+	  if (op1.am == 0 && op1.reg == 0
+	      /* ... and the opcode alters the SR.  */
+	      && !(is_opcode ("bic") || is_opcode ("bis") || is_opcode ("mov")
+		   || is_opcode ("bicx") || is_opcode ("bisx") || is_opcode ("movx")))
+	    {
+	      if (silicon_errata_fix & SILICON_ERRATA_CPU11)
+		as_bad (_("CPU11: PC is destinstion of SR altering instruction"));
+	      else if (silicon_errata_warn & SILICON_ERRATA_CPU11)
+		as_warn (_("CPU11: PC is destinstion of SR altering instruction"));
+	    }
+	  
+	  /* If the status register is the destination...  */
+	  if (op1.am == 0 && op1.reg == 2
+	      /* ... and the opcode alters the SR.  */
+	      && (is_opcode ("adc") || is_opcode ("dec") || is_opcode ("decd")
+		  || is_opcode ("inc") || is_opcode ("incd") || is_opcode ("inv")
+		  || is_opcode ("sbc") || is_opcode ("sxt")
+		  || is_opcode ("adcx") || is_opcode ("decx") || is_opcode ("decdx")
+		  || is_opcode ("incx") || is_opcode ("incdx") || is_opcode ("invx")
+		  || is_opcode ("sbcx")
+		  ))
+	    {
+	      if (silicon_errata_fix & SILICON_ERRATA_CPU13)
+		as_bad (_("CPU13: SR is destinstion of SR altering instruction"));
+	      else if (silicon_errata_warn & SILICON_ERRATA_CPU13)
+		as_warn (_("CPU13: SR is destinstion of SR altering instruction"));
+	    }
+	  
+	  if (is_opcode ("clr") && bin == 0x4302 /* CLR R2*/)
+	    check_for_nop |= NOP_CHECK_INTERRUPT;
+
 	  /* Compute the entire instruction length, in bytes.  */
-	  insn_length = (extended_op ? 2 : 0) + 2 + (op1.ol * 2);
-	  frag = frag_more (insn_length);
+	  op_length = (extended_op ? 2 : 0) + 2 + (op1.ol * 2);
+	  insn_length += op_length;
+	  frag = frag_more (op_length);
 	  where = frag - frag_now->fr_literal;
 
 	  if (extended_op)
@@ -2331,7 +2772,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		  if (op1.exp.X_op == O_constant)
 		    extended |= ((op1.exp.X_add_number >> 16) & 0xf) << 7;
 
-		  else if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+		  else if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		    fix_new_exp (frag_now, where, 6, &(op1.exp), FALSE,
 				 BFD_RELOC_MSP430X_ABS20_EXT_SRC);
 		  else
@@ -2345,7 +2786,6 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      where += 2;
 	    }
 
-	  bin |= (op1.reg | (op1.am << 7));
 	  bfd_putl16 ((bfd_vma) bin, frag);
 	  frag += 2;
 	  where += 2;
@@ -2364,26 +2804,12 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		    {
 		      if (op1.reg)
 			fix_new_exp (frag_now, where, 2,
-				     &(op1.exp), FALSE, CHECK_RELOC_MSP430);
+				     &(op1.exp), FALSE, CHECK_RELOC_MSP430 (op1));
 		      else
 			fix_new_exp (frag_now, where, 2,
 				     &(op1.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
 		    }
 		}
-	    }
-
-	  if (gen_interrupt_nops
-	      && target_is_430xv2 ()
-	      && is_opcode ("clr")
-	      && bin == 0x4302 /* CLR R2*/)
-	    {
-	      /* Emit a NOP following interrupt enable/disable.
-		 See 1.3.4.1 of the MSP430x5xx User Guide.  */
-	      insn_length += 2;
-	      frag = frag_more (2);
-	      bfd_putl16 ((bfd_vma) 0x4303 /* NOP */, frag);
-	      as_warn (_("a NOP instruction has been inserted after %s"),
-		       opcode->name);
 	    }
 
 	  dwarf2_emit_insn (insn_length);
@@ -2413,9 +2839,22 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		  || is_opcode ("rlc")))
 	    {
 	      as_bad (_("%s: attempt to rotate the PC register"), opcode->name);
-	      return 0;
+	      break;
 	    }
 
+	  /* If the status register is the destination...  */
+	  if (op1.am == 0 && op1.reg == 2
+	      /* ... and the opcode alters the SR.  */
+	      && (is_opcode ("rla") || is_opcode ("rlc")
+		  || is_opcode ("rlax") || is_opcode ("rlcx")
+		  ))
+	    {
+	      if (silicon_errata_fix & SILICON_ERRATA_CPU13)
+		as_bad (_("CPU13: SR is destinstion of SR altering instruction"));
+	      else if (silicon_errata_warn & SILICON_ERRATA_CPU13)
+		as_warn (_("CPU13: SR is destinstion of SR altering instruction"));
+	    }
+	  
 	  if (extended_op)
 	    {
 	      if (!addr_op)
@@ -2432,7 +2871,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		  if (op1.exp.X_op == O_constant)
 		    extended |= ((op1.exp.X_add_number >> 16) & 0xf) << 7;
 
-		  else if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+		  else if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		    fix_new_exp (frag_now, where, 6, &(op1.exp), FALSE,
 				 BFD_RELOC_MSP430X_ABS20_EXT_SRC);
 		  else
@@ -2478,9 +2917,9 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 
 		  if (!extended_op)
 		    {
-		      if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+		      if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 			fix_new_exp (frag_now, where, 2,
-				     &(op1.exp), FALSE, CHECK_RELOC_MSP430);
+				     &(op1.exp), FALSE, CHECK_RELOC_MSP430 (op1));
 		      else
 			fix_new_exp (frag_now, where, 2,
 				     &(op1.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -2504,7 +2943,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		    {
 		      if (op2.reg)	/* Not PC relative.  */
 			fix_new_exp (frag_now, where, 2,
-				     &(op2.exp), FALSE, CHECK_RELOC_MSP430);
+				     &(op2.exp), FALSE, CHECK_RELOC_MSP430 (op2));
 		      else
 			fix_new_exp (frag_now, where, 2,
 				     &(op2.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -2520,7 +2959,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  if (extended_op)
 	    {
 	      as_bad ("Internal error: state 0/3 not coded for extended instructions");
-	      return 0;
+	      break;
 	    }
 
 	  line = extract_operand (line, l1, sizeof (l1));
@@ -2528,8 +2967,8 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  if (res)
 	    break;
 
-	  byte_op = 0;
-	  imm_op = 0;
+	  byte_op = FALSE;
+	  imm_op = FALSE;
 	  bin |= ((op1.reg << 8) | (op1.am << 4));
 	  op_length = 2 + 2 * op1.ol;
 	  frag = frag_more (op_length);
@@ -2548,9 +2987,9 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 
 		  bfd_putl16 ((bfd_vma) ZEROS, frag + 2);
 
-		  if (op1.reg || (op1.reg == 0 && op1.am == 3))
+		  if (op1.reg || op1.am == 3)
 		    fix_new_exp (frag_now, where, 2,
-				 &(op1.exp), FALSE, CHECK_RELOC_MSP430);
+				 &(op1.exp), FALSE, CHECK_RELOC_MSP430 (op1));
 		  else
 		    fix_new_exp (frag_now, where, 2,
 				 &(op1.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -2565,14 +3004,14 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  fix_emitted = FALSE;
 
 	  line = extract_operand (line, l1, sizeof (l1));
-	  imm_op = 0;
+	  imm_op = FALSE;
 
 	  res = msp430_srcoperand (&op1, l1, opcode->bin_opcode, &imm_op,
 				   extended_op, FALSE);
 	  if (res)
 	    break;
 
-	  byte_op = 0;
+	  byte_op = FALSE;
 
 	  op_length = 2 + 2 * op1.ol;
 	  frag = frag_more (op_length);
@@ -2624,7 +3063,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      if (op1.ol != 1)
 		{
 		  as_bad ("Internal error: unexpected CALLA instruction length: %d\n", op1.ol);
-		  return 0;
+		  break;
 		}
 
 	      bfd_putl16 ((bfd_vma) ZEROS, frag + 2);
@@ -2649,21 +3088,21 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    if (*l1 != '#')
 	      {
 		as_bad (_("expected #n as first argument of %s"), opcode->name);
-		return 0;
+		break;
 	      }
 	    parse_exp (l1 + 1, &(op1.exp));
 	    if (op1.exp.X_op != O_constant)
 	      {
 		as_bad (_("expected constant expression for first argument of %s"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 
 	    if ((reg = check_reg (l2)) == -1)
 	      {
 		as_bad (_("expected register as second argument of %s"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 
 	    op_length = 2;
@@ -2681,17 +3120,17 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		if (reg - n + 1 < 0)
 		  {
 		    as_bad (_("Too many registers popped"));
-		    return 0;
+		    break;
 		  }
 
-		/* CPU21 parts cannot use POPM to restore the SR register.  */
+		/* CPU21 errata: cannot use POPM to restore the SR register.  */
 		if (target_is_430xv2 ()
 		    && (reg - n + 1 < 3)
 		    && reg >= 2
 		    && is_opcode ("popm"))
 		  {
 		    as_bad (_("Cannot use POPM to restore the SR register"));
-		    return 0;
+		    break;
 		  }
 
 		bin |= (reg - n + 1);
@@ -2711,7 +3150,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    if (extended & 0xff)
 	      {
 		as_bad (_("repeat count cannot be used with %s"), opcode->name);
-		return 0;
+		break;
 	      }
 
 	    line = extract_operand (line, l1, sizeof (l1));
@@ -2720,34 +3159,34 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    if (*l1 != '#')
 	      {
 		as_bad (_("expected #n as first argument of %s"), opcode->name);
-		return 0;
+		break;
 	      }
 	    parse_exp (l1 + 1, &(op1.exp));
 	    if (op1.exp.X_op != O_constant)
 	      {
 		as_bad (_("expected constant expression for first argument of %s"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 	    n = op1.exp.X_add_number;
 	    if (n > 4 || n < 1)
 	      {
 		as_bad (_("expected first argument of %s to be in the range 1-4"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 
 	    if ((reg = check_reg (l2)) == -1)
 	      {
 		as_bad (_("expected register as second argument of %s"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 
 	    if (target_is_430xv2 () && reg == 0)
 	      {
 		as_bad (_("%s: attempt to rotate the PC register"), opcode->name);
-		return 0;
+		break;
 	      }
 
 	    op_length = 2;
@@ -2765,63 +3204,6 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    break;
 	  }
 
-	case 7:
-	  {
-	    int reg;
-
-	    /* RRUX: Synthetic unsigned right shift of a register by one bit.  */
-	    if (extended & 0xff)
-	      {
-		as_bad (_("repeat count cannot be used with %s"), opcode->name);
-		return 0;
-	      }
-
-	    line = extract_operand (line, l1, sizeof (l1));
-	    if ((reg = check_reg (l1)) == -1)
-	      {
-		as_bad (_("expected register as argument of %s"),
-			opcode->name);
-		return 0;
-	      }
-
-	    if (target_is_430xv2 () && reg == 0)
-	      {
-		as_bad (_("%s: attempt to rotate the PC register"), opcode->name);
-		return 0;
-	      }
-
-	    if (byte_op)
-	      {
-		/* Tricky - there is no single instruction that will do this.
-		   Encode as: RRA.B rN { BIC.B #0x80, rN  */
-		op_length = 6;
-		frag = frag_more (op_length);
-		where = frag - frag_now->fr_literal;
-		bin = 0x1140 | reg;
-		bfd_putl16 ((bfd_vma) bin, frag);
-		dwarf2_emit_insn (2);
-		bin = 0xc070 | reg;
-		bfd_putl16 ((bfd_vma) bin, frag + 2);
-		bin = 0x0080;
-		bfd_putl16 ((bfd_vma) bin, frag + 4);
-		dwarf2_emit_insn (4);
-	      }
-	    else
-	      {
-		/* Encode as RRUM[.A] rN.  */
-		bin = opcode->bin_opcode;
-		if (! addr_op)
-		  bin |= 0x10;
-		bin |= reg;
-		op_length = 2;
-		frag = frag_more (op_length);
-		where = frag - frag_now->fr_literal;
-		bfd_putl16 ((bfd_vma) bin, frag);
-		dwarf2_emit_insn (op_length);
-	      }
-	    break;
-	  }
-
 	case 8:
 	  {
 	    bfd_boolean need_reloc = FALSE;
@@ -2832,7 +3214,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    if (extended & 0xff)
 	      {
 		as_bad (_("repeat count cannot be used with %s"), opcode->name);
-		return 0;
+		break;
 	      }
 
 	    line = extract_operand (line, l1, sizeof (l1));
@@ -2851,7 +3233,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		      {
 			as_bad (_("expected value of first argument of %s to fit into 20-bits"),
 				opcode->name);
-			return 0;
+			break;
 		      }
 
 		    bin |= ((n >> 16) & 0xf) << 8;
@@ -2870,7 +3252,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		  {
 		    as_bad (_("expected register name or constant as first argument of %s"),
 			    opcode->name);
-		    return 0;
+		    break;
 		  }
 
 		bin |= (n << 8) | (1 << 6);
@@ -2881,7 +3263,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      {
 		as_bad (_("expected register as second argument of %s"),
 			opcode->name);
-		return 0;
+		break;
 	      }
 
 	    frag = frag_more (op_length);
@@ -2899,7 +3281,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  }
 
 	case 9: /* MOVA, BRA, RETA.  */
-	  imm_op = 0;
+	  imm_op = FALSE;
 	  bin = opcode->bin_opcode;
 
 	  if (is_opcode ("reta"))
@@ -2944,7 +3326,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 					    & error_message)) == 0)
 	    {
 	      as_bad (error_message, opcode->name);
-	      return 0;
+	      break;
 	    }
 	  dwarf2_emit_insn (op_length);
 	  break;
@@ -2958,13 +3340,13 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      if (op1.exp.X_op != O_constant)
 		{
 		  as_bad (_("expected constant value as argument to RPT"));
-		  return 0;
+		  break;
 		}
 	      if (op1.exp.X_add_number < 1
 		  || op1.exp.X_add_number > (1 << 4))
 		{
 		  as_bad (_("expected constant in the range 2..16"));
-		  return 0;
+		  break;
 		}
 
 	      /* We silently accept and ignore a repeat count of 1.  */
@@ -2985,7 +3367,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      else
 		{
 		  as_bad (_("expected constant or register name as argument to RPT insn"));
-		  return 0;
+		  break;
 		}
 	    }
 	  break;
@@ -3020,14 +3402,66 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    }
 	}
 
+      bin |= (op2.reg | (op1.reg << 8) | (op1.am << 4) | (op2.am << 7));
+
+      /* If the PC is the destination...  */
+      if (op2.am == 0 && op2.reg == 0
+	  /* ... and the opcode alters the SR.  */
+	  && !(is_opcode ("bic") || is_opcode ("bis") || is_opcode ("mov")
+	       || is_opcode ("bicx") || is_opcode ("bisx") || is_opcode ("movx")))
+	{
+	  if (silicon_errata_fix & SILICON_ERRATA_CPU11)
+	    as_bad (_("CPU11: PC is destinstion of SR altering instruction"));
+	  else if (silicon_errata_warn & SILICON_ERRATA_CPU11)
+	    as_warn (_("CPU11: PC is destinstion of SR altering instruction"));
+	}
+	  
+      /* If the status register is the destination...  */
+      if (op2.am == 0 && op2.reg == 2
+	  /* ... and the opcode alters the SR.  */
+	  && (is_opcode ("add") || is_opcode ("addc") || is_opcode ("and")
+	      || is_opcode ("dadd") || is_opcode ("sub") || is_opcode ("subc")
+	      || is_opcode ("xor")
+	      || is_opcode ("addx") || is_opcode ("addcx") || is_opcode ("andx")
+	      || is_opcode ("daddx") || is_opcode ("subx") || is_opcode ("subcx")
+	      || is_opcode ("xorx")
+	      ))
+	{
+	  if (silicon_errata_fix & SILICON_ERRATA_CPU13)
+	    as_bad (_("CPU13: SR is destinstion of SR altering instruction"));
+	  else if (silicon_errata_warn & SILICON_ERRATA_CPU13)
+	    as_warn (_("CPU13: SR is destinstion of SR altering instruction"));
+	}
+	  
+      if (   (is_opcode ("bic") && bin == 0xc232)
+	  || (is_opcode ("bis") && bin == 0xd232)
+	  || (is_opcode ("mov") && op2.mode == OP_REG && op2.reg == 2))
+	{
+	  /* Avoid false checks when a constant value is being put into the SR.  */
+	  if (op1.mode == OP_EXP
+	      && op1.exp.X_op == O_constant
+	      && (op1.exp.X_add_number & 0x8) != 0x8)
+	    ;
+	  else
+	    check_for_nop |= NOP_CHECK_INTERRUPT;
+	}
+
+      if (((is_opcode ("bis") && bin == 0xd032)
+	   || (is_opcode ("mov") && bin == 0x4032)
+	   || (is_opcode ("xor") && bin == 0xe032))
+	  && op1.mode == OP_EXP
+	  && op1.exp.X_op == O_constant
+	  && (op1.exp.X_add_number & 0x10) == 0x10)
+	check_for_nop |= NOP_CHECK_CPU19;
+
       /* Compute the entire length of the instruction in bytes.  */
-      insn_length =
-	(extended_op ? 2 : 0)	/* The extension word.  */
+      op_length = (extended_op ? 2 : 0)	/* The extension word.  */
 	+ 2 			/* The opcode */
 	+ (2 * op1.ol)		/* The first operand. */
 	+ (2 * op2.ol);		/* The second operand.  */
 
-      frag = frag_more (insn_length);
+      insn_length += op_length;
+      frag = frag_more (op_length);
       where = frag - frag_now->fr_literal;
 
       if (extended_op)
@@ -3047,7 +3481,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      if (op1.exp.X_op == O_constant)
 		extended |= ((op1.exp.X_add_number >> 16) & 0xf) << 7;
 
-	      else  if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+	      else  if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		fix_new_exp (frag_now, where, 6, &(op1.exp), FALSE,
 			     BFD_RELOC_MSP430X_ABS20_EXT_SRC);
 	      else
@@ -3077,7 +3511,6 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  frag += 2;
 	}
 
-      bin |= (op2.reg | (op1.reg << 8) | (op1.am << 4) | (op2.am << 7));
       bfd_putl16 ((bfd_vma) bin, frag);
       where += 2;
       frag += 2;
@@ -3094,9 +3527,9 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 
 	      if (!extended_op)
 		{
-		  if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+		  if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		    fix_new_exp (frag_now, where, 2,
-				 &(op1.exp), FALSE, CHECK_RELOC_MSP430);
+				 &(op1.exp), FALSE, CHECK_RELOC_MSP430 (op1));
 		  else
 		    fix_new_exp (frag_now, where, 2,
 				 &(op1.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -3121,7 +3554,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		{
 		  if (op2.reg)		/* Not PC relative.  */
 		    fix_new_exp (frag_now, where, 2,
-			     &(op2.exp), FALSE, CHECK_RELOC_MSP430);
+				 &(op2.exp), FALSE, CHECK_RELOC_MSP430 (op2));
 		  else
 		    fix_new_exp (frag_now, where, 2,
 				 &(op2.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -3129,22 +3562,13 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	    }
 	}
 
-      if (gen_interrupt_nops
-	  && target_is_430xv2 ()
-	  && (   (is_opcode ("bic") && bin == 0xc232)
-	      || (is_opcode ("bis") && bin == 0xd232)
-	      || (is_opcode ("mov") && op2.mode == OP_REG && op2.reg == 2)))
-	{
-	  /* Emit a NOP following interrupt enable/disable.
-	     See 1.3.4.1 of the MSP430x5xx User Guide.  */
-	  insn_length += 2;
-	  frag = frag_more (2);
-	  bfd_putl16 ((bfd_vma) 0x4303 /* NOP */, frag);
-	  as_warn (_("a NOP instruction has been inserted after %s"),
-		   opcode->name);
-	}
-
       dwarf2_emit_insn (insn_length);
+
+      /* If the PC is the destination...  */
+      if (op2.am == 0 && op2.reg == 0
+	  /* ... but the opcode does not alter the destination.  */
+	  && (is_opcode ("cmp") || is_opcode ("bit") || is_opcode ("cmpx")))
+	check_for_nop |= NOP_CHECK_CPU12;
       break;
 
     case 2:			/* Single-operand mostly instr.  */
@@ -3173,9 +3597,20 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      || is_opcode ("rrc")))
 	{
 	  as_bad (_("%s: attempt to rotate the PC register"), opcode->name);
-	  return 0;
+	  break;
 	}
 
+      /* If the status register is the destination...  */
+      if (op1.am == 0 && op1.reg == 2
+	  /* ... and the opcode alters the SR.  */
+	  && (is_opcode ("rra") || is_opcode ("rrc") || is_opcode ("sxt")))
+	{
+	  if (silicon_errata_fix & SILICON_ERRATA_CPU13)
+	    as_bad (_("CPU13: SR is destinstion of SR altering instruction"));
+	  else if (silicon_errata_warn & SILICON_ERRATA_CPU13)
+	    as_warn (_("CPU13: SR is destinstion of SR altering instruction"));
+	}
+	  
       insn_length = (extended_op ? 2 : 0) + 2 + (op1.ol * 2);
       frag = frag_more (insn_length);
       where = frag - frag_now->fr_literal;
@@ -3192,7 +3627,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 		{
 		  as_bad (_("%s instruction does not accept a .b suffix"),
 			  opcode->name);
-		  return 0;
+		  break;
 		}
 	      else if (! addr_op)
 		extended |= BYTE_OPERATION;
@@ -3200,6 +3635,9 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  else if (! addr_op)
 	    extended |= BYTE_OPERATION;
 
+	  if (is_opcode ("rrux"))
+	    extended |= IGNORE_CARRY_BIT;
+	  
 	  if (op1.ol != 0 && ((extended & 0xf) != 0))
 	    {
 	      as_bad (_("repeat instruction used with non-register mode instruction"));
@@ -3211,7 +3649,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	      if (op1.exp.X_op == O_constant)
 		extended |= ((op1.exp.X_add_number >> 16) & 0xf) << 7;
 
-	      else if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+	      else if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		fix_new_exp (frag_now, where, 6, &(op1.exp), FALSE,
 			     BFD_RELOC_MSP430X_ABS20_EXT_SRC);
 	      else
@@ -3242,9 +3680,9 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 
 	      if (!extended_op)
 		{
-		  if (op1.reg || (op1.reg == 0 && op1.am == 3))	/* Not PC relative.  */
+		  if (op1.reg || op1.am == 3)	/* Not PC relative.  */
 		    fix_new_exp (frag_now, where, 2,
-				 &(op1.exp), FALSE, CHECK_RELOC_MSP430);
+				 &(op1.exp), FALSE, CHECK_RELOC_MSP430 (op1));
 		  else
 		    fix_new_exp (frag_now, where, 2,
 				 &(op1.exp), TRUE, CHECK_RELOC_MSP430_PCREL);
@@ -3349,7 +3787,7 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
 	  as_bad (_("polymorphs are not enabled. Use -mP option to enable."));
 	  break;
 	}
-	
+
       line = extract_operand (line, l1, sizeof (l1));
       if (l1[0])
 	{
@@ -3437,6 +3875,11 @@ msp430_operands (struct msp430_opcode_s * opcode, char * line)
       as_bad (_("Illegal instruction or not implemented opcode."));
     }
 
+  if (is_opcode ("nop"))
+    prev_insn_is_nop = TRUE;
+  else
+    prev_insn_is_nop = FALSE;
+	    
   input_line_pointer = line;
   return 0;
 }
@@ -3449,9 +3892,9 @@ md_assemble (char * str)
   unsigned int i = 0;
 
   str = skip_space (str);	/* Skip leading spaces.  */
-  str = extract_cmd (str, cmd, sizeof (cmd));
+  str = extract_cmd (str, cmd, sizeof (cmd) - 1);
 
-  while (cmd[i] && i < sizeof (cmd))
+  while (cmd[i])
     {
       char a = TOLOWER (cmd[i]);
       cmd[i] = a;
@@ -3488,7 +3931,7 @@ md_section_align (asection * seg, valueT addr)
 {
   int align = bfd_get_section_alignment (stdoutput, seg);
 
-  return ((addr + (1 << align) - 1) & (-1 << align));
+  return ((addr + (1 << align) - 1) & -(1 << align));
 }
 
 /* If you define this macro, it should return the offset between the
@@ -3586,8 +4029,8 @@ md_apply_fix (fixS * fixp, valueT * valuep, segT seg)
   if (msp430_enable_polys
       && !msp430_enable_relax)
     {
-      if (!fixp->fx_addsy || (fixp->fx_addsy
-	  && S_GET_SEGMENT (fixp->fx_addsy) == absolute_section))
+      if (!fixp->fx_addsy
+	  || S_GET_SEGMENT (fixp->fx_addsy) == absolute_section)
 	fixp->fx_done = 1;	/* It is ok to kill 'abs' reloc.  */
       else
       	fixp->fx_done = 0;
@@ -3639,6 +4082,12 @@ md_apply_fix (fixS * fixp, valueT * valuep, segT seg)
 	case BFD_RELOC_MSP430_16:
 	case BFD_RELOC_16:
 	case BFD_RELOC_MSP430_16_BYTE:
+	  value &= 0xffff;	/* Get rid of extended sign.  */
+	  bfd_putl16 ((bfd_vma) value, where);
+	  break;
+
+	case BFD_RELOC_MSP430_ABS_HI16:
+	  value >>= 16;
 	  value &= 0xffff;	/* Get rid of extended sign.  */
 	  bfd_putl16 ((bfd_vma) value, where);
 	  break;
@@ -3738,7 +4187,7 @@ tc_gen_reloc (asection * seg ATTRIBUTE_UNUSED, fixS * fixp)
   static arelent * relocs[MAX_RELOC_EXPANSION + 1];
   arelent *reloc;
 
-  reloc = xmalloc (sizeof (arelent));
+  reloc = XNEW (arelent);
   reloc->address = fixp->fx_frag->fr_address + fixp->fx_where;
   reloc->howto = bfd_reloc_type_lookup (stdoutput, fixp->fx_r_type);
 
@@ -3789,7 +4238,7 @@ tc_gen_reloc (asection * seg ATTRIBUTE_UNUSED, fixS * fixp)
 	  && ! S_IS_GAS_LOCAL (fixp->fx_addsy)
 	  && ! S_IS_GAS_LOCAL (fixp->fx_subsy))
 	{
-	  arelent * reloc2 = xmalloc (sizeof * reloc);
+	  arelent * reloc2 = XNEW (arelent);
 
 	  relocs[0] = reloc2;
 	  relocs[1] = reloc;
@@ -3803,7 +4252,7 @@ tc_gen_reloc (asection * seg ATTRIBUTE_UNUSED, fixS * fixp)
 	    reloc2->sym_ptr_ptr = bfd_abs_section_ptr->symbol_ptr_ptr;
 	  else
 	    {
-	      reloc2->sym_ptr_ptr = xmalloc (sizeof (asymbol *));
+	      reloc2->sym_ptr_ptr = XNEW (asymbol *);
 	      *reloc2->sym_ptr_ptr = symbol_get_bfdsym (fixp->fx_subsy);
 	    }
 
@@ -3815,7 +4264,7 @@ tc_gen_reloc (asection * seg ATTRIBUTE_UNUSED, fixS * fixp)
 	    }
 	  else
 	    {
-	      reloc->sym_ptr_ptr = xmalloc (sizeof (asymbol *));
+	      reloc->sym_ptr_ptr = XNEW (asymbol *);
 	      *reloc->sym_ptr_ptr = symbol_get_bfdsym (fixp->fx_addsy);
 	    }
 
@@ -3872,7 +4321,7 @@ tc_gen_reloc (asection * seg ATTRIBUTE_UNUSED, fixS * fixp)
 	  return & no_relocs;
 	}
 #endif
-      reloc->sym_ptr_ptr = xmalloc (sizeof (asymbol *));
+      reloc->sym_ptr_ptr = XNEW (asymbol *);
       *reloc->sym_ptr_ptr = symbol_get_bfdsym (fixp->fx_addsy);
       reloc->addend = fixp->fx_offset;
 
@@ -4166,6 +4615,9 @@ msp430_fix_adjustable (struct fix *fixp ATTRIBUTE_UNUSED)
 void
 msp430_md_end (void)
 {
+  if (check_for_nop)
+    as_warn ("assembly finished without a possibly needed NOP instruction");
+
   bfd_elf_add_proc_attr_int (stdoutput, OFBA_MSPABI_Tag_ISA,
 			     target_is_430x () ? 2 : 1);
 

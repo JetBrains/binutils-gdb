@@ -1,7 +1,7 @@
 
 .*dw2-1-compressed.o:     file format .*
 
-Contents of the .debug_info section:
+Contents of the .z?debug_info section:
 
   Compilation Unit @ offset 0x0:
    Length:        0x4e \(32-bit\)
@@ -9,28 +9,28 @@ Contents of the .debug_info section:
    Abbrev Offset: 0x0
    Pointer Size:  4
  <0><b>: Abbrev Number: 1 \(DW_TAG_compile_unit\)
-    <c>   DW_AT_stmt_list   : 0x0	
-    <10>   DW_AT_high_pc     : 0x.	
-    <14>   DW_AT_low_pc      : 0x.	
-    <18>   DW_AT_name        : file1.txt	
-    <22>   DW_AT_producer    : GNU C 3.3.3	
+    <c>   DW_AT_stmt_list   : 0x0
+    <10>   DW_AT_high_pc     : 0x.
+    <14>   DW_AT_low_pc      : 0x.
+    <18>   DW_AT_name        : file1.txt
+    <22>   DW_AT_producer    : GNU C 3.3.3
     <2e>   DW_AT_language    : 1	\(ANSI C\)
  <1><2f>: Abbrev Number: 2 \(DW_TAG_subprogram\)
-    <30>   DW_AT_external    : 1	
-    <31>   DW_AT_decl_file   : 1	
-    <32>   DW_AT_decl_line   : 2	
-    <33>   DW_AT_name        : func_cu1	
-    <3c>   DW_AT_type        : <0x4a>	
-    <40>   DW_AT_low_pc      : 0x.	
-    <44>   DW_AT_high_pc     : 0x.	
+    <30>   DW_AT_external    : 1
+    <31>   DW_AT_decl_file   : 1
+    <32>   DW_AT_decl_line   : 2
+    <33>   DW_AT_name        : func_cu1
+    <3c>   DW_AT_type        : <0x4a>
+    <40>   DW_AT_low_pc      : 0x.
+    <44>   DW_AT_high_pc     : 0x.
     <48>   DW_AT_frame_base  : 1 byte block: 55 	\(DW_OP_reg5 \([^()]*\)\)
  <1><4a>: Abbrev Number: 3 \(DW_TAG_base_type\)
-    <4b>   DW_AT_name        : int	
-    <4f>   DW_AT_byte_size   : 4	
+    <4b>   DW_AT_name        : int
+    <4f>   DW_AT_byte_size   : 4
     <50>   DW_AT_encoding    : 5	\(signed\)
  <1><51>: Abbrev Number: 0
 
-Raw dump of debug contents of section .debug_line:
+Raw dump of debug contents of section .z?debug_line:
 
   Offset:                      0x0
   Length:                      62

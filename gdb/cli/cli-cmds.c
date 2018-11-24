@@ -1,6 +1,6 @@
 /* GDB CLI commands.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,7 +18,6 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include "exceptions.h"
 #include "arch-utils.h"
 #include "dyn-string.h"
 #include "readline/readline.h"
@@ -27,7 +26,6 @@
 #include "target.h"	/* For baud_rate, remote_debug and remote_timeout.  */
 #include "gdb_wait.h"	/* For shell escape implementation.  */
 #include "gdb_regex.h"	/* Used by apropos_command.  */
-#include <string.h>
 #include "gdb_vfork.h"
 #include "linespec.h"
 #include "expression.h"
@@ -40,6 +38,7 @@
 #include "disasm.h"
 #include "tracepoint.h"
 #include "filestuff.h"
+#include "location.h"
 
 #include "ui-out.h"
 
@@ -50,7 +49,7 @@
 #include "cli/cli-cmds.h"
 #include "cli/cli-utils.h"
 
-#include "python/python.h"
+#include "extension.h"
 
 #ifdef TUI
 #include "tui/tui.h"	/* For tui_active et.al.  */
@@ -204,7 +203,7 @@ static const char *script_ext_mode = script_ext_soft;
    none is supplied.  */
 
 void
-error_no_arg (char *why)
+error_no_arg (const char *why)
 {
   error (_("Argument required (%s)."), why);
 }
@@ -218,7 +217,7 @@ info_command (char *arg, int from_tty)
 {
   printf_unfiltered (_("\"info\" must be followed by "
 		       "the name of an info command.\n"));
-  help_list (infolist, "info ", -1, gdb_stdout);
+  help_list (infolist, "info ", all_commands, gdb_stdout);
 }
 
 /* The "show" command with no arguments shows all the settings.  */
@@ -238,7 +237,8 @@ help_command (char *command, int from_tty)
   help_cmd (command, gdb_stdout);
 }
 
-/* The "complete" command is used by Emacs to implement completion.  */
+/* Note: The "complete" command is used by Emacs to implement completion.
+   [Is that why this function writes output with *_unfiltered?]  */
 
 static void
 complete_command (char *arg, int from_tty)
@@ -248,6 +248,18 @@ complete_command (char *arg, int from_tty)
   VEC (char_ptr) *completions;
 
   dont_repeat ();
+
+  if (max_completions == 0)
+    {
+      /* Only print this for non-mi frontends.  An MI frontend may not
+	 be able to handle this.  */
+      if (!ui_out_is_mi_like_p (current_uiout))
+	{
+	  printf_unfiltered (_("max-completions is zero,"
+			       " completion is disabled.\n"));
+	}
+      return;
+    }
 
   if (arg == NULL)
     arg = "";
@@ -265,7 +277,7 @@ complete_command (char *arg, int from_tty)
       point--;
     }
 
-  arg_prefix = alloca (point - arg + 1);
+  arg_prefix = (char *) alloca (point - arg + 1);
   memcpy (arg_prefix, arg, point - arg);
   arg_prefix[point - arg] = 0;
 
@@ -295,6 +307,15 @@ complete_command (char *arg, int from_tty)
 
       xfree (prev);
       VEC_free (char_ptr, completions);
+
+      if (size == max_completions)
+	{
+	  /* ARG_PREFIX and POINT are included in the output so that emacs
+	     will include the message in the output.  */
+	  printf_unfiltered (_("%s%s %s\n"),
+			     arg_prefix, point,
+			     get_max_completions_reached_message ());
+	}
     }
 }
 
@@ -517,38 +538,44 @@ find_and_open_script (const char *script_file, int search_path,
   return 1;
 }
 
-/* Load script FILE, which has already been opened as STREAM.  */
+/* Load script FILE, which has already been opened as STREAM.
+   FILE_TO_OPEN is the form of FILE to use if one needs to open the file.
+   This is provided as FILE may have been found via the source search path.
+   An important thing to note here is that FILE may be a symlink to a file
+   with a different or non-existing suffix, and thus one cannot infer the
+   extension language from FILE_TO_OPEN.  */
 
 static void
-source_script_from_stream (FILE *stream, const char *file)
+source_script_from_stream (FILE *stream, const char *file,
+			   const char *file_to_open)
 {
-  if (script_ext_mode != script_ext_off
-      && strlen (file) > 3 && !strcmp (&file[strlen (file) - 3], ".py"))
+  if (script_ext_mode != script_ext_off)
     {
-      volatile struct gdb_exception e;
+      const struct extension_language_defn *extlang
+	= get_ext_lang_of_file (file);
 
-      TRY_CATCH (e, RETURN_MASK_ERROR)
+      if (extlang != NULL)
 	{
-	  source_python_script (stream, file);
-	}
-      if (e.reason < 0)
-	{
-	  /* Should we fallback to ye olde GDB script mode?  */
-	  if (script_ext_mode == script_ext_soft
-	      && e.reason == RETURN_ERROR && e.error == UNSUPPORTED_ERROR)
+	  if (ext_lang_present_p (extlang))
 	    {
-	      fseek (stream, 0, SEEK_SET);
-	      script_from_file (stream, (char*) file);
+	      script_sourcer_func *sourcer
+		= ext_lang_script_sourcer (extlang);
+
+	      gdb_assert (sourcer != NULL);
+	      sourcer (extlang, stream, file_to_open);
+	      return;
+	    }
+	  else if (script_ext_mode == script_ext_soft)
+	    {
+	      /* Assume the file is a gdb script.
+		 This is handled below.  */
 	    }
 	  else
-	    {
-	      /* Nope, just punt.  */
-	      throw_exception (e);
-	    }
+	    throw_ext_lang_unsupported (extlang);
 	}
     }
-  else
-    script_from_file (stream, file);
+
+  script_from_file (stream, file);
 }
 
 /* Worker to perform the "source" command.
@@ -588,7 +615,7 @@ source_script_with_search (const char *file, int from_tty, int search_path)
      anyway so that error messages show the actual file used.  But only do
      this if we (may have) used search_path, as printing the full path in
      errors for the non-search case can be more noise than signal.  */
-  source_script_from_stream (stream, search_path ? full_path : file);
+  source_script_from_stream (stream, file, search_path ? full_path : file);
   do_cleanups (old_cleanups);
 }
 
@@ -615,7 +642,7 @@ source_command (char *args, int from_tty)
 {
   struct cleanup *old_cleanups;
   char *file = args;
-  int *old_source_verbose = xmalloc (sizeof(int));
+  int *old_source_verbose = XNEW (int);
   int search_path = 0;
 
   *old_source_verbose = source_verbose;
@@ -762,7 +789,6 @@ edit_command (char *arg, int from_tty)
   struct symtabs_and_lines sals;
   struct symtab_and_line sal;
   struct symbol *sym;
-  char *arg1;
   char *editor;
   char *p;
   const char *fn;
@@ -784,21 +810,28 @@ edit_command (char *arg, int from_tty)
     }
   else
     {
-      /* Now should only be one argument -- decode it in SAL.  */
+      struct cleanup *cleanup;
+      struct event_location *location;
+      char *arg1;
 
+      /* Now should only be one argument -- decode it in SAL.  */
       arg1 = arg;
-      sals = decode_line_1 (&arg1, DECODE_LINE_LIST_MODE, 0, 0);
+      location = string_to_event_location (&arg1, current_language);
+      cleanup = make_cleanup_delete_event_location (location);
+      sals = decode_line_1 (location, DECODE_LINE_LIST_MODE, NULL, NULL, 0);
 
       filter_sals (&sals);
       if (! sals.nelts)
 	{
 	  /*  C++  */
+	  do_cleanups (cleanup);
 	  return;
 	}
       if (sals.nelts > 1)
 	{
 	  ambiguous_line_spec (&sals);
 	  xfree (sals.sals);
+	  do_cleanups (cleanup);
 	  return;
 	}
 
@@ -817,11 +850,10 @@ edit_command (char *arg, int from_tty)
 	  struct gdbarch *gdbarch;
 
           if (sal.symtab == 0)
-	    /* FIXME-32x64--assumes sal.pc fits in long.  */
 	    error (_("No source file for address %s."),
-		   hex_string ((unsigned long) sal.pc));
+		   paddress (get_current_arch (), sal.pc));
 
-	  gdbarch = get_objfile_arch (sal.symtab->objfile);
+	  gdbarch = get_objfile_arch (SYMTAB_OBJFILE (sal.symtab));
           sym = find_pc_function (sal.pc);
           if (sym)
 	    printf_filtered ("%s is in %s (%s:%d).\n",
@@ -841,6 +873,7 @@ edit_command (char *arg, int from_tty)
 
       if (sal.symtab == 0)
         error (_("No line number known for %s."), arg);
+      do_cleanups (cleanup);
     }
 
   if ((editor = (char *) getenv ("EDITOR")) == NULL)
@@ -869,31 +902,54 @@ list_command (char *arg, int from_tty)
   int dummy_beg = 0;
   int linenum_beg = 0;
   char *p;
+  struct cleanup *cleanup;
+
+  cleanup = make_cleanup (null_cleanup, NULL);
 
   /* Pull in the current default source line if necessary.  */
-  if (arg == 0 || arg[0] == '+' || arg[0] == '-')
+  if (arg == NULL || ((arg[0] == '+' || arg[0] == '-') && arg[1] == '\0'))
     {
       set_default_source_symtab_and_line ();
       cursal = get_current_source_symtab_and_line ();
-    }
 
-  /* "l" or "l +" lists next ten lines.  */
+      /* If this is the first "list" since we've set the current
+	 source line, center the listing around that line.  */
+      if (get_first_line_listed () == 0)
+	{
+	  int first;
 
-  if (arg == 0 || strcmp (arg, "+") == 0)
-    {
-      print_source_lines (cursal.symtab, cursal.line,
-			  cursal.line + get_lines_to_list (), 0);
-      return;
-    }
+	  first = max (cursal.line - get_lines_to_list () / 2, 1);
 
-  /* "l -" lists previous ten lines, the ones before the ten just
-     listed.  */
-  if (strcmp (arg, "-") == 0)
-    {
-      print_source_lines (cursal.symtab,
-			  max (get_first_line_listed () 
-			       - get_lines_to_list (), 1),
-			  get_first_line_listed (), 0);
+	  /* A small special case --- if listing backwards, and we
+	     should list only one line, list the preceding line,
+	     instead of the exact line we've just shown after e.g.,
+	     stopping for a breakpoint.  */
+	  if (arg != NULL && arg[0] == '-'
+	      && get_lines_to_list () == 1 && first > 1)
+	    first -= 1;
+
+	  print_source_lines (cursal.symtab, first,
+			      first + get_lines_to_list (), 0);
+	}
+
+      /* "l" or "l +" lists next ten lines.  */
+      else if (arg == NULL || arg[0] == '+')
+	print_source_lines (cursal.symtab, cursal.line,
+			    cursal.line + get_lines_to_list (), 0);
+
+      /* "l -" lists previous ten lines, the ones before the ten just
+	 listed.  */
+      else if (arg[0] == '-')
+	{
+	  if (get_first_line_listed () == 1)
+	    error (_("Already at the start of %s."),
+		   symtab_to_filename_for_display (cursal.symtab));
+	  print_source_lines (cursal.symtab,
+			      max (get_first_line_listed ()
+				   - get_lines_to_list (), 1),
+			      get_first_line_listed (), 0);
+	}
+
       return;
     }
 
@@ -911,15 +967,24 @@ list_command (char *arg, int from_tty)
     dummy_beg = 1;
   else
     {
-      sals = decode_line_1 (&arg1, DECODE_LINE_LIST_MODE, 0, 0);
+      struct event_location *location;
+
+      location = string_to_event_location (&arg1, current_language);
+      make_cleanup_delete_event_location (location);
+      sals = decode_line_1 (location, DECODE_LINE_LIST_MODE, NULL, NULL, 0);
 
       filter_sals (&sals);
       if (!sals.nelts)
-	return;			/*  C++  */
+	{
+	  /*  C++  */
+	  do_cleanups (cleanup);
+	  return;
+	}
       if (sals.nelts > 1)
 	{
 	  ambiguous_line_spec (&sals);
 	  xfree (sals.sals);
+	  do_cleanups (cleanup);
 	  return;
 	}
 
@@ -944,18 +1009,28 @@ list_command (char *arg, int from_tty)
 	dummy_end = 1;
       else
 	{
+	  struct event_location *location;
+
+	  location = string_to_event_location (&arg1, current_language);
+	  make_cleanup_delete_event_location (location);
 	  if (dummy_beg)
-	    sals_end = decode_line_1 (&arg1, DECODE_LINE_LIST_MODE, 0, 0);
+	    sals_end = decode_line_1 (location,
+				      DECODE_LINE_LIST_MODE, NULL, NULL, 0);
 	  else
-	    sals_end = decode_line_1 (&arg1, DECODE_LINE_LIST_MODE,
-				      sal.symtab, sal.line);
+	    sals_end = decode_line_1 (location, DECODE_LINE_LIST_MODE,
+				      NULL, sal.symtab, sal.line);
+
 	  filter_sals (&sals_end);
 	  if (sals_end.nelts == 0)
-	    return;
+	    {
+	      do_cleanups (cleanup);
+	      return;
+	    }
 	  if (sals_end.nelts > 1)
 	    {
 	      ambiguous_line_spec (&sals_end);
 	      xfree (sals_end.sals);
+	      do_cleanups (cleanup);
 	      return;
 	    }
 	  sal_end = sals_end.sals[0];
@@ -982,11 +1057,10 @@ list_command (char *arg, int from_tty)
       struct gdbarch *gdbarch;
 
       if (sal.symtab == 0)
-	/* FIXME-32x64--assumes sal.pc fits in long.  */
 	error (_("No source file for address %s."),
-	       hex_string ((unsigned long) sal.pc));
+	       paddress (get_current_arch (), sal.pc));
 
-      gdbarch = get_objfile_arch (sal.symtab->objfile);
+      gdbarch = get_objfile_arch (SYMTAB_OBJFILE (sal.symtab));
       sym = find_pc_function (sal.pc);
       if (sym)
 	printf_filtered ("%s is in %s (%s:%d).\n",
@@ -1037,6 +1111,7 @@ list_command (char *arg, int from_tty)
 			 ? sal.line + get_lines_to_list ()
 			 : sal_end.line + 1),
 			0);
+  do_cleanups (cleanup);
 }
 
 /* Subroutine of disassemble_command to simplify it.
@@ -1105,16 +1180,26 @@ disassemble_current_function (int flags)
 /* Dump a specified section of assembly code.
 
    Usage:
-     disassemble [/mr]
+     disassemble [/mrs]
        - dump the assembly code for the function of the current pc
-     disassemble [/mr] addr
+     disassemble [/mrs] addr
        - dump the assembly code for the function at ADDR
-     disassemble [/mr] low,high
-     disassemble [/mr] low,+length
+     disassemble [/mrs] low,high
+     disassemble [/mrs] low,+length
        - dump the assembly code in the range [LOW,HIGH), or [LOW,LOW+length)
 
-   A /m modifier will include source code with the assembly.
-   A /r modifier will include raw instructions in hex with the assembly.  */
+   A /m modifier will include source code with the assembly in a
+   "source centric" view.  This view lists only the file of the first insn,
+   even if other source files are involved (e.g., inlined functions), and
+   the output is in source order, even with optimized code.  This view is
+   considered deprecated as it hasn't been useful in practice.
+
+   A /r modifier will include raw instructions in hex with the assembly.
+
+   A /s modifier will include source code with the assembly, like /m, with
+   two important differences:
+   1) The output is still in pc address order.
+   2) File names and contents for all relevant source files are displayed.  */
 
 static void
 disassemble_command (char *arg, int from_tty)
@@ -1142,10 +1227,13 @@ disassemble_command (char *arg, int from_tty)
 	  switch (*p++)
 	    {
 	    case 'm':
-	      flags |= DISASSEMBLY_SOURCE;
+	      flags |= DISASSEMBLY_SOURCE_DEPRECATED;
 	      break;
 	    case 'r':
 	      flags |= DISASSEMBLY_RAW_INSN;
+	      break;
+	    case 's':
+	      flags |= DISASSEMBLY_SOURCE;
 	      break;
 	    default:
 	      error (_("Invalid disassembly modifier."));
@@ -1154,6 +1242,10 @@ disassemble_command (char *arg, int from_tty)
 
       p = skip_spaces_const (p);
     }
+
+  if ((flags & (DISASSEMBLY_SOURCE_DEPRECATED | DISASSEMBLY_SOURCE))
+      == (DISASSEMBLY_SOURCE_DEPRECATED | DISASSEMBLY_SOURCE))
+    error (_("Cannot specify both /m and /s."));
 
   if (! p || ! *p)
     {
@@ -1208,7 +1300,7 @@ make_command (char *arg, int from_tty)
     p = "make";
   else
     {
-      p = xmalloc (sizeof ("make ") + strlen (arg));
+      p = (char *) xmalloc (sizeof ("make ") + strlen (arg));
       strcpy (p, "make ");
       strcpy (p + sizeof ("make ") - 1, arg);
     }
@@ -1227,8 +1319,7 @@ show_user (char *args, int from_tty)
       const char *comname = args;
 
       c = lookup_cmd (&comname, cmdlist, "", 0, 1);
-      /* c->user_commands would be NULL if it's a python command.  */
-      if (c->class != class_user || !c->user_commands)
+      if (!cli_user_command_p (c))
 	error (_("Not a user command."));
       show_user_1 (c, "", args, gdb_stdout);
     }
@@ -1236,7 +1327,7 @@ show_user (char *args, int from_tty)
     {
       for (c = cmdlist; c; c = c->next)
 	{
-	  if (c->class == class_user || c->prefixlist != NULL)
+	  if (cli_user_command_p (c) || c->prefixlist != NULL)
 	    show_user_1 (c, "", c->name, gdb_stdout);
 	}
     }
@@ -1319,6 +1410,14 @@ valid_command_p (const char *command)
   return *command == '\0';
 }
 
+/* Called when "alias" was incorrectly used.  */
+
+static void
+alias_usage_error (void)
+{
+  error (_("Usage: alias [-a] [--] ALIAS = COMMAND"));
+}
+
 /* Make an alias of an existing command.  */
 
 static void
@@ -1330,10 +1429,9 @@ alias_command (char *args, int from_tty)
   char **alias_argv, **command_argv;
   dyn_string_t alias_dyn_string, command_dyn_string;
   struct cleanup *cleanup;
-  static const char usage[] = N_("Usage: alias [-a] [--] ALIAS = COMMAND");
 
   if (args == NULL || strchr (args, '=') == NULL)
-    error (_(usage));
+    alias_usage_error ();
 
   args2 = xstrdup (args);
   cleanup = make_cleanup (xfree, args2);
@@ -1362,7 +1460,7 @@ alias_command (char *args, int from_tty)
 
   if (alias_argv[0] == NULL || command_argv[0] == NULL
       || *alias_argv[0] == '\0' || *command_argv[0] == '\0')
-    error (_(usage));
+    alias_usage_error ();
 
   for (i = 0; alias_argv[i] != NULL; ++i)
     {
@@ -1468,23 +1566,25 @@ ambiguous_line_spec (struct symtabs_and_lines *sals)
 static int
 compare_symtabs (const void *a, const void *b)
 {
-  const struct symtab_and_line *sala = a;
-  const struct symtab_and_line *salb = b;
+  const struct symtab_and_line *sala = (const struct symtab_and_line *) a;
+  const struct symtab_and_line *salb = (const struct symtab_and_line *) b;
+  const char *dira = SYMTAB_DIRNAME (sala->symtab);
+  const char *dirb = SYMTAB_DIRNAME (salb->symtab);
   int r;
 
-  if (!sala->symtab->dirname)
+  if (dira == NULL)
     {
-      if (salb->symtab->dirname)
+      if (dirb != NULL)
 	return -1;
     }
-  else if (!salb->symtab->dirname)
+  else if (dirb == NULL)
     {
-      if (sala->symtab->dirname)
+      if (dira != NULL)
 	return 1;
     }
   else
     {
-      r = filename_cmp (sala->symtab->dirname, salb->symtab->dirname);
+      r = filename_cmp (dira, dirb);
       if (r)
 	return r;
     }
@@ -1548,7 +1648,7 @@ set_debug (char *arg, int from_tty)
 {
   printf_unfiltered (_("\"set debug\" must be followed by "
 		       "the name of a debug subcommand.\n"));
-  help_list (setdebuglist, "set debug ", -1, gdb_stdout);
+  help_list (setdebuglist, "set debug ", all_commands, gdb_stdout);
 }
 
 static void
@@ -1687,7 +1787,11 @@ strict == evaluate script according to filename extension, error if not supporte
 			show_script_ext_mode,
 			&setlist, &showlist);
 
-  add_com ("quit", class_support, quit_command, _("Exit gdb."));
+  add_com ("quit", class_support, quit_command, _("\
+Exit gdb.\n\
+Usage: quit [EXPR]\n\
+The optional expression EXPR, if present, is evaluated and the result\n\
+used as GDB's exit code.  The default is zero."));
   c = add_com ("help", class_support, help_command,
 	       _("Print list of commands."));
   set_cmd_completer (c, command_completer);
@@ -1799,13 +1903,14 @@ Lines can be specified in these ways:\n\
   FUNCTION, to list around beginning of that function,\n\
   FILE:FUNCTION, to distinguish among like-named static functions.\n\
   *ADDRESS, to list around the line containing that address.\n\
-With two args if one is empty it stands for ten lines away from \
-the other arg."));
+With two args, if one is empty, it stands for ten lines away from\n\
+the other arg.\n\
+\n\
+By default, when a single location is given, display ten lines.\n\
+This can be changed using \"set listsize\", and the current value\n\
+can be shown using \"show listsize\"."));
 
-  if (!xdb_commands)
-    add_com_alias ("l", "list", class_files, 1);
-  else
-    add_com_alias ("v", "list", class_files, 1);
+  add_com_alias ("l", "list", class_files, 1);
 
   if (dbx_commands)
     add_com_alias ("file", "list", class_files, 1);
@@ -1813,8 +1918,21 @@ the other arg."));
   c = add_com ("disassemble", class_vars, disassemble_command, _("\
 Disassemble a specified section of memory.\n\
 Default is the function surrounding the pc of the selected frame.\n\
+\n\
 With a /m modifier, source lines are included (if available).\n\
+This view is \"source centric\": the output is in source line order,\n\
+regardless of any optimization that is present.  Only the main source file\n\
+is displayed, not those of, e.g., any inlined functions.\n\
+This modifier hasn't proved useful in practice and is deprecated\n\
+in favor of /s.\n\
+\n\
+With a /s modifier, source lines are included (if available).\n\
+This differs from /m in two important respects:\n\
+- the output is still in pc address order, and\n\
+- file names and contents for all relevant source files are displayed.\n\
+\n\
 With a /r modifier, raw instructions in hex are included.\n\
+\n\
 With a single argument, the function surrounding that address is dumped.\n\
 Two arguments (separated by a comma) are taken as a range of memory to dump,\n\
   in the form of \"start,end\", or \"start,+length\".\n\
@@ -1824,8 +1942,6 @@ like in the \"break\" command.\n\
 So, for example, if you want to disassemble function bar in file foo.c\n\
 you must type \"disassemble 'foo.c'::bar\" and not \"disassemble foo.c:bar\"."));
   set_cmd_completer (c, location_completer);
-  if (xdb_commands)
-    add_com_alias ("va", "disassemble", class_xdb, 0);
 
   add_com_alias ("!", "shell", class_support, 0);
 
@@ -1833,7 +1949,7 @@ you must type \"disassemble 'foo.c'::bar\" and not \"disassemble foo.c:bar\"."))
 Run the ``make'' program using the rest of the line as arguments."));
   set_cmd_completer (c, filename_completer);
   add_cmd ("user", no_class, show_user, _("\
-Show definitions of non-python user defined commands.\n\
+Show definitions of non-python/scheme user defined commands.\n\
 Argument is the name of the user defined command.\n\
 With no argument, show definitions of all user defined commands."), &showlist);
   add_com ("apropos", class_support, apropos_command,
@@ -1841,8 +1957,8 @@ With no argument, show definitions of all user defined commands."), &showlist);
 
   add_setshow_uinteger_cmd ("max-user-call-depth", no_class,
 			   &max_user_call_depth, _("\
-Set the max call depth for non-python user-defined commands."), _("\
-Show the max call depth for non-python user-defined commands."), NULL,
+Set the max call depth for non-python/scheme user-defined commands."), _("\
+Show the max call depth for non-python/scheme user-defined commands."), NULL,
 			    NULL,
 			    show_max_user_call_depth,
 			    &setlist, &showlist);

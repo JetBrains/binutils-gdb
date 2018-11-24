@@ -151,7 +151,7 @@ char *realloc ();
 #    include <string.h>
 #    ifndef bzero
 #     ifndef _LIBC
-#      define bzero(s, n)	(memset (s, '\0', n), (s))
+#      define bzero(s, n)	((void) memset (s, '\0', n))
 #     else
 #      define bzero(s, n)	__bzero (s, n)
 #     endif
@@ -685,7 +685,7 @@ typedef enum
 #  define EXTRACT_NUMBER(destination, source)				\
   do {									\
     (destination) = *(source) & 0377;					\
-    (destination) += SIGN_EXTEND_CHAR (*((source) + 1)) << 8;		\
+    (destination) += ((unsigned) SIGN_EXTEND_CHAR (*((source) + 1))) << 8; \
   } while (0)
 # endif
 
@@ -8093,12 +8093,12 @@ regerror (int errcode, const regex_t *preg ATTRIBUTE_UNUSED,
 #if defined HAVE_MEMPCPY || defined _LIBC
 	  *((char *) mempcpy (errbuf, msg, errbuf_size - 1)) = '\0';
 #else
-          memcpy (errbuf, msg, errbuf_size - 1);
+          (void) memcpy (errbuf, msg, errbuf_size - 1);
           errbuf[errbuf_size - 1] = 0;
 #endif
         }
       else
-        memcpy (errbuf, msg, msg_size);
+        (void) memcpy (errbuf, msg, msg_size);
     }
 
   return msg_size;

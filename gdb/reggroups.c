@@ -1,6 +1,6 @@
 /* Register groupings for GDB, the GNU debugger.
 
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    Contributed by Red Hat.
 
@@ -23,7 +23,6 @@
 #include "arch-utils.h"
 #include "reggroups.h"
 #include "gdbtypes.h"
-#include "gdb_assert.h"
 #include "regcache.h"
 #include "command.h"
 #include "gdbcmd.h"		/* For maintenanceprintlist.  */
@@ -39,7 +38,7 @@ struct reggroup
 struct reggroup *
 reggroup_new (const char *name, enum reggroup_type type)
 {
-  struct reggroup *group = XMALLOC (struct reggroup);
+  struct reggroup *group = XNEW (struct reggroup);
 
   group->name = name;
   group->type = type;
@@ -103,13 +102,14 @@ add_group (struct reggroups *groups, struct reggroup *group,
 void
 reggroup_add (struct gdbarch *gdbarch, struct reggroup *group)
 {
-  struct reggroups *groups = gdbarch_data (gdbarch, reggroups_data);
+  struct reggroups *groups
+    = (struct reggroups *) gdbarch_data (gdbarch, reggroups_data);
 
   if (groups == NULL)
     {
       /* ULGH, called during architecture initialization.  Patch
          things up.  */
-      groups = reggroups_init (gdbarch);
+      groups = (struct reggroups *) reggroups_init (gdbarch);
       deprecated_set_gdbarch_data (gdbarch, reggroups_data, groups);
     }
   add_group (groups, group,
@@ -130,7 +130,7 @@ reggroup_next (struct gdbarch *gdbarch, struct reggroup *last)
 
   /* Don't allow this function to be called during architecture
      creation.  If there are no groups, use the default groups list.  */
-  groups = gdbarch_data (gdbarch, reggroups_data);
+  groups = (struct reggroups *) gdbarch_data (gdbarch, reggroups_data);
   gdb_assert (groups != NULL);
   if (groups->first == NULL)
     groups = &default_groups;
@@ -148,6 +148,35 @@ reggroup_next (struct gdbarch *gdbarch, struct reggroup *last)
 	    return NULL;
 	}
     }
+  return NULL;
+}
+
+/* See reggroups.h.  */
+
+struct reggroup *
+reggroup_prev (struct gdbarch *gdbarch, struct reggroup *curr)
+{
+  struct reggroups *groups;
+  struct reggroup_el *el;
+  struct reggroup *prev;
+
+  /* Don't allow this function to be called during architecture
+     creation.  If there are no groups, use the default groups list.  */
+  groups = (struct reggroups *) gdbarch_data (gdbarch, reggroups_data);
+  gdb_assert (groups != NULL);
+  if (groups->first == NULL)
+    groups = &default_groups;
+
+  prev = NULL;
+  for (el = groups->first; el != NULL; el = el->next)
+    {
+      gdb_assert (el->group != NULL);
+      if (el->group == curr)
+	return prev;
+      prev = el->group;
+    }
+  if (curr == NULL)
+    return prev;
   return NULL;
 }
 
@@ -277,13 +306,13 @@ _initialize_reggroup (void)
   reggroups_data = gdbarch_data_register_post_init (reggroups_init);
 
   /* The pre-defined list of groups.  */
-  add_group (&default_groups, general_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, float_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, system_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, vector_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, all_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, save_reggroup, XMALLOC (struct reggroup_el));
-  add_group (&default_groups, restore_reggroup, XMALLOC (struct reggroup_el));
+  add_group (&default_groups, general_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, float_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, system_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, vector_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, all_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, save_reggroup, XNEW (struct reggroup_el));
+  add_group (&default_groups, restore_reggroup, XNEW (struct reggroup_el));
 
   add_cmd ("reggroups", class_maintenance,
 	   maintenance_print_reggroups, _("\

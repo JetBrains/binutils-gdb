@@ -1,6 +1,6 @@
 /* Definitions for values of C expressions, for GDB.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -31,6 +31,55 @@ struct type;
 struct ui_file;
 struct language_defn;
 struct value_print_options;
+struct xmethod_worker;
+
+/* Values can be partially 'optimized out' and/or 'unavailable'.
+   These are distinct states and have different string representations
+   and related error strings.
+
+   'unavailable' has a specific meaning in this context.  It means the
+   value exists in the program (at the machine level), but GDB has no
+   means to get to it.  Such a value is normally printed as
+   <unavailable>.  Examples of how to end up with an unavailable value
+   would be:
+
+    - We're inspecting a traceframe, and the memory or registers the
+      debug information says the value lives on haven't been collected.
+
+    - We're inspecting a core dump, the memory or registers the debug
+      information says the value lives aren't present in the dump
+      (that is, we have a partial/trimmed core dump, or we don't fully
+      understand/handle the core dump's format).
+
+    - We're doing live debugging, but the debug API has no means to
+      get at where the value lives in the machine, like e.g., ptrace
+      not having access to some register or register set.
+
+    - Any other similar scenario.
+
+  OTOH, "optimized out" is about what the compiler decided to generate
+  (or not generate).  A chunk of a value that was optimized out does
+  not actually exist in the program.  There's no way to get at it
+  short of compiling the program differently.
+
+  A register that has not been saved in a frame is likewise considered
+  optimized out, except not-saved registers have a different string
+  representation and related error strings.  E.g., we'll print them as
+  <not-saved> instead of <optimized out>, as in:
+
+    (gdb) p/x $rax
+    $1 = <not saved>
+    (gdb) info registers rax
+    rax            <not saved>
+
+  If the debug info describes a variable as being in such a register,
+  we'll still print the variable as <optimized out>.  IOW, <not saved>
+  is reserved for inspecting registers at the machine level.
+
+  When comparing value contents, optimized out chunks, unavailable
+  chunks, and valid contents data are all considered different.  See
+  value_contents_eq for more info.
+*/
 
 /* The structure which defines the type of a value.  It should never
    be possible for a program lval value to survive over a call to the
@@ -44,11 +93,15 @@ struct value;
    put into the value history or exposed to Python are taken off this
    list.  */
 
-struct value *value_next (struct value *);
+struct value *value_next (const struct value *);
 
 /* Type of the value.  */
 
 extern struct type *value_type (const struct value *);
+
+/* Return the gdbarch associated with the value. */
+
+extern struct gdbarch *get_value_arch (const struct value *value);
 
 /* This is being used to change the type of an existing value, that
    code should instead be creating a new value with the changed type
@@ -73,7 +126,7 @@ extern void set_value_bitpos (struct value *, int bit);
    single read from the target when displaying multiple
    bitfields.  */
 
-struct value *value_parent (struct value *);
+struct value *value_parent (const struct value *);
 extern void set_value_parent (struct value *value, struct value *parent);
 
 /* Describes offset of a value within lval of a structure in bytes.
@@ -89,7 +142,7 @@ extern void set_value_offset (struct value *, int offset);
    relevant if lval != not_lval.''.  Shouldn't the value instead be
    not_lval and be done with it?  */
 
-extern int deprecated_value_modifiable (struct value *value);
+extern int deprecated_value_modifiable (const struct value *value);
 
 /* If a value represents a C++ object, then the `type' field gives the
    object's compile-time type.  If the object actually belongs to some
@@ -132,7 +185,7 @@ extern int deprecated_value_modifiable (struct value *value);
    `type', and `embedded_offset' is zero, so everything works
    normally.  */
 
-extern struct type *value_enclosing_type (struct value *);
+extern struct type *value_enclosing_type (const struct value *);
 extern void set_value_enclosing_type (struct value *val,
 				      struct type *new_type);
 
@@ -152,9 +205,9 @@ extern struct type *value_actual_type (struct value *value,
 				       int resolve_simple_types,
 				       int *real_type_found);
 
-extern int value_pointed_to_offset (struct value *value);
+extern int value_pointed_to_offset (const struct value *value);
 extern void set_value_pointed_to_offset (struct value *value, int val);
-extern int value_embedded_offset (struct value *value);
+extern int value_embedded_offset (const struct value *value);
 extern void set_value_embedded_offset (struct value *value, int val);
 
 /* For lval_computed values, this structure holds functions used to
@@ -179,14 +232,6 @@ struct lval_funcs
      should call 'error'.  If it is NULL such TOVAL assignment is an error as
      TOVAL is not considered as an lvalue.  */
   void (*write) (struct value *toval, struct value *fromval);
-
-  /* Check the validity of some bits in VALUE.  This should return 1
-     if all the bits starting at OFFSET and extending for LENGTH bits
-     are valid, or 0 if any bit is invalid.  */
-  int (*check_validity) (const struct value *value, int offset, int length);
-
-  /* Return 1 if any bit in VALUE is valid, 0 if they are all invalid.  */
-  int (*check_any_valid) (const struct value *value);
 
   /* If non-NULL, this is used to implement pointer indirection for
      this value.  This method may return NULL, in which case value_ind
@@ -267,10 +312,10 @@ extern void *value_computed_closure (const struct value *value);
    element.  If you ever change the way lazy flag is set and reset, be
    sure to consider this use as well!  */
 
-extern int value_lazy (struct value *);
+extern int value_lazy (const struct value *);
 extern void set_value_lazy (struct value *value, int val);
 
-extern int value_stack (struct value *);
+extern int value_stack (const struct value *);
 extern void set_value_stack (struct value *value, int val);
 
 /* Throw an error complaining that the value has been optimized
@@ -320,28 +365,40 @@ extern const gdb_byte *value_contents_for_printing (struct value *value);
 extern const gdb_byte *
   value_contents_for_printing_const (const struct value *value);
 
-extern int value_fetch_lazy (struct value *val);
-extern int value_contents_equal (struct value *val1, struct value *val2);
+extern void value_fetch_lazy (struct value *val);
 
 /* If nonzero, this is the value of a variable which does not actually
    exist in the program, at least partially.  If the value is lazy,
    this may fetch it now.  */
 extern int value_optimized_out (struct value *value);
-extern void set_value_optimized_out (struct value *value, int val);
 
-/* Like value_optimized_out, but don't fetch the value even if it is
-   lazy.  Mainly useful for constructing other values using VALUE as
-   template.  */
-extern int value_optimized_out_const (const struct value *value);
+/* Given a value, return true if any of the contents bits starting at
+   OFFSET and extending for LENGTH bits is optimized out, false
+   otherwise.  */
 
-/* Like value_optimized_out, but return false if any bit in the object
-   is valid.  */
-extern int value_entirely_optimized_out (const struct value *value);
+extern int value_bits_any_optimized_out (const struct value *value,
+					 int bit_offset, int bit_length);
+
+/* Like value_optimized_out, but return true iff the whole value is
+   optimized out.  */
+extern int value_entirely_optimized_out (struct value *value);
+
+/* Mark VALUE's content bytes starting at OFFSET and extending for
+   LENGTH bytes as optimized out.  */
+
+extern void mark_value_bytes_optimized_out (struct value *value,
+					    int offset, int length);
+
+/* Mark VALUE's content bits starting at OFFSET and extending for
+   LENGTH bits as optimized out.  */
+
+extern void mark_value_bits_optimized_out (struct value *value,
+					   int offset, int length);
 
 /* Set or return field indicating whether a variable is initialized or
    not, based on debugging information supplied by the compiler.
    1 = initialized; 0 = uninitialized.  */
-extern int value_initialized (struct value *);
+extern int value_initialized (const struct value *);
 extern void set_value_initialized (struct value *, int);
 
 /* Set COMPONENT's location as appropriate for a component of WHOLE
@@ -368,7 +425,7 @@ extern CORE_ADDR value_address (const struct value *);
 
 /* Like value_address, except the result does not include value's
    offset.  */
-extern CORE_ADDR value_raw_address (struct value *);
+extern CORE_ADDR value_raw_address (const struct value *);
 
 /* Set the address of a value.  */
 extern void set_value_address (struct value *, CORE_ADDR);
@@ -401,8 +458,8 @@ extern struct value *coerce_ref_if_computed (const struct value *arg);
 
 extern struct value * readjust_indirect_value_type (struct value *value,
 						    struct type *enc_type,
-						    struct type *original_type,
-						    struct value *original_val);
+						    const struct type *original_type,
+						    const struct value *original_val);
 
 /* Convert a REF to the object referenced.  */
 
@@ -414,13 +471,6 @@ extern struct value *coerce_ref (struct value *value);
    References are dereferenced.  */
 
 extern struct value *coerce_array (struct value *value);
-
-/* Given a value, determine whether the bits starting at OFFSET and
-   extending for LENGTH bits are valid.  This returns nonzero if all
-   bits in the given range are valid, zero if any bit is invalid.  */
-
-extern int value_bits_valid (const struct value *value,
-			     int offset, int length);
 
 /* Given a value, determine whether the bits starting at OFFSET and
    extending for LENGTH bits are a synthetic pointer.  */
@@ -436,6 +486,14 @@ extern int value_bits_synthetic_pointer (const struct value *value,
 extern int value_bytes_available (const struct value *value,
 				  int offset, int length);
 
+/* Given a value, determine whether the contents bits starting at
+   OFFSET and extending for LENGTH bits are available.  This returns
+   nonzero if all bits in the given range are available, zero if any
+   bit is unavailable.  */
+
+extern int value_bits_available (const struct value *value,
+				 int offset, int length);
+
 /* Like value_bytes_available, but return false if any byte in the
    whole object is unavailable.  */
 extern int value_entirely_available (struct value *value);
@@ -450,6 +508,12 @@ extern int value_entirely_unavailable (struct value *value);
 extern void mark_value_bytes_unavailable (struct value *value,
 					  int offset, int length);
 
+/* Mark VALUE's content bits starting at OFFSET and extending for
+   LENGTH bits as unavailable.  */
+
+extern void mark_value_bits_unavailable (struct value *value,
+					 int offset, int length);
+
 /* Compare LENGTH bytes of VAL1's contents starting at OFFSET1 with
    LENGTH bytes of VAL2's contents starting at OFFSET2.
 
@@ -459,38 +523,56 @@ extern void mark_value_bytes_unavailable (struct value *value,
    its enclosing type chunk, you'd do:
 
      int len = TYPE_LENGTH (check_typedef (value_enclosing_type (val)));
-     value_available_contents (val, 0, val, 0, len);
+     value_contents_eq (val, 0, val, 0, len);
 
-   Returns true iff the set of available contents match.  Unavailable
-   contents compare equal with unavailable contents, and different
-   with any available byte.  For example, if 'x's represent an
-   unavailable byte, and 'V' and 'Z' represent different available
-   bytes, in a value with length 16:
+   Returns true iff the set of available/valid contents match.
 
-   offset:   0   4   8   12  16
-   contents: xxxxVVVVxxxxVVZZ
+   Optimized-out contents are equal to optimized-out contents, and are
+   not equal to non-optimized-out contents.
+
+   Unavailable contente are equal to unavailable contents, and are not
+   equal to non-unavailable contents.
+
+   For example, if 'x's represent an unavailable byte, and 'V' and 'Z'
+   represent different available/valid bytes, in a value with length
+   16:
+
+     offset:   0   4   8   12  16
+     contents: xxxxVVVVxxxxVVZZ
 
    then:
 
-   value_available_contents_eq(val, 0, val, 8, 6) => 1
-   value_available_contents_eq(val, 0, val, 4, 4) => 1
-   value_available_contents_eq(val, 0, val, 8, 8) => 0
-   value_available_contents_eq(val, 4, val, 12, 2) => 1
-   value_available_contents_eq(val, 4, val, 12, 4) => 0
-   value_available_contents_eq(val, 3, val, 4, 4) => 0
+     value_contents_eq(val, 0, val, 8, 6) => 1
+     value_contents_eq(val, 0, val, 4, 4) => 0
+     value_contents_eq(val, 0, val, 8, 8) => 0
+     value_contents_eq(val, 4, val, 12, 2) => 1
+     value_contents_eq(val, 4, val, 12, 4) => 0
+     value_contents_eq(val, 3, val, 4, 4) => 0
 
-   We only know whether a value chunk is available if we've tried to
-   read it.  As this routine is used by printing routines, which may
-   be printing values in the value history, long after the inferior is
-   gone, it works with const values.  Therefore, this routine must not
-   be called with lazy values.  */
+   If 'x's represent an unavailable byte, 'o' represents an optimized
+   out byte, in a value with length 8:
 
-extern int value_available_contents_eq (const struct value *val1, int offset1,
-					const struct value *val2, int offset2,
-					int length);
+     offset:   0   4   8
+     contents: xxxxoooo
 
-/* Read LENGTH bytes of memory starting at MEMADDR into BUFFER, which
-   is (or will be copied to) VAL's contents buffer offset by
+   then:
+
+     value_contents_eq(val, 0, val, 2, 2) => 1
+     value_contents_eq(val, 4, val, 6, 2) => 1
+     value_contents_eq(val, 0, val, 4, 4) => 0
+
+   We only know whether a value chunk is unavailable or optimized out
+   if we've tried to read it.  As this routine is used by printing
+   routines, which may be printing values in the value history, long
+   after the inferior is gone, it works with const values.  Therefore,
+   this routine must not be called with lazy values.  */
+
+extern int value_contents_eq (const struct value *val1, int offset1,
+			      const struct value *val2, int offset2,
+			      int length);
+
+/* Read LENGTH addressable memory units starting at MEMADDR into BUFFER,
+   which is (or will be copied to) VAL's contents buffer offset by
    EMBEDDED_OFFSET (that is, to &VAL->contents[EMBEDDED_OFFSET]).
    Marks value contents ranges as unavailable if the corresponding
    memory is likewise unavailable.  STACK indicates whether the memory
@@ -528,19 +610,17 @@ extern DOUBLEST unpack_double (struct type *type, const gdb_byte *valaddr,
 			       int *invp);
 extern CORE_ADDR unpack_pointer (struct type *type, const gdb_byte *valaddr);
 
-extern int unpack_value_bits_as_long (struct type *field_type,
-				      const gdb_byte *valaddr,
-				      int embedded_offset, int bitpos,
-				      int bitsize,
-				      const struct value *original_value,
-				      LONGEST *result);
-
 extern LONGEST unpack_field_as_long (struct type *type,
 				     const gdb_byte *valaddr,
 				     int fieldno);
 extern int unpack_value_field_as_long (struct type *type, const gdb_byte *valaddr,
 				int embedded_offset, int fieldno,
 				const struct value *val, LONGEST *result);
+
+extern void unpack_value_bitfield (struct value *dest_val,
+				   int bitpos, int bitsize,
+				   const gdb_byte *valaddr, int embedded_offset,
+				   const struct value *val);
 
 extern struct value *value_field_bitfield (struct type *type, int fieldno,
 					   const gdb_byte *valaddr,
@@ -555,19 +635,22 @@ extern struct value *value_from_pointer (struct type *type, CORE_ADDR addr);
 extern struct value *value_from_double (struct type *type, DOUBLEST num);
 extern struct value *value_from_decfloat (struct type *type,
 					  const gdb_byte *decbytes);
-extern struct value *value_from_history_ref (char *, char **);
+extern struct value *value_from_history_ref (const char *, const char **);
 
 extern struct value *value_at (struct type *type, CORE_ADDR addr);
 extern struct value *value_at_lazy (struct type *type, CORE_ADDR addr);
 
+extern struct value *value_from_contents_and_address_unresolved
+     (struct type *, const gdb_byte *, CORE_ADDR);
 extern struct value *value_from_contents_and_address (struct type *,
 						      const gdb_byte *,
 						      CORE_ADDR);
 extern struct value *value_from_contents (struct type *, const gdb_byte *);
 
-extern struct value *default_value_from_register (struct type *type,
+extern struct value *default_value_from_register (struct gdbarch *gdbarch,
+						  struct type *type,
 						  int regnum,
-						  struct frame_info *frame);
+						  struct frame_id frame_id);
 
 extern void read_frame_register_value (struct value *value,
 				       struct frame_info *frame);
@@ -575,7 +658,7 @@ extern void read_frame_register_value (struct value *value,
 extern struct value *value_from_register (struct type *type, int regnum,
 					  struct frame_info *frame);
 
-extern CORE_ADDR address_from_register (struct type *type, int regnum,
+extern CORE_ADDR address_from_register (int regnum,
 					struct frame_info *frame);
 
 extern struct value *value_of_variable (struct symbol *var,
@@ -591,9 +674,11 @@ struct value *value_of_register_lazy (struct frame_info *frame, int regnum);
 extern int symbol_read_needs_frame (struct symbol *);
 
 extern struct value *read_var_value (struct symbol *var,
+				     const struct block *var_block,
 				     struct frame_info *frame);
 
 extern struct value *default_read_var_value (struct symbol *var,
+					     const struct block *var_block,
 					     struct frame_info *frame);
 
 extern struct value *allocate_value (struct type *type);
@@ -609,11 +694,11 @@ extern struct value *allocate_repeat_value (struct type *type, int count);
 
 extern struct value *value_mark (void);
 
-extern void value_free_to_mark (struct value *mark);
+extern void value_free_to_mark (const struct value *mark);
 
-extern struct value *value_cstring (char *ptr, ssize_t len,
+extern struct value *value_cstring (const char *ptr, ssize_t len,
 				    struct type *char_type);
-extern struct value *value_string (char *ptr, ssize_t len,
+extern struct value *value_string (const char *ptr, ssize_t len,
 				   struct type *char_type);
 
 extern struct value *value_array (int lowbound, int highbound,
@@ -656,8 +741,13 @@ extern struct value *value_struct_elt (struct value **argp,
 				       const char *name, int *static_memfuncp,
 				       const char *err);
 
+extern struct value *value_struct_elt_bitpos (struct value **argp,
+					      int bitpos,
+					      struct type *field_type,
+					      const char *err);
+
 extern struct value *value_aggregate_elt (struct type *curtype,
-					  char *name,
+					  const char *name,
 					  struct type *expect_type,
 					  int want_address,
 					  enum noside noside);
@@ -671,7 +761,8 @@ extern int find_overload_match (struct value **args, int nargs,
 				enum oload_search_type method,
 				struct value **objp, struct symbol *fsym,
 				struct value **valp, struct symbol **symp,
-				int *staticp, const int no_adl);
+				int *staticp, const int no_adl,
+				enum noside noside);
 
 extern struct value *value_field (struct value *arg1, int fieldno);
 
@@ -915,7 +1006,7 @@ extern void value_print_array_elements (struct value *val,
 					struct ui_file *stream, int format,
 					enum val_prettyformat pretty);
 
-extern struct value *value_release_to_mark (struct value *mark);
+extern struct value *value_release_to_mark (const struct value *mark);
 
 extern void val_print (struct type *type, const gdb_byte *valaddr,
 		       int embedded_offset, CORE_ADDR address,
@@ -943,7 +1034,7 @@ extern void print_variable_and_value (const char *name,
 extern void typedef_print (struct type *type, struct symbol *news,
 			   struct ui_file *stream);
 
-extern char *internalvar_name (struct internalvar *var);
+extern char *internalvar_name (const struct internalvar *var);
 
 extern void preserve_values (struct objfile *);
 
@@ -952,6 +1043,10 @@ extern void preserve_values (struct objfile *);
 extern struct value *value_copy (struct value *);
 
 extern struct value *value_non_lval (struct value *);
+
+extern void value_force_lval (struct value *, CORE_ADDR);
+
+extern struct value *make_cv_value (int, int, struct value *);
 
 extern void preserve_one_value (struct value *, struct objfile *, htab_t);
 
@@ -990,5 +1085,13 @@ struct value *call_internal_function (struct gdbarch *gdbarch,
 				      int argc, struct value **argv);
 
 char *value_internal_function_name (struct value *);
+
+extern struct value *value_of_xmethod (struct xmethod_worker *);
+
+extern struct type *result_type_of_xmethod (struct value *method,
+					    int argc, struct value **argv);
+
+extern struct value *call_xmethod (struct value *method,
+				   int argc, struct value **argv);
 
 #endif /* !defined (VALUE_H) */

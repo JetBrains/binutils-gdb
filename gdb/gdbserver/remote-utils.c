@@ -1,5 +1,5 @@
 /* Remote utility routines for the remote server for GDB.
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,9 +22,8 @@
 #include "gdbthread.h"
 #include "tdesc.h"
 #include "dll.h"
-
-#include <stdio.h>
-#include <string.h>
+#include "rsp-low.h"
+#include <ctype.h>
 #if HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
 #endif
@@ -52,15 +51,12 @@
 #if HAVE_FCNTL_H
 #include <fcntl.h>
 #endif
-#include <sys/time.h>
+#include "gdb_sys_time.h"
 #include <unistd.h>
 #if HAVE_ARPA_INET_H
 #include <arpa/inet.h>
 #endif
 #include <sys/stat.h>
-#if HAVE_ERRNO_H
-#include <errno.h>
-#endif
 
 #if USE_WIN32API
 #include <winsock2.h>
@@ -161,7 +157,7 @@ handle_accept_event (int err, gdb_client_data client_data)
   socklen_t tmp;
 
   if (debug_threads)
-    fprintf (stderr, "handling possible accept event\n");
+    debug_printf ("handling possible accept event\n");
 
   tmp = sizeof (sockaddr);
   remote_desc = accept (listen_desc, (struct sockaddr *) &sockaddr, &tmp);
@@ -252,7 +248,7 @@ remote_prepare (char *name)
 
   port = strtoul (port_str + 1, &port_end, 10);
   if (port_str[1] == '\0' || *port_end != '\0')
-    fatal ("Bad port argument: %s", name);
+    error ("Bad port argument: %s", name);
 
 #ifdef USE_WIN32API
   if (!winsock_initialized)
@@ -406,6 +402,11 @@ remote_close (void)
 {
   delete_file_handler (remote_desc);
 
+#ifndef USE_WIN32API
+  /* Remove SIGIO handler.  */
+  signal (SIGIO, SIG_IGN);
+#endif
+
 #ifdef USE_WIN32API
   closesocket (remote_desc);
 #else
@@ -417,65 +418,9 @@ remote_close (void)
   reset_readchar ();
 }
 
-/* Convert hex digit A to a number.  */
-
-static int
-fromhex (int a)
-{
-  if (a >= '0' && a <= '9')
-    return a - '0';
-  else if (a >= 'a' && a <= 'f')
-    return a - 'a' + 10;
-  else
-    error ("Reply contains invalid hex digit");
-  return 0;
-}
-
 #endif
 
-static const char hexchars[] = "0123456789abcdef";
-
-static int
-ishex (int ch, int *val)
-{
-  if ((ch >= 'a') && (ch <= 'f'))
-    {
-      *val = ch - 'a' + 10;
-      return 1;
-    }
-  if ((ch >= 'A') && (ch <= 'F'))
-    {
-      *val = ch - 'A' + 10;
-      return 1;
-    }
-  if ((ch >= '0') && (ch <= '9'))
-    {
-      *val = ch - '0';
-      return 1;
-    }
-  return 0;
-}
-
 #ifndef IN_PROCESS_AGENT
-
-int
-unhexify (char *bin, const char *hex, int count)
-{
-  int i;
-
-  for (i = 0; i < count; i++)
-    {
-      if (hex[0] == 0 || hex[1] == 0)
-	{
-	  /* Hex string is short, or of uneven length.
-	     Return the count that has been converted so far. */
-	  return i;
-	}
-      *bin++ = fromhex (hex[0]) * 16 + fromhex (hex[1]);
-      hex += 2;
-    }
-  return i;
-}
 
 void
 decode_address (CORE_ADDR *addrp, const char *start, int len)
@@ -512,117 +457,7 @@ decode_address_to_semicolon (CORE_ADDR *addrp, const char *start)
 
 #endif
 
-/* Convert number NIB to a hex digit.  */
-
-static int
-tohex (int nib)
-{
-  if (nib < 10)
-    return '0' + nib;
-  else
-    return 'a' + nib - 10;
-}
-
 #ifndef IN_PROCESS_AGENT
-
-int
-hexify (char *hex, const char *bin, int count)
-{
-  int i;
-
-  /* May use a length, or a nul-terminated string as input. */
-  if (count == 0)
-    count = strlen (bin);
-
-  for (i = 0; i < count; i++)
-    {
-      *hex++ = tohex ((*bin >> 4) & 0xf);
-      *hex++ = tohex (*bin++ & 0xf);
-    }
-  *hex = 0;
-  return i;
-}
-
-/* Convert BUFFER, binary data at least LEN bytes long, into escaped
-   binary data in OUT_BUF.  Set *OUT_LEN to the length of the data
-   encoded in OUT_BUF, and return the number of bytes in OUT_BUF
-   (which may be more than *OUT_LEN due to escape characters).  The
-   total number of bytes in the output buffer will be at most
-   OUT_MAXLEN.  */
-
-int
-remote_escape_output (const gdb_byte *buffer, int len,
-		      gdb_byte *out_buf, int *out_len,
-		      int out_maxlen)
-{
-  int input_index, output_index;
-
-  output_index = 0;
-  for (input_index = 0; input_index < len; input_index++)
-    {
-      gdb_byte b = buffer[input_index];
-
-      if (b == '$' || b == '#' || b == '}' || b == '*')
-	{
-	  /* These must be escaped.  */
-	  if (output_index + 2 > out_maxlen)
-	    break;
-	  out_buf[output_index++] = '}';
-	  out_buf[output_index++] = b ^ 0x20;
-	}
-      else
-	{
-	  if (output_index + 1 > out_maxlen)
-	    break;
-	  out_buf[output_index++] = b;
-	}
-    }
-
-  *out_len = input_index;
-  return output_index;
-}
-
-/* Convert BUFFER, escaped data LEN bytes long, into binary data
-   in OUT_BUF.  Return the number of bytes written to OUT_BUF.
-   Raise an error if the total number of bytes exceeds OUT_MAXLEN.
-
-   This function reverses remote_escape_output.  It allows more
-   escaped characters than that function does, in particular because
-   '*' must be escaped to avoid the run-length encoding processing
-   in reading packets.  */
-
-static int
-remote_unescape_input (const gdb_byte *buffer, int len,
-		       gdb_byte *out_buf, int out_maxlen)
-{
-  int input_index, output_index;
-  int escaped;
-
-  output_index = 0;
-  escaped = 0;
-  for (input_index = 0; input_index < len; input_index++)
-    {
-      gdb_byte b = buffer[input_index];
-
-      if (output_index + 1 > out_maxlen)
-	error ("Received too much data from the target.");
-
-      if (escaped)
-	{
-	  out_buf[output_index++] = b ^ 0x20;
-	  escaped = 0;
-	}
-      else if (b == '}')
-	escaped = 1;
-      else
-	out_buf[output_index++] = b;
-    }
-
-  if (escaped)
-    error ("Unmatched escape character in target response.");
-
-  return output_index;
-}
 
 /* Look for a sequence of characters which can be run-length encoded.
    If there are any, update *CSUM and *P.  Otherwise, output the
@@ -670,23 +505,6 @@ try_rle (char *buf, int remaining, unsigned char *csum, char **p)
 
 #endif
 
-char *
-unpack_varlen_hex (char *buff,	/* packet to parse */
-		   ULONGEST *result)
-{
-  int nibble;
-  ULONGEST retval = 0;
-
-  while (ishex (*buff, &nibble))
-    {
-      buff++;
-      retval = retval << 4;
-      retval |= nibble & 0x0f;
-    }
-  *result = retval;
-  return buff;
-}
-
 #ifndef IN_PROCESS_AGENT
 
 /* Write a PTID to BUF.  Returns BUF+CHARACTERS_WRITTEN.  */
@@ -713,12 +531,12 @@ write_ptid (char *buf, ptid_t ptid)
   return buf;
 }
 
-ULONGEST
+static ULONGEST
 hex_or_minus_one (char *buf, char **obuf)
 {
   ULONGEST ret;
 
-  if (strncmp (buf, "-1", 2) == 0)
+  if (startswith (buf, "-1"))
     {
       ret = (ULONGEST) -1;
       buf += 2;
@@ -760,9 +578,10 @@ read_ptid (char *buf, char **obuf)
   /* No multi-process.  Just a tid.  */
   tid = hex_or_minus_one (p, &pp);
 
-  /* Since the stub is not sending a process id, then default to
-     what's in the current inferior.  */
-  pid = ptid_get_pid (current_ptid);
+  /* Since GDB is not sending a process id (multi-process extensions
+     are off), then there's only one process.  Default to the first in
+     the list.  */
+  pid = pid_of (get_first_process ());
 
   if (obuf)
     *obuf = pp;
@@ -808,7 +627,7 @@ putpkt_binary_1 (char *buf, int cnt, int is_notif)
   char *p;
   int cc;
 
-  buf2 = xmalloc (strlen ("$") + cnt + strlen ("#nn") + 1);
+  buf2 = (char *) xmalloc (strlen ("$") + cnt + strlen ("#nn") + 1);
 
   /* Copy the packet into buffer BUF2, encapsulating it
      and giving it a checksum.  */
@@ -874,7 +693,7 @@ putpkt_binary_1 (char *buf, int cnt, int is_notif)
 	}
 
       /* Check for an input interrupt while we're here.  */
-      if (cc == '\003' && current_inferior != NULL)
+      if (cc == '\003' && current_thread != NULL)
 	(*the_target->request_interrupt) ();
     }
   while (cc != '+');
@@ -929,10 +748,18 @@ input_interrupt (int unused)
 
       cc = read_prim (&c, 1);
 
-      if (cc != 1 || c != '\003' || current_inferior == NULL)
+      if (cc == 0)
 	{
-	  fprintf (stderr, "input_interrupt, count = %d c = %d ('%c')\n",
-		   cc, c, c);
+	  fprintf (stderr, "client connection closed\n");
+	  return;
+	}
+      else if (cc != 1 || c != '\003')
+	{
+	  fprintf (stderr, "input_interrupt, count = %d c = %d ", cc, c);
+	  if (isprint (c))
+	    fprintf (stderr, "('%c')\n", c);
+	  else
+	    fprintf (stderr, "('\\x%02x')\n", c & 0xff);
 	  return;
 	}
 
@@ -953,19 +780,19 @@ check_remote_input_interrupt_request (void)
   input_interrupt (0);
 }
 
-/* Asynchronous I/O support.  SIGIO must be enabled when waiting, in order to
-   accept Control-C from the client, and must be disabled when talking to
-   the client.  */
+/* Asynchronous I/O support.  SIGIO must be unblocked when waiting,
+   in order to accept Control-C from the client, and must be blocked
+   when talking to the client.  */
 
 static void
-unblock_async_io (void)
+block_unblock_async_io (int block)
 {
 #ifndef USE_WIN32API
   sigset_t sigio_set;
 
   sigemptyset (&sigio_set);
   sigaddset (&sigio_set, SIGIO);
-  sigprocmask (SIG_UNBLOCK, &sigio_set, NULL);
+  sigprocmask (block ? SIG_BLOCK : SIG_UNBLOCK, &sigio_set, NULL);
 #endif
 }
 
@@ -1001,9 +828,8 @@ enable_async_io (void)
   if (async_io_enabled)
     return;
 
-#ifndef USE_WIN32API
-  signal (SIGIO, input_interrupt);
-#endif
+  block_unblock_async_io (0);
+
   async_io_enabled = 1;
 #ifdef __QNX__
   nto_comctrl (1);
@@ -1017,9 +843,8 @@ disable_async_io (void)
   if (!async_io_enabled)
     return;
 
-#ifndef USE_WIN32API
-  signal (SIGIO, SIG_IGN);
-#endif
+  block_unblock_async_io (1);
+
   async_io_enabled = 0;
 #ifdef __QNX__
   nto_comctrl (0);
@@ -1030,12 +855,14 @@ disable_async_io (void)
 void
 initialize_async_io (void)
 {
-  /* Make sure that async I/O starts disabled.  */
+  /* Make sure that async I/O starts blocked.  */
   async_io_enabled = 1;
   disable_async_io ();
 
-  /* Make sure the signal is unblocked.  */
-  unblock_async_io ();
+  /* Install the signal handler.  */
+#ifndef USE_WIN32API
+  signal (SIGIO, input_interrupt);
+#endif
 }
 
 /* Internal buffer used by readchar.
@@ -1060,7 +887,10 @@ readchar (void)
       if (readchar_bufcnt <= 0)
 	{
 	  if (readchar_bufcnt == 0)
-	    fprintf (stderr, "readchar: Got EOF\n");
+	    {
+	      if (remote_debug)
+		fprintf (stderr, "readchar: Got EOF\n");
+	    }
 	  else
 	    perror ("readchar");
 
@@ -1134,6 +964,15 @@ getpkt (char *buf)
       while (1)
 	{
 	  c = readchar ();
+
+	  /* The '\003' may appear before or after each packet, so
+	     check for an input interrupt.  */
+	  if (c == '\003')
+	    {
+	      (*the_target->request_interrupt) ();
+	      continue;
+	    }
+
 	  if (c == '$')
 	    break;
 	  if (remote_debug)
@@ -1207,6 +1046,22 @@ getpkt (char *buf)
 	}
     }
 
+  /* The readchar above may have already read a '\003' out of the socket
+     and moved it to the local buffer.  For example, when GDB sends
+     vCont;c immediately followed by interrupt (see
+     gdb.base/interrupt-noterm.exp).  As soon as we see the vCont;c, we'll
+     resume the inferior and wait.  Since we've already moved the '\003'
+     to the local buffer, SIGIO won't help.  In that case, if we don't
+     check for interrupt after the vCont;c packet, the interrupt character
+     would stay in the buffer unattended until after the next (unrelated)
+     stop.  */
+  while (readchar_bufcnt > 0 && *readchar_bufp == '\003')
+    {
+      /* Consume the interrupt character in the buffer.  */
+      readchar ();
+      (*the_target->request_interrupt) ();
+    }
+
   return bp - buf;
 }
 
@@ -1230,35 +1085,7 @@ write_enn (char *buf)
 
 #endif
 
-void
-convert_int_to_ascii (const unsigned char *from, char *to, int n)
-{
-  int nib;
-  int ch;
-  while (n--)
-    {
-      ch = *from++;
-      nib = ((ch & 0xf0) >> 4) & 0x0f;
-      *to++ = tohex (nib);
-      nib = ch & 0x0f;
-      *to++ = tohex (nib);
-    }
-  *to++ = 0;
-}
-
 #ifndef IN_PROCESS_AGENT
-
-void
-convert_ascii_to_int (const char *from, unsigned char *to, int n)
-{
-  int nib1, nib2;
-  while (n--)
-    {
-      nib1 = fromhex (*from++);
-      nib2 = fromhex (*from++);
-      *to++ = (((nib1 & 0x0f) << 4) & 0xf0) | (nib2 & 0x0f);
-    }
-}
 
 static char *
 outreg (struct regcache *regcache, int regno, char *buf)
@@ -1278,64 +1105,94 @@ outreg (struct regcache *regcache, int regno, char *buf)
 }
 
 void
-new_thread_notify (int id)
-{
-  char own_buf[256];
-
-  /* The `n' response is not yet part of the remote protocol.  Do nothing.  */
-  if (1)
-    return;
-
-  if (server_waiting == 0)
-    return;
-
-  sprintf (own_buf, "n%x", id);
-  disable_async_io ();
-  putpkt (own_buf);
-  enable_async_io ();
-}
-
-void
-dead_thread_notify (int id)
-{
-  char own_buf[256];
-
-  /* The `x' response is not yet part of the remote protocol.  Do nothing.  */
-  if (1)
-    return;
-
-  sprintf (own_buf, "x%x", id);
-  disable_async_io ();
-  putpkt (own_buf);
-  enable_async_io ();
-}
-
-void
 prepare_resume_reply (char *buf, ptid_t ptid,
 		      struct target_waitstatus *status)
 {
   if (debug_threads)
-    fprintf (stderr, "Writing resume reply for %s:%d\n",
-	     target_pid_to_str (ptid), status->kind);
+    debug_printf ("Writing resume reply for %s:%d\n",
+		  target_pid_to_str (ptid), status->kind);
 
   switch (status->kind)
     {
     case TARGET_WAITKIND_STOPPED:
+    case TARGET_WAITKIND_FORKED:
+    case TARGET_WAITKIND_VFORKED:
+    case TARGET_WAITKIND_VFORK_DONE:
+    case TARGET_WAITKIND_EXECD:
+    case TARGET_WAITKIND_THREAD_CREATED:
+    case TARGET_WAITKIND_SYSCALL_ENTRY:
+    case TARGET_WAITKIND_SYSCALL_RETURN:
       {
-	struct thread_info *saved_inferior;
+	struct thread_info *saved_thread;
 	const char **regp;
 	struct regcache *regcache;
 
-	sprintf (buf, "T%02x", status->value.sig);
+	if ((status->kind == TARGET_WAITKIND_FORKED && report_fork_events)
+	    || (status->kind == TARGET_WAITKIND_VFORKED && report_vfork_events))
+	  {
+	    enum gdb_signal signal = GDB_SIGNAL_TRAP;
+	    const char *event = (status->kind == TARGET_WAITKIND_FORKED
+				 ? "fork" : "vfork");
+
+	    sprintf (buf, "T%02x%s:", signal, event);
+	    buf += strlen (buf);
+	    buf = write_ptid (buf, status->value.related_pid);
+	    strcat (buf, ";");
+	  }
+	else if (status->kind == TARGET_WAITKIND_VFORK_DONE && report_vfork_events)
+	  {
+	    enum gdb_signal signal = GDB_SIGNAL_TRAP;
+
+	    sprintf (buf, "T%02xvforkdone:;", signal);
+	  }
+	else if (status->kind == TARGET_WAITKIND_EXECD && report_exec_events)
+	  {
+	    enum gdb_signal signal = GDB_SIGNAL_TRAP;
+	    const char *event = "exec";
+	    char hexified_pathname[PATH_MAX * 2];
+
+	    sprintf (buf, "T%02x%s:", signal, event);
+	    buf += strlen (buf);
+
+	    /* Encode pathname to hexified format.  */
+	    bin2hex ((const gdb_byte *) status->value.execd_pathname,
+		     hexified_pathname,
+		     strlen (status->value.execd_pathname));
+
+	    sprintf (buf, "%s;", hexified_pathname);
+	    xfree (status->value.execd_pathname);
+	    status->value.execd_pathname = NULL;
+	    buf += strlen (buf);
+	  }
+	else if (status->kind == TARGET_WAITKIND_THREAD_CREATED
+		 && report_thread_events)
+	  {
+	    enum gdb_signal signal = GDB_SIGNAL_TRAP;
+
+	    sprintf (buf, "T%02xcreate:;", signal);
+	  }
+	else if (status->kind == TARGET_WAITKIND_SYSCALL_ENTRY
+		 || status->kind == TARGET_WAITKIND_SYSCALL_RETURN)
+	  {
+	    enum gdb_signal signal = GDB_SIGNAL_TRAP;
+	    const char *event = (status->kind == TARGET_WAITKIND_SYSCALL_ENTRY
+				 ? "syscall_entry" : "syscall_return");
+
+	    sprintf (buf, "T%02x%s:%x;", signal, event,
+		     status->value.syscall_number);
+	  }
+	else
+	  sprintf (buf, "T%02x", status->value.sig);
+
 	buf += strlen (buf);
 
-	saved_inferior = current_inferior;
+	saved_thread = current_thread;
 
-	current_inferior = find_thread_ptid (ptid);
+	current_thread = find_thread_ptid (ptid);
 
 	regp = current_target_desc ()->expedite_regs;
 
-	regcache = get_thread_regcache (current_inferior, 1);
+	regcache = get_thread_regcache (current_thread, 1);
 
 	if (the_target->stopped_by_watchpoint != NULL
 	    && (*the_target->stopped_by_watchpoint) ())
@@ -1355,6 +1212,16 @@ prepare_resume_reply (char *buf, ptid_t ptid,
 	    for (i = sizeof (void *) * 2; i > 0; i--)
 	      *buf++ = tohex ((addr >> (i - 1) * 4) & 0xf);
 	    *buf++ = ';';
+	  }
+	else if (swbreak_feature && target_stopped_by_sw_breakpoint ())
+	  {
+	    sprintf (buf, "swbreak:;");
+	    buf += strlen (buf);
+	  }
+	else if (hwbreak_feature && target_stopped_by_hw_breakpoint ())
+	  {
+	    sprintf (buf, "hwbreak:;");
+	    buf += strlen (buf);
 	  }
 
 	while (*regp)
@@ -1412,7 +1279,7 @@ prepare_resume_reply (char *buf, ptid_t ptid,
 	    dlls_changed = 0;
 	  }
 
-	current_inferior = saved_inferior;
+	current_thread = saved_thread;
       }
       break;
     case TARGET_WAITKIND_EXITED:
@@ -1428,6 +1295,14 @@ prepare_resume_reply (char *buf, ptid_t ptid,
 		 status->value.sig, ptid_get_pid (ptid));
       else
 	sprintf (buf, "X%02x", status->value.sig);
+      break;
+    case TARGET_WAITKIND_THREAD_EXITED:
+      sprintf (buf, "w%x;", status->value.integer);
+      buf += strlen (buf);
+      buf = write_ptid (buf, ptid);
+      break;
+    case TARGET_WAITKIND_NO_RESUMED:
+      sprintf (buf, "N");
       break;
     default:
       error ("unhandled waitkind");
@@ -1478,9 +1353,9 @@ decode_M_packet (char *from, CORE_ADDR *mem_addr_ptr, unsigned int *len_ptr,
     }
 
   if (*to_p == NULL)
-    *to_p = xmalloc (*len_ptr);
+    *to_p = (unsigned char *) xmalloc (*len_ptr);
 
-  convert_ascii_to_int (&from[i++], *to_p, *len_ptr);
+  hex2bin (&from[i++], *to_p, *len_ptr);
 }
 
 int
@@ -1504,7 +1379,7 @@ decode_X_packet (char *from, int packet_len, CORE_ADDR *mem_addr_ptr,
     }
 
   if (*to_p == NULL)
-    *to_p = xmalloc (*len_ptr);
+    *to_p = (unsigned char *) xmalloc (*len_ptr);
 
   if (remote_unescape_input ((const gdb_byte *) &from[i], packet_len - i,
 			     *to_p, *len_ptr) != *len_ptr)
@@ -1587,7 +1462,7 @@ clear_symbol_cache (struct sym_cache **symcache_p)
 int
 look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
 {
-  char own_buf[266], *p, *q;
+  char *p, *q;
   int len;
   struct sym_cache *sym;
   struct process_info *proc;
@@ -1609,7 +1484,8 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
 
   /* Send the request.  */
   strcpy (own_buf, "qSymbol:");
-  hexify (own_buf + strlen ("qSymbol:"), name, strlen (name));
+  bin2hex ((const gdb_byte *) name, own_buf + strlen ("qSymbol:"),
+	  strlen (name));
   if (putpkt (own_buf) < 0)
     return -1;
 
@@ -1621,29 +1497,43 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
   /* We ought to handle pretty much any packet at this point while we
      wait for the qSymbol "response".  That requires re-entering the
      main loop.  For now, this is an adequate approximation; allow
-     GDB to read from memory while it figures out the address of the
-     symbol.  */
-  while (own_buf[0] == 'm')
+     GDB to read from memory and handle 'v' packets (for vFile transfers)
+     while it figures out the address of the symbol.  */
+  while (1)
     {
-      CORE_ADDR mem_addr;
-      unsigned char *mem_buf;
-      unsigned int mem_len;
+      if (own_buf[0] == 'm')
+	{
+	  CORE_ADDR mem_addr;
+	  unsigned char *mem_buf;
+	  unsigned int mem_len;
 
-      decode_m_packet (&own_buf[1], &mem_addr, &mem_len);
-      mem_buf = xmalloc (mem_len);
-      if (read_inferior_memory (mem_addr, mem_buf, mem_len) == 0)
-	convert_int_to_ascii (mem_buf, own_buf, mem_len);
+	  decode_m_packet (&own_buf[1], &mem_addr, &mem_len);
+	  mem_buf = (unsigned char *) xmalloc (mem_len);
+	  if (read_inferior_memory (mem_addr, mem_buf, mem_len) == 0)
+	    bin2hex (mem_buf, own_buf, mem_len);
+	  else
+	    write_enn (own_buf);
+	  free (mem_buf);
+	  if (putpkt (own_buf) < 0)
+	    return -1;
+	}
+      else if (own_buf[0] == 'v')
+	{
+	  int new_len = -1;
+	  handle_v_requests (own_buf, len, &new_len);
+	  if (new_len != -1)
+	    putpkt_binary (own_buf, new_len);
+	  else
+	    putpkt (own_buf);
+	}
       else
-	write_enn (own_buf);
-      free (mem_buf);
-      if (putpkt (own_buf) < 0)
-	return -1;
+	break;
       len = getpkt (own_buf);
       if (len < 0)
 	return -1;
     }
 
-  if (strncmp (own_buf, "qSymbol:", strlen ("qSymbol:")) != 0)
+  if (!startswith (own_buf, "qSymbol:"))
     {
       warning ("Malformed response to qSymbol, ignoring: %s\n", own_buf);
       return -1;
@@ -1661,7 +1551,7 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
   decode_address (addrp, p, q - p);
 
   /* Save the symbol in our cache.  */
-  sym = xmalloc (sizeof (*sym));
+  sym = XNEW (struct sym_cache);
   sym->name = xstrdup (name);
   sym->addr = *addrp;
   sym->next = proc->symbol_cache;
@@ -1685,7 +1575,6 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
 int
 relocate_instruction (CORE_ADDR *to, CORE_ADDR oldloc)
 {
-  char own_buf[266];
   int len;
   ULONGEST written = 0;
 
@@ -1714,9 +1603,9 @@ relocate_instruction (CORE_ADDR *to, CORE_ADDR oldloc)
       if (own_buf[0] == 'm')
 	{
 	  decode_m_packet (&own_buf[1], &mem_addr, &mem_len);
-	  mem_buf = xmalloc (mem_len);
+	  mem_buf = (unsigned char *) xmalloc (mem_len);
 	  if (read_inferior_memory (mem_addr, mem_buf, mem_len) == 0)
-	    convert_int_to_ascii (mem_buf, own_buf, mem_len);
+	    bin2hex (mem_buf, own_buf, mem_len);
 	  else
 	    write_enn (own_buf);
 	}
@@ -1752,7 +1641,7 @@ relocate_instruction (CORE_ADDR *to, CORE_ADDR oldloc)
       return -1;
     }
 
-  if (strncmp (own_buf, "qRelocInsn:", strlen ("qRelocInsn:")) != 0)
+  if (!startswith (own_buf, "qRelocInsn:"))
     {
       warning ("Malformed response to qRelocInsn, ignoring: %s\n",
 	       own_buf);
@@ -1768,10 +1657,11 @@ relocate_instruction (CORE_ADDR *to, CORE_ADDR oldloc)
 void
 monitor_output (const char *msg)
 {
-  char *buf = xmalloc (strlen (msg) * 2 + 2);
+  int len = strlen (msg);
+  char *buf = (char *) xmalloc (len * 2 + 2);
 
   buf[0] = 'O';
-  hexify (buf + 1, msg, 0);
+  bin2hex ((const gdb_byte *) msg, buf + 1, len);
 
   putpkt (buf);
   free (buf);

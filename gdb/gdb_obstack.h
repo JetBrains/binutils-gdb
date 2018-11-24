@@ -1,6 +1,6 @@
 /* Obstack wrapper for GDB.
 
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -25,11 +25,11 @@
 /* Utility macros - wrap obstack alloc into something more robust.  */
 
 #define OBSTACK_ZALLOC(OBSTACK,TYPE) \
-  (memset (obstack_alloc ((OBSTACK), sizeof (TYPE)), 0, sizeof (TYPE)))
+  ((TYPE *) memset (obstack_alloc ((OBSTACK), sizeof (TYPE)), 0, sizeof (TYPE)))
 
 #define OBSTACK_CALLOC(OBSTACK,NUMBER,TYPE) \
-  (memset (obstack_alloc ((OBSTACK), (NUMBER) * sizeof (TYPE)), \
-	   0, (NUMBER) * sizeof (TYPE)))
+  ((TYPE *) memset (obstack_alloc ((OBSTACK), (NUMBER) * sizeof (TYPE)), \
+		    0, (NUMBER) * sizeof (TYPE)))
 
 /* Unless explicitly specified, GDB obstacks always use xmalloc() and
    xfree().  */
@@ -57,5 +57,10 @@
    NULL'.  */
 
 extern char *obconcat (struct obstack *obstackp, ...) ATTRIBUTE_SENTINEL;
+
+/* Duplicate STRING, returning an equivalent string that's allocated on the
+   obstack OBSTACKP.  */
+
+extern char *obstack_strdup (struct obstack *obstackp, const char *string);
 
 #endif

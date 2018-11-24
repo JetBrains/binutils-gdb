@@ -1,6 +1,6 @@
 /* Target-dependent code for Renesas Super-H, for GDB.
 
-   Copyright (C) 1993-2013 Free Software Foundation, Inc.
+   Copyright (C) 1993-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -32,8 +32,6 @@
 #include "value.h"
 #include "dis-asm.h"
 #include "inferior.h"
-#include <string.h>
-#include "gdb_assert.h"
 #include "arch-utils.h"
 #include "floatformat.h"
 #include "regcache.h"
@@ -1307,8 +1305,6 @@ sh_extract_return_value_nofpu (struct type *type, struct regcache *regcache,
   struct gdbarch *gdbarch = get_regcache_arch (regcache);
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   int len = TYPE_LENGTH (type);
-  int return_register = R0_REGNUM;
-  int offset;
 
   if (len <= 4)
     {
@@ -1859,7 +1855,7 @@ sh_frame_cache (struct frame_info *this_frame, void **this_cache)
   int i;
 
   if (*this_cache)
-    return *this_cache;
+    return (struct sh_frame_cache *) *this_cache;
 
   cache = sh_alloc_frame_cache ();
   *this_cache = cache;
@@ -2023,7 +2019,7 @@ sh_stub_this_id (struct frame_info *this_frame, void **this_cache,
 
   if (*this_cache == NULL)
     *this_cache = sh_make_stub_cache (this_frame);
-  cache = *this_cache;
+  cache = (struct sh_frame_cache *) *this_cache;
 
   *this_id = frame_id_build (cache->saved_sp, get_frame_pc (this_frame));
 }
@@ -2052,11 +2048,14 @@ static const struct frame_unwind sh_stub_unwind =
   sh_stub_unwind_sniffer
 };
 
-/* The epilogue is defined here as the area at the end of a function,
+/* Implement the stack_frame_destroyed_p gdbarch method.
+
+   The epilogue is defined here as the area at the end of a function,
    either on the `ret' instruction itself or after an instruction which
    destroys the function's stack frame.  */
+
 static int
-sh_in_function_epilogue_p (struct gdbarch *gdbarch, CORE_ADDR pc)
+sh_stack_frame_destroyed_p (struct gdbarch *gdbarch, CORE_ADDR pc)
 {
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   CORE_ADDR func_addr = 0, func_end = 0;
@@ -2195,33 +2194,33 @@ sh_corefile_collect_regset (const struct regset *regset,
 /* The following two regsets have the same contents, so it is tempting to
    unify them, but they are distiguished by their address, so don't.  */
 
-struct regset sh_corefile_gregset =
+const struct regset sh_corefile_gregset =
 {
   NULL,
   sh_corefile_supply_regset,
   sh_corefile_collect_regset
 };
 
-static struct regset sh_corefile_fpregset =
+static const struct regset sh_corefile_fpregset =
 {
   NULL,
   sh_corefile_supply_regset,
   sh_corefile_collect_regset
 };
 
-static const struct regset *
-sh_regset_from_core_section (struct gdbarch *gdbarch, const char *sect_name,
-			     size_t sect_size)
+static void
+sh_iterate_over_regset_sections (struct gdbarch *gdbarch,
+				 iterate_over_regset_sections_cb *cb,
+				 void *cb_data,
+				 const struct regcache *regcache)
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
 
-  if (tdep->core_gregmap && strcmp (sect_name, ".reg") == 0)
-    return &sh_corefile_gregset;
+  if (tdep->core_gregmap != NULL)
+    cb (".reg", tdep->sizeof_gregset, &sh_corefile_gregset, NULL, cb_data);
 
-  if (tdep->core_fpregmap && strcmp (sect_name, ".reg2") == 0)
-    return &sh_corefile_fpregset;
-
-  return NULL;
+  if (tdep->core_fpregmap != NULL)
+    cb (".reg2", tdep->sizeof_fpregset, &sh_corefile_fpregset, NULL, cb_data);
 }
 
 /* This is the implementation of gdbarch method
@@ -2253,7 +2252,7 @@ sh_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   /* None found, create a new architecture from the information
      provided.  */
-  tdep = XZALLOC (struct gdbarch_tdep);
+  tdep = XCNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
 
   set_gdbarch_short_bit (gdbarch, 2 * TARGET_CHAR_BIT);
@@ -2296,11 +2295,12 @@ sh_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_dummy_id (gdbarch, sh_dummy_id);
   frame_base_set_default (gdbarch, &sh_frame_base);
 
-  set_gdbarch_in_function_epilogue_p (gdbarch, sh_in_function_epilogue_p);
+  set_gdbarch_stack_frame_destroyed_p (gdbarch, sh_stack_frame_destroyed_p);
 
   dwarf2_frame_set_init_reg (gdbarch, sh_dwarf2_frame_init_reg);
 
-  set_gdbarch_regset_from_core_section (gdbarch, sh_regset_from_core_section);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, sh_iterate_over_regset_sections);
 
   switch (info.bfd_arch_info->mach)
     {

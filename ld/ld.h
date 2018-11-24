@@ -1,7 +1,5 @@
 /* ld.h -- general linker header file
-   Copyright 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
-   2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1991-2016 Free Software Foundation, Inc.
 
    This file is part of the GNU Binutils.
 
@@ -74,8 +72,9 @@
    discarded.  */
 #define DISCARD_SECTION_NAME "/DISCARD/"
 
-/* A file name list */
-typedef struct name_list {
+/* A file name list.  */
+typedef struct name_list
+{
   const char *name;
   struct name_list *next;
 }
@@ -85,41 +84,27 @@ typedef enum {sort_none, sort_ascending, sort_descending} sort_order;
 
 /* A wildcard specification.  */
 
-typedef enum {
+typedef enum
+{
   none, by_name, by_alignment, by_name_alignment, by_alignment_name,
   by_none, by_init_priority
 } sort_type;
 
 extern sort_type sort_section;
 
-struct wildcard_spec {
+struct wildcard_spec
+{
   const char *name;
   struct name_list *exclude_name_list;
   sort_type sorted;
   struct flag_info *section_flag_list;
 };
 
-struct wildcard_list {
+struct wildcard_list
+{
   struct wildcard_list *next;
   struct wildcard_spec spec;
 };
-
-struct map_symbol_def {
-  struct bfd_link_hash_entry *entry;
-  struct map_symbol_def *next;
-};
-
-/* The initial part of fat_user_section_struct has to be idential with
-   lean_user_section_struct.  */
-typedef struct fat_user_section_struct {
-  /* For input sections, when writing a map file: head / tail of a linked
-     list of hash table entries for symbols defined in this section.  */
-  struct map_symbol_def *map_symbol_def_head;
-  struct map_symbol_def **map_symbol_def_tail;
-  unsigned long map_symbol_def_count;
-} fat_section_userdata_type;
-
-#define get_userdata(x) ((x)->userdata)
 
 #define BYTE_SIZE	(1)
 #define SHORT_SIZE	(2)
@@ -129,20 +114,21 @@ typedef struct fat_user_section_struct {
 enum endian_enum { ENDIAN_UNSET = 0, ENDIAN_BIG, ENDIAN_LITTLE };
 
 enum symbolic_enum
-  {
-    symbolic_unset = 0,
-    symbolic,
-    symbolic_functions,
-  };
+{
+  symbolic_unset = 0,
+  symbolic,
+  symbolic_functions,
+};
 
 enum dynamic_list_enum
-  {
-    dynamic_list_unset = 0,
-    dynamic_list_data,
-    dynamic_list
-  };
+{
+  dynamic_list_unset = 0,
+  dynamic_list_data,
+  dynamic_list
+};
 
-typedef struct {
+typedef struct
+{
   /* 1 => assign space to common symbols even if `relocatable_output'.  */
   bfd_boolean force_common_definition;
 
@@ -179,6 +165,9 @@ typedef struct {
 
   /* If TRUE we'll just print the default output on stdout.  */
   bfd_boolean print_output_format;
+
+  /* If set, display the target memory usage (per memory region).  */
+  bfd_boolean print_memory_usage;
 
   /* Big or little endian as set on command line.  */
   enum endian_enum endian;
@@ -223,7 +212,28 @@ extern args_type command_line;
 
 typedef int token_code_type;
 
-typedef struct {
+/* Different ways we can handle orphan sections.  */
+
+enum orphan_handling_enum
+{
+  /* The classic strategy, find a suitable section to place the orphan
+     into.  */
+  orphan_handling_place = 0,
+
+  /* Discard any orphan sections as though they were assign to the section
+     /DISCARD/.  */
+  orphan_handling_discard,
+
+  /* Find somewhere to place the orphan section, as with
+     ORPHAN_HANDLING_PLACE, but also issue a warning.  */
+  orphan_handling_warn,
+
+  /* Issue a fatal error if any orphan sections are found.  */
+  orphan_handling_error,
+};
+
+typedef struct
+{
   bfd_boolean magic_demand_paged;
   bfd_boolean make_executable;
 
@@ -244,6 +254,9 @@ typedef struct {
 
   /* If TRUE, only warn once about a particular undefined symbol.  */
   bfd_boolean warn_once;
+
+  /* How should we deal with orphan sections.  */
+  enum orphan_handling_enum orphan_handling;
 
   /* If TRUE, warn if multiple global-pointers are needed (Alpha
      only).  */
@@ -285,8 +298,6 @@ typedef struct {
 
   unsigned int split_by_reloc;
   bfd_size_type split_by_file;
-
-  bfd_size_type specified_data_size;
 
   /* The size of the hash table to use.  */
   unsigned long hash_table_size;

@@ -29,6 +29,7 @@ coff-alpha.c
 coff-apollo.c
 coff-arm.c
 coff-aux.c
+coff-bfd.c
 coff-go32.c
 coff-h8300.c
 coff-h8500.c
@@ -38,7 +39,6 @@ coff-i960.c
 coff-m68k.c
 coff-m88k.c
 coff-mips.c
-coff-or32.c
 coff-rs6000.c
 coff-sh.c
 coff-sparc.c
@@ -77,6 +77,7 @@ cpu-dlx.c
 cpu-epiphany.c
 cpu-fr30.c
 cpu-frv.c
+cpu-ft32.c
 cpu-h8300.c
 cpu-h8500.c
 cpu-hppa.c
@@ -85,6 +86,7 @@ cpu-i386.c
 cpu-i860.c
 cpu-i960.c
 cpu-ia64.c
+cpu-iamcu.c
 cpu-ip2k.c
 cpu-iq2000.c
 cpu-k1om.c
@@ -109,10 +111,10 @@ cpu-mmix.c
 cpu-moxie.c
 cpu-msp430.c
 cpu-mt.c
+cpu-nds32.c
 cpu-nios2.c
 cpu-ns32k.c
-cpu-openrisc.c
-cpu-or32.c
+cpu-or1k.c
 cpu-pdp11.c
 cpu-pj.c
 cpu-plugin.c
@@ -135,6 +137,7 @@ cpu-tilepro.c
 cpu-v850.c
 cpu-v850_rh850.c
 cpu-vax.c
+cpu-visium.c
 cpu-w65.c
 cpu-we32k.c
 cpu-xc16x.c
@@ -154,7 +157,7 @@ elf-bfd.h
 elf-eh-frame.c
 elf-hppa.h
 elf-ifunc.c
-elf-linux-psinfo.h
+elf-linux-core.h
 elf-m10200.c
 elf-m10300.c
 elf-nacl.c
@@ -176,6 +179,7 @@ elf32-dlx.c
 elf32-epiphany.c
 elf32-fr30.c
 elf32-frv.c
+elf32-ft32.c
 elf32-gen.c
 elf32-h8300.c
 elf32-hppa.c
@@ -202,9 +206,9 @@ elf32-mips.c
 elf32-moxie.c
 elf32-msp430.c
 elf32-mt.c
+elf32-nds32.c
 elf32-nios2.c
-elf32-openrisc.c
-elf32-or32.c
+elf32-or1k.c
 elf32-pj.c
 elf32-ppc.c
 elf32-rl78.c
@@ -223,6 +227,7 @@ elf32-tilegx.c
 elf32-tilepro.c
 elf32-v850.c
 elf32-vax.c
+elf32-visium.c
 elf32-xc16x.c
 elf32-xgate.c
 elf32-xstormy16.c
@@ -293,6 +298,8 @@ m68klinux.c
 m68knetbsd.c
 m88kmach3.c
 m88kopenbsd.c
+mach-o-aarch64.c
+mach-o-arm.c
 mach-o-i386.c
 mach-o-x86-64.c
 mach-o.c
@@ -300,6 +307,7 @@ mach-o.h
 merge.c
 mipsbsd.c
 mmo.c
+netbsd-core.c
 netbsd.h
 newsos3.c
 nlm-target.h

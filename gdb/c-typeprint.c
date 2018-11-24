@@ -1,5 +1,5 @@
 /* Support for printing C and C++ types for GDB, the GNU debugger.
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -31,8 +31,6 @@
 #include "typeprint.h"
 #include "cp-abi.h"
 #include "jv-lang.h"
-#include <string.h>
-#include <errno.h>
 #include "cp-support.h"
 
 static void c_type_print_varspec_prefix (struct type *,
@@ -52,7 +50,7 @@ static void c_type_print_modifier (struct type *,
 static const char *
 find_typedef_for_canonicalize (struct type *t, void *data)
 {
-  return find_typedef_in_hash (data, t);
+  return find_typedef_in_hash ((const struct type_print_options *) data, t);
 }
 
 /* Print NAME on STREAM.  If the 'raw' field of FLAGS is not set,
@@ -91,7 +89,7 @@ c_print_type (struct type *type,
   const char *local_name;
 
   if (show > 0)
-    CHECK_TYPEDEF (type);
+    type = check_typedef (type);
 
   local_name = find_typedef_in_hash (flags, type);
   if (local_name != NULL)
@@ -146,7 +144,7 @@ c_print_typedef (struct type *type,
 		 struct symbol *new_symbol,
 		 struct ui_file *stream)
 {
-  CHECK_TYPEDEF (type);
+  type = check_typedef (type);
   fprintf_filtered (stream, "typedef ");
   type_print (type, "", stream, 0);
   if (TYPE_NAME ((SYMBOL_TYPE (new_symbol))) == 0
@@ -272,6 +270,9 @@ cp_type_print_method_args (struct type *mtype, const char *prefix,
 
       if (TYPE_RESTRICT (domain))
 	fprintf_filtered (stream, " restrict");
+
+      if (TYPE_ATOMIC (domain))
+	fprintf_filtered (stream, " _Atomic");
     }
 }
 
@@ -317,11 +318,11 @@ c_type_print_varspec_prefix (struct type *type,
     case TYPE_CODE_MEMBERPTR:
       c_type_print_varspec_prefix (TYPE_TARGET_TYPE (type),
 				   stream, show, 0, 0, flags);
-      name = type_name_no_tag (TYPE_DOMAIN_TYPE (type));
+      name = type_name_no_tag (TYPE_SELF_TYPE (type));
       if (name)
 	print_name_maybe_canonical (name, flags, stream);
       else
-	c_type_print_base (TYPE_DOMAIN_TYPE (type),
+	c_type_print_base (TYPE_SELF_TYPE (type),
 			   stream, -1, passed_a_ptr, flags);
       fprintf_filtered (stream, "::*");
       break;
@@ -330,11 +331,11 @@ c_type_print_varspec_prefix (struct type *type,
       c_type_print_varspec_prefix (TYPE_TARGET_TYPE (type),
 				   stream, show, 0, 0, flags);
       fprintf_filtered (stream, "(");
-      name = type_name_no_tag (TYPE_DOMAIN_TYPE (type));
+      name = type_name_no_tag (TYPE_SELF_TYPE (type));
       if (name)
 	print_name_maybe_canonical (name, flags, stream);
       else
-	c_type_print_base (TYPE_DOMAIN_TYPE (type),
+	c_type_print_base (TYPE_SELF_TYPE (type),
 			   stream, -1, passed_a_ptr, flags);
       fprintf_filtered (stream, "::*");
       break;
@@ -370,6 +371,7 @@ c_type_print_varspec_prefix (struct type *type,
     case TYPE_CODE_STRUCT:
     case TYPE_CODE_UNION:
     case TYPE_CODE_ENUM:
+    case TYPE_CODE_FLAGS:
     case TYPE_CODE_INT:
     case TYPE_CODE_FLT:
     case TYPE_CODE_VOID:
@@ -430,6 +432,14 @@ c_type_print_modifier (struct type *type, struct ui_file *stream,
       if (did_print_modifier || need_pre_space)
 	fprintf_filtered (stream, " ");
       fprintf_filtered (stream, "restrict");
+      did_print_modifier = 1;
+    }
+
+  if (TYPE_ATOMIC (type))
+    {
+      if (did_print_modifier || need_pre_space)
+	fprintf_filtered (stream, " ");
+      fprintf_filtered (stream, "_Atomic");
       did_print_modifier = 1;
     }
 
@@ -535,7 +545,7 @@ is_type_conversion_operator (struct type *type, int i, int j)
      some other way, feel free to rewrite this function.  */
   const char *name = TYPE_FN_FIELDLIST_NAME (type, i);
 
-  if (strncmp (name, "operator", 8) != 0)
+  if (!startswith (name, "operator"))
     return 0;
 
   name += 8;
@@ -551,9 +561,9 @@ is_type_conversion_operator (struct type *type, int i, int j)
     /* If this doesn't look like the start of an identifier, then it
        isn't a type conversion operator.  */
     return 0;
-  else if (strncmp (name, "new", 3) == 0)
+  else if (startswith (name, "new"))
     name += 3;
-  else if (strncmp (name, "delete", 6) == 0)
+  else if (startswith (name, "delete"))
     name += 6;
   else
     /* If it doesn't look like new or delete, it's a type conversion
@@ -689,7 +699,11 @@ c_type_print_varspec_suffix (struct type *type,
 
 	fprintf_filtered (stream, (is_vector ?
 				   " __attribute__ ((vector_size(" : "["));
-	if (get_array_bounds (type, &low_bound, &high_bound))
+	/* Bounds are not yet resolved, print a bounds placeholder instead.  */
+	if (TYPE_HIGH_BOUND_KIND (TYPE_INDEX_TYPE (type)) == PROP_LOCEXPR
+	    || TYPE_HIGH_BOUND_KIND (TYPE_INDEX_TYPE (type)) == PROP_LOCLIST)
+	  fprintf_filtered (stream, "variable length");
+	else if (get_array_bounds (type, &low_bound, &high_bound))
 	  fprintf_filtered (stream, "%s", 
 			    plongest (high_bound - low_bound + 1));
 	fprintf_filtered (stream, (is_vector ? ")))" : "]"));
@@ -735,6 +749,7 @@ c_type_print_varspec_suffix (struct type *type,
     case TYPE_CODE_UNDEF:
     case TYPE_CODE_STRUCT:
     case TYPE_CODE_UNION:
+    case TYPE_CODE_FLAGS:
     case TYPE_CODE_ENUM:
     case TYPE_CODE_INT:
     case TYPE_CODE_FLT:
@@ -863,7 +878,7 @@ c_type_print_base (struct type *type, struct ui_file *stream,
       return;
     }
 
-  CHECK_TYPEDEF (type);
+  type = check_typedef (type);
 
   switch (TYPE_CODE (type))
     {
@@ -920,7 +935,7 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 	   enum}" tag for unnamed struct/union/enum's, which we don't
 	   want to print.  */
 	if (TYPE_TAG_NAME (type) != NULL
-	    && strncmp (TYPE_TAG_NAME (type), "{unnamed", 8))
+	    && !startswith (TYPE_TAG_NAME (type), "{unnamed"))
 	  {
 	    /* When printing the tag name, we are still effectively
 	       printing in the outer context, hence the use of FLAGS
@@ -1292,27 +1307,27 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 	      if (TYPE_NFIELDS (type) != 0 || TYPE_NFN_FIELDS (type) != 0)
 		fprintf_filtered (stream, "\n");
 
-		for (i = 0; i < TYPE_TYPEDEF_FIELD_COUNT (type); i++)
-		  {
-		    struct type *target = TYPE_TYPEDEF_FIELD_TYPE (type, i);
+	      for (i = 0; i < TYPE_TYPEDEF_FIELD_COUNT (type); i++)
+		{
+		  struct type *target = TYPE_TYPEDEF_FIELD_TYPE (type, i);
 
-		    /* Dereference the typedef declaration itself.  */
-		    gdb_assert (TYPE_CODE (target) == TYPE_CODE_TYPEDEF);
-		    target = TYPE_TARGET_TYPE (target);
+		  /* Dereference the typedef declaration itself.  */
+		  gdb_assert (TYPE_CODE (target) == TYPE_CODE_TYPEDEF);
+		  target = TYPE_TARGET_TYPE (target);
 
-		    print_spaces_filtered (level + 4, stream);
-		    fprintf_filtered (stream, "typedef ");
+		  print_spaces_filtered (level + 4, stream);
+		  fprintf_filtered (stream, "typedef ");
 
-		    /* We want to print typedefs with substitutions
-		       from the template parameters or globally-known
-		       typedefs but not local typedefs.  */
-		    c_print_type (target,
-				  TYPE_TYPEDEF_FIELD_NAME (type, i),
-				  stream, show - 1, level + 4,
-				  &semi_local_flags);
-		    fprintf_filtered (stream, ";\n");
-		  }
-	      }
+		  /* We want to print typedefs with substitutions
+		     from the template parameters or globally-known
+		     typedefs but not local typedefs.  */
+		  c_print_type (target,
+				TYPE_TYPEDEF_FIELD_NAME (type, i),
+				stream, show - 1, level + 4,
+				&semi_local_flags);
+		  fprintf_filtered (stream, ";\n");
+		}
+	    }
 
 	    fprintfi_filtered (level, stream, "}");
 	  }
@@ -1324,13 +1339,15 @@ c_type_print_base (struct type *type, struct ui_file *stream,
     case TYPE_CODE_ENUM:
       c_type_print_modifier (type, stream, 0, 1);
       fprintf_filtered (stream, "enum ");
+      if (TYPE_DECLARED_CLASS (type))
+	fprintf_filtered (stream, "class ");
       /* Print the tag name if it exists.
          The aCC compiler emits a spurious 
          "{unnamed struct}"/"{unnamed union}"/"{unnamed enum}"
          tag for unnamed struct/union/enum's, which we don't
          want to print.  */
       if (TYPE_TAG_NAME (type) != NULL
-	  && strncmp (TYPE_TAG_NAME (type), "{unnamed", 8))
+	  && !startswith (TYPE_TAG_NAME (type), "{unnamed"))
 	{
 	  print_name_maybe_canonical (TYPE_TAG_NAME (type), flags, stream);
 	  if (show > 0)
@@ -1348,6 +1365,23 @@ c_type_print_base (struct type *type, struct ui_file *stream,
       else if (show > 0 || TYPE_TAG_NAME (type) == NULL)
 	{
 	  LONGEST lastval = 0;
+
+	  /* We can't handle this case perfectly, as DWARF does not
+	     tell us whether or not the underlying type was specified
+	     in the source (and other debug formats don't provide this
+	     at all).  We choose to print the underlying type, if it
+	     has a name, when in C++ on the theory that it's better to
+	     print too much than too little; but conversely not to
+	     print something egregiously outside the current
+	     language's syntax.  */
+	  if (current_language->la_language == language_cplus
+	      && TYPE_TARGET_TYPE (type) != NULL)
+	    {
+	      struct type *underlying = check_typedef (TYPE_TARGET_TYPE (type));
+
+	      if (TYPE_NAME (underlying) != NULL)
+		fprintf_filtered (stream, ": %s ", TYPE_NAME (underlying));
+	    }
 
 	  fprintf_filtered (stream, "{");
 	  len = TYPE_NFIELDS (type);
@@ -1368,6 +1402,54 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 	    }
 	  fprintf_filtered (stream, "}");
 	}
+      break;
+
+    case TYPE_CODE_FLAGS:
+      {
+	struct type_print_options local_flags = *flags;
+
+	local_flags.local_typedefs = NULL;
+
+	c_type_print_modifier (type, stream, 0, 1);
+	fprintf_filtered (stream, "flag ");
+	print_name_maybe_canonical (TYPE_NAME (type), flags, stream);
+	if (show > 0)
+	  {
+	    fputs_filtered (" ", stream);
+	    fprintf_filtered (stream, "{\n");
+	    if (TYPE_NFIELDS (type) == 0)
+	      {
+		if (TYPE_STUB (type))
+		  fprintfi_filtered (level + 4, stream,
+				     _("<incomplete type>\n"));
+		else
+		  fprintfi_filtered (level + 4, stream,
+				     _("<no data fields>\n"));
+	      }
+	    len = TYPE_NFIELDS (type);
+	    for (i = 0; i < len; i++)
+	      {
+		QUIT;
+		print_spaces_filtered (level + 4, stream);
+		/* We pass "show" here and not "show - 1" to get enum types
+		   printed.  There's no other way to see them.  */
+		c_print_type (TYPE_FIELD_TYPE (type, i),
+			      TYPE_FIELD_NAME (type, i),
+			      stream, show, level + 4,
+			      &local_flags);
+		fprintf_filtered (stream, " @%d",
+				  TYPE_FIELD_BITPOS (type, i));
+		if (TYPE_FIELD_BITSIZE (type, i) > 1)
+		  {
+		    fprintf_filtered (stream, "-%d",
+				      TYPE_FIELD_BITPOS (type, i)
+				      + TYPE_FIELD_BITSIZE (type, i) - 1);
+		  }
+		fprintf_filtered (stream, ";\n");
+	      }
+	    fprintfi_filtered (level, stream, "}");
+	  }
+      }
       break;
 
     case TYPE_CODE_VOID:

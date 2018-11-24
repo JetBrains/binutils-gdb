@@ -1,7 +1,5 @@
 /* bfd back-end for HP PA-RISC SOM objects.
-   Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
-   2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011,
-   2012, 2013  Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    Contributed by the Center for Software Science at the
    University of Utah.
@@ -26,7 +24,7 @@
 #include "sysdep.h"
 #include "alloca-conf.h"
 #include "bfd.h"
-
+#include "libiberty.h"
 #include "libbfd.h"
 #include "som.h"
 #include "safe-ctype.h"
@@ -3306,11 +3304,12 @@ som_write_space_strings (bfd *abfd,
   /* Chunk of memory that we can use as buffer space, then throw
      away.  */
   size_t tmp_space_size = SOM_TMP_BUFSIZE;
-  char *tmp_space = alloca (tmp_space_size);
+  char *tmp_space = xmalloc (tmp_space_size);
   char *p = tmp_space;
   unsigned int strings_size = 0;
   asection *section;
   bfd_size_type amt;
+  bfd_size_type res;
 
   /* Seek to the start of the space strings in preparation for writing
      them out.  */
@@ -3357,7 +3356,7 @@ som_write_space_strings (bfd *abfd,
                 tmp_space_size = length + 5;
               else
                 tmp_space_size = 2 * tmp_space_size;
-	      tmp_space = alloca (tmp_space_size);
+	      tmp_space = xrealloc (tmp_space, tmp_space_size);
 	    }
 
 	  /* Reset to beginning of the (possibly new) buffer space.  */
@@ -3393,7 +3392,9 @@ som_write_space_strings (bfd *abfd,
   /* Done with the space/subspace strings.  Write out any information
      contained in a partial block.  */
   amt = p - tmp_space;
-  if (bfd_bwrite ((void *) &tmp_space[0], amt, abfd) != amt)
+  res = bfd_bwrite ((void *) &tmp_space[0], amt, abfd);
+  free (tmp_space);
+  if (res != amt)
     return FALSE;
   *string_sizep = strings_size;
   return TRUE;
@@ -3410,15 +3411,14 @@ som_write_symbol_strings (bfd *abfd,
 			  struct som_compilation_unit *compilation_unit)
 {
   unsigned int i;
-
   /* Chunk of memory that we can use as buffer space, then throw
      away.  */
   size_t tmp_space_size = SOM_TMP_BUFSIZE;
-  char *tmp_space = alloca (tmp_space_size);
+  char *tmp_space = xmalloc (tmp_space_size);
   char *p = tmp_space;
-
   unsigned int strings_size = 0;
   bfd_size_type amt;
+  bfd_size_type res;
 
   /* This gets a bit gruesome because of the compilation unit.  The
      strings within the compilation unit are part of the symbol
@@ -3477,7 +3477,7 @@ som_write_symbol_strings (bfd *abfd,
                     tmp_space_size = 5 + length;
                   else
                     tmp_space_size = 2 * tmp_space_size;
-		  tmp_space = alloca (tmp_space_size);
+		  tmp_space = xrealloc (tmp_space, tmp_space_size);
 		}
 
 	      /* Reset to beginning of the (possibly new) buffer
@@ -3532,7 +3532,7 @@ som_write_symbol_strings (bfd *abfd,
                 tmp_space_size = 5 + length;
               else
                 tmp_space_size = 2 * tmp_space_size;
-	      tmp_space = alloca (tmp_space_size);
+	      tmp_space = xrealloc (tmp_space, tmp_space_size);
 	    }
 
 	  /* Reset to beginning of the (possibly new) buffer space.  */
@@ -3565,7 +3565,9 @@ som_write_symbol_strings (bfd *abfd,
 
   /* Scribble out any partial block.  */
   amt = p - tmp_space;
-  if (bfd_bwrite ((void *) &tmp_space[0], amt, abfd) != amt)
+  res = bfd_bwrite ((void *) &tmp_space[0], amt, abfd);
+  free (tmp_space);
+  if (res != amt)
     return FALSE;
 
   *string_sizep = strings_size;
@@ -5351,7 +5353,7 @@ som_canonicalize_reloc (bfd *abfd,
   return section->reloc_count;
 }
 
-extern const bfd_target som_vec;
+extern const bfd_target hppa_som_vec;
 
 /* A hook to set up object file dependent section information.  */
 
@@ -5717,17 +5719,21 @@ som_set_arch_mach (bfd *abfd,
 
 static bfd_boolean
 som_find_nearest_line (bfd *abfd,
-		       asection *section,
 		       asymbol **symbols,
+		       asection *section,
 		       bfd_vma offset,
 		       const char **filename_ptr,
 		       const char **functionname_ptr,
-		       unsigned int *line_ptr)
+		       unsigned int *line_ptr,
+		       unsigned int *discriminator_ptr)
 {
   bfd_boolean found;
   asymbol *func;
   bfd_vma low_func;
   asymbol **p;
+
+  if (discriminator_ptr)
+    *discriminator_ptr = 0;
 
   if (! _bfd_stab_section_find_nearest_line (abfd, symbols, section, offset,
                                              & found, filename_ptr,
@@ -6715,6 +6721,8 @@ som_bfd_link_split_section (bfd *abfd ATTRIBUTE_UNUSED, asection *sec)
   return som_is_subspace (sec) && sec->size > 240000;
 }
 
+#define som_find_line			        _bfd_nosymbols_find_line
+#define som_get_symbol_version_string		_bfd_nosymbols_get_symbol_version_string
 #define	som_close_and_cleanup		        som_bfd_free_cached_info
 #define som_read_ar_hdr			        _bfd_generic_read_ar_hdr
 #define som_write_ar_hdr		        _bfd_generic_write_ar_hdr
@@ -6734,7 +6742,6 @@ som_bfd_link_split_section (bfd *abfd ATTRIBUTE_UNUSED, asection *sec)
 #define som_bfd_get_relocated_section_contents  bfd_generic_get_relocated_section_contents
 #define som_bfd_relax_section                   bfd_generic_relax_section
 #define som_bfd_link_hash_table_create          _bfd_generic_link_hash_table_create
-#define som_bfd_link_hash_table_free            _bfd_generic_link_hash_table_free
 #define som_bfd_link_add_symbols                _bfd_generic_link_add_symbols
 #define som_bfd_link_just_syms                  _bfd_generic_link_just_syms
 #define som_bfd_copy_link_hash_symbol_type \
@@ -6751,8 +6758,9 @@ som_bfd_link_split_section (bfd *abfd ATTRIBUTE_UNUSED, asection *sec)
 #define som_bfd_copy_private_header_data	_bfd_generic_bfd_copy_private_header_data
 #define som_bfd_set_private_flags		_bfd_generic_bfd_set_private_flags
 #define som_find_inliner_info			_bfd_nosymbols_find_inliner_info
+#define som_bfd_link_check_relocs               _bfd_generic_link_check_relocs
 
-const bfd_target som_vec =
+const bfd_target hppa_som_vec =
 {
   "som",			/* Name.  */
   bfd_target_som_flavour,

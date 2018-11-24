@@ -66,6 +66,8 @@ config/tc-fr30.c
 config/tc-fr30.h
 config/tc-frv.c
 config/tc-frv.h
+config/tc-ft32.c
+config/tc-ft32.h
 config/tc-h8300.c
 config/tc-h8300.h
 config/tc-hppa.c
@@ -115,14 +117,14 @@ config/tc-msp430.c
 config/tc-msp430.h
 config/tc-mt.c
 config/tc-mt.h
+config/tc-nds32.c
+config/tc-nds32.h
 config/tc-nios2.c
 config/tc-nios2.h
 config/tc-ns32k.c
 config/tc-ns32k.h
-config/tc-openrisc.c
-config/tc-openrisc.h
-config/tc-or32.c
-config/tc-or32.h
+config/tc-or1k.c
+config/tc-or1k.h
 config/tc-pdp11.c
 config/tc-pdp11.h
 config/tc-pj.c
@@ -161,6 +163,8 @@ config/tc-v850.c
 config/tc-v850.h
 config/tc-vax.c
 config/tc-vax.h
+config/tc-visium.c
+config/tc-visium.h
 config/tc-xc16x.c
 config/tc-xc16x.h
 config/tc-xgate.c
@@ -176,6 +180,8 @@ config/tc-z8k.h
 config/te-386bsd.h
 config/te-aix5.h
 config/te-armeabi.h
+config/te-armfbsdeabi.h
+config/te-armfbsdvfp.h
 config/te-armlinuxeabi.h
 config/te-dynix.h
 config/te-epoc-pe.h

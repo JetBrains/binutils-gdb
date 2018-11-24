@@ -1,6 +1,5 @@
 /* expr.h -> header file for expr.c
-   Copyright 1987, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
-   2002, 2003, 2005, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 1987-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -171,7 +170,8 @@ extern LITTLENUM_TYPE generic_bignum[];
 
 typedef char operator_rankT;
 
-extern char get_symbol_end (void);
+extern char get_symbol_name (char **);
+extern char restore_line_pointer (char);
 extern void expr_begin (void);
 extern void expr_set_precedence (void);
 extern void expr_set_rank (operatorT, operator_rankT);
@@ -180,7 +180,7 @@ extern void subtract_from_result (expressionS *, offsetT, int);
 extern segT expr (int, expressionS *, enum expr_mode);
 extern unsigned int get_single_number (void);
 extern symbolS *make_expr_symbol (expressionS * expressionP);
-extern int expr_symbol_where (symbolS *, char **, unsigned int *);
+extern int expr_symbol_where (symbolS *, const char **, unsigned int *);
 extern void current_location (expressionS *);
 
 extern symbolS *expr_build_uconstant (offsetT);

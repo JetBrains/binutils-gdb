@@ -1,4 +1,4 @@
-/* Copyright (C) 2002-2013 Free Software Foundation, Inc.
+/* Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,6 +20,9 @@
 
 #define get_dll(inf) ((struct dll_info *)(inf))
 
+/* An "unspecified" CORE_ADDR, for match_dll.  */
+#define UNSPECIFIED_CORE_ADDR (~(CORE_ADDR) 0)
+
 struct inferior_list all_dlls;
 int dlls_changed;
 
@@ -38,10 +41,10 @@ free_one_dll (struct inferior_list_entry *inf)
 static int
 match_dll (struct inferior_list_entry *inf, void *arg)
 {
-  struct dll_info *iter = (void *) inf;
-  struct dll_info *key = arg;
+  struct dll_info *iter = (struct dll_info *) inf;
+  struct dll_info *key = (struct dll_info *) arg;
 
-  if (key->base_addr != ~(CORE_ADDR) 0
+  if (key->base_addr != UNSPECIFIED_CORE_ADDR
       && iter->base_addr == key->base_addr)
     return 1;
   else if (key->name != NULL
@@ -57,8 +60,7 @@ match_dll (struct inferior_list_entry *inf, void *arg)
 void
 loaded_dll (const char *name, CORE_ADDR base_addr)
 {
-  struct dll_info *new_dll = xmalloc (sizeof (*new_dll));
-  memset (new_dll, 0, sizeof (*new_dll));
+  struct dll_info *new_dll = XCNEW (struct dll_info);
 
   new_dll->entry.id = minus_one_ptid;
 
@@ -81,7 +83,7 @@ unloaded_dll (const char *name, CORE_ADDR base_addr)
   key_dll.name = (char *) name;
   key_dll.base_addr = base_addr;
 
-  dll = (void *) find_inferior (&all_dlls, match_dll, &key_dll);
+  dll = (struct dll_info *) find_inferior (&all_dlls, match_dll, &key_dll);
 
   if (dll == NULL)
     /* For some inferiors we might get unloaded_dll events without having
@@ -107,5 +109,5 @@ void
 clear_dlls (void)
 {
   for_each_inferior (&all_dlls, free_one_dll);
-  all_dlls.head = all_dlls.tail = NULL;
+  clear_inferior_list (&all_dlls);
 }

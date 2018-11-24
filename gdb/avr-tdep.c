@@ -1,6 +1,6 @@
 /* Target-dependent code for Atmel AVR, for GDB.
 
-   Copyright (C) 1996-2013 Free Software Foundation, Inc.
+   Copyright (C) 1996-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -34,8 +34,8 @@
 #include "symfile.h"
 #include "arch-utils.h"
 #include "regcache.h"
-#include <string.h>
 #include "dis-asm.h"
+#include "objfiles.h"
 
 /* AVR Background:
 
@@ -70,6 +70,16 @@
 
 /* Constants: prefixed with AVR_ to avoid name space clashes */
 
+/* Address space flags */
+
+/* We are assigning the TYPE_INSTANCE_FLAG_ADDRESS_CLASS_1 to the flash address
+   space.  */
+
+#define AVR_TYPE_ADDRESS_CLASS_FLASH TYPE_ADDRESS_CLASS_1
+#define AVR_TYPE_INSTANCE_FLAG_ADDRESS_CLASS_FLASH  \
+  TYPE_INSTANCE_FLAG_ADDRESS_CLASS_1
+
+
 enum
 {
   AVR_REG_W = 24,
@@ -101,6 +111,7 @@ enum
 
   AVR_ARG1_REGNUM = 24,         /* Single byte argument */
   AVR_ARGN_REGNUM = 25,         /* Multi byte argments */
+  AVR_LAST_ARG_REGNUM = 8,      /* Last argument register */
 
   AVR_RET1_REGNUM = 24,         /* Single byte return value */
   AVR_RETN_REGNUM = 25,         /* Multi byte return value */
@@ -179,7 +190,7 @@ struct avr_unwind_cache
 struct gdbarch_tdep
 {
   /* Number of bytes stored to the stack by call instructions.
-     2 bytes for avr1-5, 3 bytes for avr6.  */
+     2 bytes for avr1-5 and avrxmega1-5, 3 bytes for avr6 and avrxmega6-7.  */
   int call_length;
 
   /* Type for void.  */
@@ -294,10 +305,19 @@ avr_address_to_pointer (struct gdbarch *gdbarch,
 {
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
 
-  /* Is it a code address?  */
-  if (TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_FUNC
-      || TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_METHOD)
+  /* Is it a data address in flash?  */
+  if (AVR_TYPE_ADDRESS_CLASS_FLASH (type))
     {
+      /* A data pointer in flash is byte addressed.  */
+      store_unsigned_integer (buf, TYPE_LENGTH (type), byte_order,
+			      avr_convert_iaddr_to_raw (addr));
+    }
+  /* Is it a code address?  */
+  else if (TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_FUNC
+	   || TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_METHOD)
+    {
+      /* A code pointer is word (16 bits) addressed.  We shift the address down
+	 by 1 bit to convert it to a pointer.  */
       store_unsigned_integer (buf, TYPE_LENGTH (type), byte_order,
 			      avr_convert_iaddr_to_raw (addr >> 1));
     }
@@ -317,11 +337,21 @@ avr_pointer_to_address (struct gdbarch *gdbarch,
   CORE_ADDR addr
     = extract_unsigned_integer (buf, TYPE_LENGTH (type), byte_order);
 
+  /* Is it a data address in flash?  */
+  if (AVR_TYPE_ADDRESS_CLASS_FLASH (type))
+    {
+      /* A data pointer in flash is already byte addressed.  */
+      return avr_make_iaddr (addr);
+    }
   /* Is it a code address?  */
-  if (TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_FUNC
-      || TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_METHOD
-      || TYPE_CODE_SPACE (TYPE_TARGET_TYPE (type)))
-    return avr_make_iaddr (addr << 1);
+  else if (TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_FUNC
+	   || TYPE_CODE (TYPE_TARGET_TYPE (type)) == TYPE_CODE_METHOD
+	   || TYPE_CODE_SPACE (TYPE_TARGET_TYPE (type)))
+    {
+      /* A code pointer is word (16 bits) addressed so we shift it up
+	 by 1 bit to convert it to an address.  */
+      return avr_make_iaddr (addr << 1);
+    }
   else
     return avr_make_saddr (addr);
 }
@@ -492,7 +522,7 @@ avr_scan_prologue (struct gdbarch *gdbarch, CORE_ADDR pc_beg, CORE_ADDR pc_end,
   int i;
   unsigned short insn;
   int scan_stage = 0;
-  struct minimal_symbol *msymbol;
+  struct bound_minimal_symbol msymbol;
   unsigned char prologue[AVR_MAX_PROLOGUE_SIZE];
   int vpc = 0;
   int len;
@@ -586,7 +616,7 @@ avr_scan_prologue (struct gdbarch *gdbarch, CORE_ADDR pc_beg, CORE_ADDR pc_end,
       pc_offset += 2;
 
       msymbol = lookup_minimal_symbol ("__prologue_saves__", NULL, NULL);
-      if (!msymbol)
+      if (!msymbol.minsym)
 	break;
 
       insn = extract_unsigned_integer (&prologue[vpc + 8], 2, byte_order);
@@ -624,7 +654,7 @@ avr_scan_prologue (struct gdbarch *gdbarch, CORE_ADDR pc_beg, CORE_ADDR pc_end,
 
       /* Resolve offset (in words) from __prologue_saves__ symbol.
          Which is a pushes count in `-mcall-prologues' mode */
-      num_pushes = AVR_MAX_PUSHES - (i - SYMBOL_VALUE_ADDRESS (msymbol)) / 2;
+      num_pushes = AVR_MAX_PUSHES - (i - BMSYMBOL_VALUE_ADDRESS (msymbol)) / 2;
 
       if (num_pushes > AVR_MAX_PUSHES)
         {
@@ -719,7 +749,7 @@ avr_scan_prologue (struct gdbarch *gdbarch, CORE_ADDR pc_beg, CORE_ADDR pc_end,
           info->size += gdbarch_tdep (gdbarch)->call_length;
           vpc += 2;
         }
-      else if (insn == 0x920f)  /* push r0 */
+      else if (insn == 0x920f || insn == 0x921f)  /* push r0 or push r1 */
         {
           info->size += 1;
           vpc += 2;
@@ -958,7 +988,7 @@ avr_frame_unwind_cache (struct frame_info *this_frame,
   int i;
 
   if (*this_prologue_cache)
-    return *this_prologue_cache;
+    return (struct avr_unwind_cache *) *this_prologue_cache;
 
   info = FRAME_OBSTACK_ZALLOC (struct avr_unwind_cache);
   *this_prologue_cache = info;
@@ -1077,8 +1107,6 @@ static struct value *
 avr_frame_prev_register (struct frame_info *this_frame,
 			 void **this_prologue_cache, int regnum)
 {
-  struct gdbarch *gdbarch = get_frame_arch (this_frame);
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   struct avr_unwind_cache *info
     = avr_frame_unwind_cache (this_frame, this_prologue_cache);
 
@@ -1169,15 +1197,15 @@ struct stack_item
 {
   int len;
   struct stack_item *prev;
-  void *data;
+  gdb_byte *data;
 };
 
 static struct stack_item *
 push_stack_item (struct stack_item *prev, const bfd_byte *contents, int len)
 {
   struct stack_item *si;
-  si = xmalloc (sizeof (struct stack_item));
-  si->data = xmalloc (len);
+  si = XNEW (struct stack_item);
+  si->data = (gdb_byte *) xmalloc (len);
   si->len = len;
   si->prev = prev;
   memcpy (si->data, contents, len);
@@ -1240,7 +1268,6 @@ avr_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
                      int nargs, struct value **args, CORE_ADDR sp,
                      int struct_return, CORE_ADDR struct_addr)
 {
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   int i;
   gdb_byte buf[3];
   int call_length = gdbarch_tdep (gdbarch)->call_length;
@@ -1269,23 +1296,24 @@ avr_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
       const bfd_byte *contents = value_contents (arg);
       int len = TYPE_LENGTH (type);
 
-      /* Calculate the potential last register needed.  */
-      last_regnum = regnum - (len + (len & 1));
+      /* Calculate the potential last register needed.
+         E.g. For length 2, registers regnum and regnum-1 (say 25 and 24)
+         shall be used. So, last needed register will be regnum-1(24).  */
+      last_regnum = regnum - (len + (len & 1)) + 1;
 
       /* If there are registers available, use them.  Once we start putting
          stuff on the stack, all subsequent args go on stack.  */
-      if ((si == NULL) && (last_regnum >= 8))
+      if ((si == NULL) && (last_regnum >= AVR_LAST_ARG_REGNUM))
         {
-          ULONGEST val;
-
           /* Skip a register for odd length args.  */
           if (len & 1)
             regnum--;
 
-          val = extract_unsigned_integer (contents, len, byte_order);
+          /* Write MSB of argument into register and subsequent bytes in
+             decreasing register numbers.  */
           for (j = 0; j < len; j++)
             regcache_cooked_write_unsigned
-              (regcache, regnum--, val >> (8 * (len - j - 1)));
+              (regcache, regnum--, contents[len - j - 1]);
         }
       /* No registers available, push the args onto the stack.  */
       else
@@ -1335,10 +1363,55 @@ avr_dwarf_reg_to_regnum (struct gdbarch *gdbarch, int reg)
     return reg;
   if (reg == 32)
     return AVR_SP_REGNUM;
-
-  warning (_("Unmapped DWARF Register #%d encountered."), reg);
-
   return -1;
+}
+
+/* Implementation of `address_class_type_flags' gdbarch method.
+
+   This method maps DW_AT_address_class attributes to a
+   type_instance_flag_value.  */
+
+static int
+avr_address_class_type_flags (int byte_size, int dwarf2_addr_class)
+{
+  /* The value 1 of the DW_AT_address_class attribute corresponds to the
+     __flash qualifier.  Note that this attribute is only valid with
+     pointer types and therefore the flag is set to the pointer type and
+     not its target type.  */
+  if (dwarf2_addr_class == 1 && byte_size == 2)
+    return AVR_TYPE_INSTANCE_FLAG_ADDRESS_CLASS_FLASH;
+  return 0;
+}
+
+/* Implementation of `address_class_type_flags_to_name' gdbarch method.
+
+   Convert a type_instance_flag_value to an address space qualifier.  */
+
+static const char*
+avr_address_class_type_flags_to_name (struct gdbarch *gdbarch, int type_flags)
+{
+  if (type_flags & AVR_TYPE_INSTANCE_FLAG_ADDRESS_CLASS_FLASH)
+    return "flash";
+  else
+    return NULL;
+}
+
+/* Implementation of `address_class_name_to_type_flags' gdbarch method.
+
+   Convert an address space qualifier to a type_instance_flag_value.  */
+
+static int
+avr_address_class_name_to_type_flags (struct gdbarch *gdbarch,
+                                      const char* name,
+                                      int *type_flags_ptr)
+{
+  if (strcmp (name, "flash") == 0)
+    {
+      *type_flags_ptr = AVR_TYPE_INSTANCE_FLAG_ADDRESS_CLASS_FLASH;
+      return 1;
+    }
+  else
+    return 0;
 }
 
 /* Initialize the gdbarch structure for the AVR's.  */
@@ -1355,14 +1428,21 @@ avr_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   switch (info.bfd_arch_info->mach)
     {
     case bfd_mach_avr1:
+    case bfd_mach_avrxmega1:
     case bfd_mach_avr2:
+    case bfd_mach_avrxmega2:
     case bfd_mach_avr3:
+    case bfd_mach_avrxmega3:
     case bfd_mach_avr4:
+    case bfd_mach_avrxmega4:
     case bfd_mach_avr5:
+    case bfd_mach_avrxmega5:
     default:
       call_length = 2;
       break;
     case bfd_mach_avr6:
+    case bfd_mach_avrxmega6:
+    case bfd_mach_avrxmega7:
       call_length = 3;
       break;
     }
@@ -1377,7 +1457,7 @@ avr_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
     }
 
   /* None found, create a new architecture from the information provided.  */
-  tdep = XMALLOC (struct gdbarch_tdep);
+  tdep = XNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
   
   tdep->call_length = call_length;
@@ -1443,6 +1523,12 @@ avr_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   set_gdbarch_unwind_pc (gdbarch, avr_unwind_pc);
   set_gdbarch_unwind_sp (gdbarch, avr_unwind_sp);
+
+  set_gdbarch_address_class_type_flags (gdbarch, avr_address_class_type_flags);
+  set_gdbarch_address_class_name_to_type_flags
+    (gdbarch, avr_address_class_name_to_type_flags);
+  set_gdbarch_address_class_type_flags_to_name
+    (gdbarch, avr_address_class_type_flags_to_name);
 
   return gdbarch;
 }
@@ -1545,7 +1631,6 @@ _initialize_avr_tdep (void)
   /* FIXME: TRoth/2002-02-18: This should probably be changed to 'info avr
      io_registers' to signify it is not available on other platforms.  */
 
-  add_cmd ("io_registers", class_info, avr_io_reg_read_command,
-	   _("query remote avr target for io space register values"),
-	   &infolist);
+  add_info ("io_registers", avr_io_reg_read_command,
+	    _("query remote avr target for io space register values"));
 }

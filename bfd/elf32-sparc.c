@@ -1,7 +1,5 @@
 /* SPARC-specific support for 32-bit ELF
-   Copyright 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002,
-   2003, 2004, 2005, 2006, 2007, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1993-2016 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -175,21 +173,21 @@ elf32_sparc_reloc_type_class (const struct bfd_link_info *info ATTRIBUTE_UNUSED,
 
 static bfd_boolean
 elf32_sparc_add_symbol_hook (bfd * abfd,
-			     struct bfd_link_info * info ATTRIBUTE_UNUSED,
+			     struct bfd_link_info * info,
 			     Elf_Internal_Sym * sym,
 			     const char ** namep ATTRIBUTE_UNUSED,
 			     flagword * flagsp ATTRIBUTE_UNUSED,
 			     asection ** secp ATTRIBUTE_UNUSED,
 			     bfd_vma * valp ATTRIBUTE_UNUSED)
 {
-  if ((abfd->flags & DYNAMIC) == 0
-      && (ELF_ST_TYPE (sym->st_info) == STT_GNU_IFUNC
-	  || ELF_ST_BIND (sym->st_info) == STB_GNU_UNIQUE))
-    elf_tdata (info->output_bfd)->has_gnu_symbols = TRUE;
+  if (ELF_ST_TYPE (sym->st_info) == STT_GNU_IFUNC
+      && (abfd->flags & DYNAMIC) == 0
+      && bfd_get_flavour (info->output_bfd) == bfd_target_elf_flavour)
+    elf_tdata (info->output_bfd)->has_gnu_symbols |= elf_gnu_symbol_ifunc;
   return TRUE;
 }
 
-#define TARGET_BIG_SYM	bfd_elf32_sparc_vec
+#define TARGET_BIG_SYM	sparc_elf32_vec
 #define TARGET_BIG_NAME	"elf32-sparc"
 #define ELF_ARCH	bfd_arch_sparc
 #define ELF_TARGET_ID	SPARC_ELF_DATA
@@ -211,8 +209,6 @@ elf32_sparc_add_symbol_hook (bfd * abfd,
   _bfd_sparc_elf_reloc_name_lookup
 #define bfd_elf32_bfd_link_hash_table_create \
 					_bfd_sparc_elf_link_hash_table_create
-#define bfd_elf32_bfd_link_hash_table_free \
-					_bfd_sparc_elf_link_hash_table_free
 #define bfd_elf32_bfd_relax_section	_bfd_sparc_elf_relax_section
 #define bfd_elf32_new_section_hook	_bfd_sparc_elf_new_section_hook
 #define elf_backend_copy_indirect_symbol \
@@ -245,7 +241,6 @@ elf32_sparc_add_symbol_hook (bfd * abfd,
 #define elf_backend_got_header_size 4
 #define elf_backend_rela_normal 1
 
-#define elf_backend_post_process_headers	_bfd_elf_set_osabi
 #define elf_backend_add_symbol_hook		elf32_sparc_add_symbol_hook
 
 #include "elf32-target.h"
@@ -253,7 +248,7 @@ elf32_sparc_add_symbol_hook (bfd * abfd,
 /* Solaris 2.  */
 
 #undef	TARGET_BIG_SYM
-#define	TARGET_BIG_SYM				bfd_elf32_sparc_sol2_vec
+#define	TARGET_BIG_SYM				sparc_elf32_sol2_vec
 #undef	TARGET_BIG_NAME
 #define	TARGET_BIG_NAME				"elf32-sparc-sol2"
 
@@ -262,8 +257,25 @@ elf32_sparc_add_symbol_hook (bfd * abfd,
 
 /* The 32-bit static TLS arena size is rounded to the nearest 8-byte
    boundary.  */
-#undef elf_backend_static_tls_alignment
+#undef  elf_backend_static_tls_alignment
 #define elf_backend_static_tls_alignment	8
+
+#undef  elf_backend_strtab_flags
+#define elf_backend_strtab_flags	SHF_STRINGS
+
+static bfd_boolean
+elf32_sparc_copy_solaris_special_section_fields (const bfd *ibfd ATTRIBUTE_UNUSED,
+						 bfd *obfd ATTRIBUTE_UNUSED,
+						 const Elf_Internal_Shdr *isection ATTRIBUTE_UNUSED,
+						 Elf_Internal_Shdr *osection ATTRIBUTE_UNUSED)
+{
+  /* PR 19938: FIXME: Need to add code for setting the sh_info
+     and sh_link fields of Solaris specific section types.  */
+  return FALSE;
+}
+
+#undef  elf_backend_copy_special_section_fields
+#define elf_backend_copy_special_section_fields elf32_sparc_copy_solaris_special_section_fields
 
 #include "elf32-target.h"
 
@@ -296,39 +308,41 @@ elf32_sparc_vxworks_final_write_processing (bfd *abfd, bfd_boolean linker)
   elf_vxworks_final_write_processing (abfd, linker);
 }
 
-#undef TARGET_BIG_SYM
-#define TARGET_BIG_SYM	bfd_elf32_sparc_vxworks_vec
-#undef TARGET_BIG_NAME
+#undef  TARGET_BIG_SYM
+#define TARGET_BIG_SYM	sparc_elf32_vxworks_vec
+#undef  TARGET_BIG_NAME
 #define TARGET_BIG_NAME	"elf32-sparc-vxworks"
 
-#undef ELF_MINPAGESIZE
+#undef  ELF_MINPAGESIZE
 #define ELF_MINPAGESIZE	0x1000
 
 #undef bfd_elf32_bfd_link_hash_table_create
 #define bfd_elf32_bfd_link_hash_table_create \
   elf32_sparc_vxworks_link_hash_table_create
 
-#undef elf_backend_want_got_plt
+#undef  elf_backend_want_got_plt
 #define elf_backend_want_got_plt		1
-#undef elf_backend_plt_readonly
+#undef  elf_backend_plt_readonly
 #define elf_backend_plt_readonly		1
-#undef elf_backend_got_header_size
+#undef  elf_backend_got_header_size
 #define elf_backend_got_header_size		12
-#undef elf_backend_add_symbol_hook
+#undef  elf_backend_add_symbol_hook
 #define elf_backend_add_symbol_hook \
   elf_vxworks_add_symbol_hook
-#undef elf_backend_link_output_symbol_hook
+#undef  elf_backend_link_output_symbol_hook
 #define elf_backend_link_output_symbol_hook \
   elf_vxworks_link_output_symbol_hook
-#undef elf_backend_emit_relocs
+#undef  elf_backend_emit_relocs
 #define elf_backend_emit_relocs \
   elf_vxworks_emit_relocs
-#undef elf_backend_final_write_processing
+#undef  elf_backend_final_write_processing
 #define elf_backend_final_write_processing \
   elf32_sparc_vxworks_final_write_processing
-#undef elf_backend_static_tls_alignment
+#undef  elf_backend_static_tls_alignment
+#undef  elf_backend_strtab_flags
+#undef  elf_backend_copy_special_section_fields
 
-#undef elf32_bed
+#undef  elf32_bed
 #define elf32_bed				sparc_elf_vxworks_bed
 
 #include "elf32-target.h"

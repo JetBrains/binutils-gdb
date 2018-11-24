@@ -1,5 +1,5 @@
 /* A YACC grammar to parse a superset of the AT&T linker scripting language.
-   Copyright 1991-2013 Free Software Foundation, Inc.
+   Copyright (C) 1991-2016 Free Software Foundation, Inc.
    Written by Steve Chamberlain of Cygnus Support (steve@cygnus.com).
 
    This file is part of the GNU Binutils.
@@ -141,7 +141,7 @@ static int error_index;
 %token DEFINED TARGET_K SEARCH_DIR MAP ENTRY
 %token <integer> NEXT
 %token SIZEOF ALIGNOF ADDR LOADADDR MAX_K MIN_K
-%token STARTUP HLL SYSLIB FLOAT NOFLOAT NOCROSSREFS
+%token STARTUP HLL SYSLIB FLOAT NOFLOAT NOCROSSREFS NOCROSSREFS_TO
 %token ORIGIN FILL
 %token LENGTH CREATE_OBJECT_SYMBOLS INPUT GROUP OUTPUT CONSTRUCTORS
 %token ALIGNMOD AT SUBALIGN HIDDEN PROVIDE PROVIDE_HIDDEN AS_NEEDED
@@ -353,6 +353,10 @@ ifile_p1:
 		{
 		  lang_add_nocrossref ($3);
 		}
+	|	NOCROSSREFS_TO '(' nocrossref_list ')'
+		{
+		  lang_add_nocrossref_to ($3);
+		}
 	|	EXTERN '(' extern_name_list ')'
 	|	INSERT_K AFTER NAME
 		{ lang_add_insert ($3, 0); }
@@ -365,38 +369,43 @@ ifile_p1:
 	;
 
 input_list:
+		{ ldlex_inputlist(); }
+		input_list1
+		{ ldlex_popstate(); }
+
+input_list1:
 		NAME
 		{ lang_add_input_file($1,lang_input_file_is_search_file_enum,
 				 (char *)NULL); }
-	|	input_list ',' NAME
+	|	input_list1 ',' NAME
 		{ lang_add_input_file($3,lang_input_file_is_search_file_enum,
 				 (char *)NULL); }
-	|	input_list NAME
+	|	input_list1 NAME
 		{ lang_add_input_file($2,lang_input_file_is_search_file_enum,
 				 (char *)NULL); }
 	|	LNAME
 		{ lang_add_input_file($1,lang_input_file_is_l_enum,
 				 (char *)NULL); }
-	|	input_list ',' LNAME
+	|	input_list1 ',' LNAME
 		{ lang_add_input_file($3,lang_input_file_is_l_enum,
 				 (char *)NULL); }
-	|	input_list LNAME
+	|	input_list1 LNAME
 		{ lang_add_input_file($2,lang_input_file_is_l_enum,
 				 (char *)NULL); }
 	|	AS_NEEDED '('
 		  { $<integer>$ = input_flags.add_DT_NEEDED_for_regular;
 		    input_flags.add_DT_NEEDED_for_regular = TRUE; }
-		     input_list ')'
+		     input_list1 ')'
 		  { input_flags.add_DT_NEEDED_for_regular = $<integer>3; }
-	|	input_list ',' AS_NEEDED '('
+	|	input_list1 ',' AS_NEEDED '('
 		  { $<integer>$ = input_flags.add_DT_NEEDED_for_regular;
 		    input_flags.add_DT_NEEDED_for_regular = TRUE; }
-		     input_list ')'
+		     input_list1 ')'
 		  { input_flags.add_DT_NEEDED_for_regular = $<integer>5; }
-	|	input_list AS_NEEDED '('
+	|	input_list1 AS_NEEDED '('
 		  { $<integer>$ = input_flags.add_DT_NEEDED_for_regular;
 		    input_flags.add_DT_NEEDED_for_regular = TRUE; }
-		     input_list ')'
+		     input_list1 ')'
 		  { input_flags.add_DT_NEEDED_for_regular = $<integer>4; }
 	;
 
@@ -812,7 +821,7 @@ memory_spec: 	NAME
 origin_spec:
 	ORIGIN '=' mustbe_exp
 		{
-		  region->origin = exp_get_vma ($3, 0, "origin");
+		  region->origin_exp = $3;
 		  region->current = region->origin;
 		}
 	;
@@ -820,7 +829,7 @@ origin_spec:
 length_spec:
              LENGTH '=' mustbe_exp
 		{
-		  region->length = exp_get_vma ($3, -1, "length");
+		  region->length_exp = $3;
 		}
 	;
 

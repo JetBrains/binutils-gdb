@@ -1,4 +1,4 @@
-# Copyright 1992-2013 Free Software Foundation, Inc.
+# Copyright 1992-2016 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,18 +31,10 @@ if ![isnative] then {
 # I/O bandwith.
 
 if { [istarget "*-*-*bsd*"]
-     || [istarget "*-*-hpux*"]
      || [istarget "*-*-solaris*"] 
      || [istarget "*-*-darwin*"] 
      || [istarget "*-*-cygwin*"] } {
     untested "Kernel lacks sparse corefile support (PR gdb/1551)"
-    return
-}
-
-# This testcase causes too much stress (in terms of memory usage)
-# on certain systems...
-if { [istarget "*-*-*irix*"] } {
-    untested "Testcase too stressful for this system"
     return
 }
 

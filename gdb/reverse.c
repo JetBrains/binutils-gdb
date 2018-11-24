@@ -1,6 +1,6 @@
 /* Reverse execution and reverse debugging.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,13 +18,13 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include <string.h>
 #include "target.h"
 #include "top.h"
 #include "cli/cli-cmds.h"
 #include "cli/cli-decode.h"
 #include "cli/cli-utils.h"
 #include "inferior.h"
+#include "infrun.h"
 #include "regcache.h"
 
 /* User interface:
@@ -142,7 +142,7 @@ save_bookmark_command (char *args, int from_tty)
     error (_("target_get_bookmark failed."));
 
   /* Set up a bookmark struct.  */
-  b = xcalloc (1, sizeof (struct bookmark));
+  b = XCNEW (struct bookmark);
   b->number = ++bookmark_count;
   init_sal (&b->sal);
   b->pc = regcache_read_pc (get_current_regcache ());
@@ -250,13 +250,14 @@ goto_bookmark_command (char *args, int from_tty)
 {
   struct bookmark *b;
   unsigned long num;
+  char *p = args;
 
   if (args == NULL || args[0] == '\0')
     error (_("Command requires an argument."));
 
-  if (strncmp (args, "start", strlen ("start")) == 0
-      || strncmp (args, "begin", strlen ("begin")) == 0
-      || strncmp (args, "end",   strlen ("end")) == 0)
+  if (startswith (args, "start")
+      || startswith (args, "begin")
+      || startswith (args, "end"))
     {
       /* Special case.  Give target opportunity to handle.  */
       target_goto_bookmark ((gdb_byte *) args, from_tty);
@@ -274,6 +275,10 @@ goto_bookmark_command (char *args, int from_tty)
 
   /* General case.  Bookmark identified by bookmark number.  */
   num = get_number (&args);
+
+  if (num == 0)
+    error (_("goto-bookmark: invalid bookmark number '%s'."), p);
+
   ALL_BOOKMARKS (b)
     if (b->number == num)
       break;
@@ -285,7 +290,7 @@ goto_bookmark_command (char *args, int from_tty)
       return;
     }
   /* Not found.  */
-  error (_("goto-bookmark: no bookmark found for '%s'."), args);
+  error (_("goto-bookmark: no bookmark found for '%s'."), p);
 }
 
 static int

@@ -1,6 +1,6 @@
 /* Cache and manage the values of registers for GDB, the GNU debugger.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,7 +20,10 @@
 #ifndef REGCACHE_H
 #define REGCACHE_H
 
+#include "common-regcache.h"
+
 struct regcache;
+struct regset;
 struct gdbarch;
 struct address_space;
 
@@ -44,24 +47,6 @@ extern struct gdbarch *get_regcache_arch (const struct regcache *regcache);
 
 extern struct address_space *get_regcache_aspace (const struct regcache *);
 
-enum register_status
-  {
-    /* The register value is not in the cache, and we don't know yet
-       whether it's available in the target (or traceframe).  */
-    REG_UNKNOWN = 0,
-
-    /* The register value is valid and cached.  */
-    REG_VALID = 1,
-
-    /* The register value is unavailable.  E.g., we're inspecting a
-       traceframe, and this register wasn't collected.  Note that this
-       is different a different "unavailable" from saying the register
-       does not exist in the target's architecture --- in that case,
-       the target should have given us a target description that does
-       not include the register in the first place.  */
-    REG_UNAVAILABLE = -1
-  };
-
 enum register_status regcache_register_status (const struct regcache *regcache,
 					       int regnum);
 
@@ -75,9 +60,7 @@ void regcache_raw_write (struct regcache *regcache, int rawnum,
 extern enum register_status
   regcache_raw_read_signed (struct regcache *regcache,
 			    int regnum, LONGEST *val);
-extern enum register_status
-  regcache_raw_read_unsigned (struct regcache *regcache,
-			      int regnum, ULONGEST *val);
+
 extern void regcache_raw_write_signed (struct regcache *regcache,
 				       int regnum, LONGEST val);
 extern void regcache_raw_write_unsigned (struct regcache *regcache,
@@ -135,7 +118,7 @@ void regcache_cooked_write_part (struct regcache *regcache, int regnum,
 
 /* Special routines to read/write the PC.  */
 
-extern CORE_ADDR regcache_read_pc (struct regcache *regcache);
+/* For regcache_read_pc see common/common-regcache.h.  */
 extern void regcache_write_pc (struct regcache *regcache, CORE_ADDR pc);
 
 /* Transfer a raw register [0..NUM_REGS) between the regcache and the
@@ -146,6 +129,51 @@ extern void regcache_raw_supply (struct regcache *regcache,
 				 int regnum, const void *buf);
 extern void regcache_raw_collect (const struct regcache *regcache,
 				  int regnum, void *buf);
+
+/* Mapping between register numbers and offsets in a buffer, for use
+   in the '*regset' functions below.  In an array of
+   'regcache_map_entry' each element is interpreted like follows:
+
+   - If 'regno' is a register number: Map register 'regno' to the
+     current offset (starting with 0) and increase the current offset
+     by 'size' (or the register's size, if 'size' is zero).  Repeat
+     this with consecutive register numbers up to 'regno+count-1'.
+
+   - If 'regno' is REGCACHE_MAP_SKIP: Add 'count*size' to the current
+     offset.
+
+   - If count=0: End of the map.  */
+
+struct regcache_map_entry
+{
+  int count;
+  int regno;
+  int size;
+};
+
+/* Special value for the 'regno' field in the struct above.  */
+
+enum
+  {
+    REGCACHE_MAP_SKIP = -1,
+  };
+
+/* Transfer a set of registers (as described by REGSET) between
+   REGCACHE and BUF.  If REGNUM == -1, transfer all registers
+   belonging to the regset, otherwise just the register numbered
+   REGNUM.  The REGSET's 'regmap' field must point to an array of
+   'struct regcache_map_entry'.
+
+   These functions are suitable for the 'regset_supply' and
+   'regset_collect' fields in a regset structure.  */
+
+extern void regcache_supply_regset (const struct regset *regset,
+				    struct regcache *regcache,
+				    int regnum, const void *buf,
+				    size_t size);
+extern void regcache_collect_regset (const struct regset *regset,
+				     const struct regcache *regcache,
+				     int regnum, void *buf, size_t size);
 
 
 /* The type of a register.  This function is slightly more efficient
@@ -176,17 +204,12 @@ extern void regcache_save (struct regcache *dst,
 
 /* Copy/duplicate the contents of a register cache.  By default, the
    operation is pass-through.  Writes to DST and reads from SRC will
-   go through to the target.
+   go through to the target.  See also regcache_cpy_no_passthrough.
 
-   The ``cpy'' functions can not have overlapping SRC and DST buffers.
-
-   ``no passthrough'' versions do not go through to the target.  They
-   only transfer values already in the cache.  */
+   regcache_cpy can not have overlapping SRC and DST buffers.  */
 
 extern struct regcache *regcache_dup (struct regcache *regcache);
 extern void regcache_cpy (struct regcache *dest, struct regcache *src);
-extern void regcache_cpy_no_passthrough (struct regcache *dest,
-					 struct regcache *src);
 
 extern void registers_changed (void);
 extern void registers_changed_ptid (ptid_t);

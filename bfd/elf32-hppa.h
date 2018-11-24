@@ -4,8 +4,7 @@
    in the Stratus FTX/Golf Object File Format (SED-1762) dated
    February 1994.
 
-   Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1998, 1999, 2000,
-   2002, 2003, 2005, 2007 Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    Written by:
 
@@ -36,6 +35,9 @@
 #include "elf-bfd.h"
 #include "libhppa.h"
 #include "elf/hppa.h"
+
+void elf32_hppa_init_stub_bfd
+  (bfd *, struct bfd_link_info *);
 
 int elf32_hppa_setup_section_lists
   (bfd *, struct bfd_link_info *);

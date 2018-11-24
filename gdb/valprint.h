@@ -1,6 +1,6 @@
 /* Declarations for value printing routines for GDB, the GNU debugger.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -124,10 +124,6 @@ extern void val_print_array_elements (struct type *, const gdb_byte *, int,
 extern void val_print_type_code_int (struct type *, const gdb_byte *,
 				     struct ui_file *);
 
-extern void val_print_type_code_flags (struct type *type,
-				       const gdb_byte *valaddr,
-				       struct ui_file *stream);
-
 extern void val_print_scalar_formatted (struct type *,
 					const gdb_byte *, int,
 					const struct value *,
@@ -163,6 +159,9 @@ extern int read_string (CORE_ADDR addr, int len, int width,
 extern void val_print_optimized_out (const struct value *val,
 				     struct ui_file *stream);
 
+/* Prints "<not saved>" to STREAM.  */
+extern void val_print_not_saved (struct ui_file *stream);
+
 extern void val_print_unavailable (struct ui_file *stream);
 
 extern void val_print_invalid_address (struct ui_file *stream);
@@ -187,6 +186,10 @@ struct generic_val_print_decorations
   /* What to print when we see TYPE_CODE_VOID.  */
 
   const char *void_name;
+
+  /* Array start and end strings.  */
+  const char *array_start;
+  const char *array_end;
 };
 
 
@@ -213,5 +216,20 @@ extern void generic_printstr (struct ui_file *stream, struct type *type,
 extern void output_command_const (const char *args, int from_tty);
 
 extern int val_print_scalar_type_p (struct type *type);
+
+struct format_data
+  {
+    int count;
+    char format;
+    char size;
+
+    /* True if the value should be printed raw -- that is, bypassing
+       python-based formatters.  */
+    unsigned char raw;
+  };
+
+extern void print_command_parse_format (const char **expp, const char *cmdname,
+					struct format_data *fmtp);
+extern void print_value (struct value *val, const struct format_data *fmtp);
 
 #endif

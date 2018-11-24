@@ -1,7 +1,5 @@
 /* BFD back-end for a.out.adobe binaries.
-   Copyright 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1998, 1999, 2000,
-   2001, 2002, 2003, 2004, 2005, 2006, 2007, 2009, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
    Written by Cygnus Support.  Based on bout.c.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -28,7 +26,7 @@
 #include "libaout.h"		/* BFD a.out internal data structures.  */
 
 /* Forward decl.  */
-extern const bfd_target a_out_adobe_vec;
+extern const bfd_target aout_adobe_vec;
 
 /* Swaps the information in an executable header taken from a raw byte
    stream memory image, into the internal exec_header structure.  */
@@ -88,8 +86,8 @@ aout_adobe_callback (bfd *abfd)
   bfd_set_arch_mach (abfd, bfd_arch_unknown, 0L);
 
   /* The positions of the string table and symbol table.  */
-  obj_str_filepos (abfd) = N_STROFF (*execp);
-  obj_sym_filepos (abfd) = N_SYMOFF (*execp);
+  obj_str_filepos (abfd) = N_STROFF (execp);
+  obj_sym_filepos (abfd) = N_SYMOFF (execp);
 
   /* Suck up the section information from the file, one section at a time.  */
   for (;;)
@@ -168,12 +166,12 @@ aout_adobe_callback (bfd *abfd)
 	switch (ext->e_type[0])
 	  {
 	  case N_TEXT:
-	    sect->rel_filepos = N_TRELOFF (*execp);
+	    sect->rel_filepos = N_TRELOFF (execp);
 	    sect->reloc_count = execp->a_trsize;
 	    break;
 
 	  case N_DATA:
-	    sect->rel_filepos = N_DRELOFF (*execp);
+	    sect->rel_filepos = N_DRELOFF (execp);
 	    sect->reloc_count = execp->a_drsize;
 	    break;
 
@@ -215,10 +213,10 @@ aout_adobe_object_p (bfd *abfd)
      If the environment variable GNUTARGET is set to "a.out.adobe", we will
      take just about any a.out file as an Adobe a.out file.  FIXME!  */
 
-  if (N_BADMAG (anexec))
+  if (N_BADMAG (&anexec))
     {
       targ = getenv ("GNUTARGET");
-      if (targ && !strcmp (targ, a_out_adobe_vec.name))
+      if (targ && !strcmp (targ, aout_adobe_vec.name))
 	/* Just continue anyway, if specifically set to this format.  */
 	;
       else
@@ -335,14 +333,14 @@ aout_adobe_write_object_contents (bfd *abfd)
   /* Now write out reloc info, followed by syms and strings.  */
   if (bfd_get_symcount (abfd) != 0)
     {
-      if (bfd_seek (abfd, (file_ptr) (N_SYMOFF (*exec_hdr (abfd))), SEEK_SET)
+      if (bfd_seek (abfd, (file_ptr) (N_SYMOFF (exec_hdr (abfd))), SEEK_SET)
 	  != 0)
 	return FALSE;
 
       if (! aout_32_write_syms (abfd))
 	return FALSE;
 
-      if (bfd_seek (abfd, (file_ptr) (N_TRELOFF (*exec_hdr (abfd))), SEEK_SET)
+      if (bfd_seek (abfd, (file_ptr) (N_TRELOFF (exec_hdr (abfd))), SEEK_SET)
 	  != 0)
 	return FALSE;
 
@@ -351,7 +349,7 @@ aout_adobe_write_object_contents (bfd *abfd)
 	  if (!aout_32_squirt_out_relocs (abfd, sect))
 	    return FALSE;
 
-      if (bfd_seek (abfd, (file_ptr) (N_DRELOFF (*exec_hdr (abfd))), SEEK_SET)
+      if (bfd_seek (abfd, (file_ptr) (N_DRELOFF (exec_hdr (abfd))), SEEK_SET)
 	  != 0)
 	return FALSE;
 
@@ -379,7 +377,7 @@ aout_adobe_set_section_contents (bfd *abfd,
     {
       /* Assign file offsets to sections.  Text sections are first, and
 	 are contiguous.  Then data sections.  Everything else at the end.  */
-      section_start = N_TXTOFF (ignore<-->me);
+      section_start = N_TXTOFF (0);
 
       for (sect = abfd->sections; sect; sect = sect->next)
 	{
@@ -448,9 +446,11 @@ aout_adobe_sizeof_headers (bfd *ignore_abfd ATTRIBUTE_UNUSED,
 
 /* Build the transfer vector for Adobe A.Out files.  */
 
-#define aout_32_bfd_make_debug_symbol ((asymbol *(*) (bfd *, void *, unsigned long)) bfd_nullvoidptr)
-#define aout_32_bfd_reloc_type_lookup ((reloc_howto_type *(*) (bfd *, bfd_reloc_code_real_type)) bfd_nullvoidptr)
-#define aout_32_bfd_reloc_name_lookup ((reloc_howto_type *(*) (bfd *, const char *)) bfd_nullvoidptr)
+#define aout_32_find_line			    _bfd_nosymbols_find_line
+#define aout_32_get_symbol_version_string	    _bfd_nosymbols_get_symbol_version_string
+#define aout_32_bfd_make_debug_symbol		    _bfd_nosymbols_bfd_make_debug_symbol
+#define aout_32_bfd_reloc_type_lookup		    _bfd_norelocs_bfd_reloc_type_lookup
+#define aout_32_bfd_reloc_name_lookup		    _bfd_norelocs_bfd_reloc_name_lookup
 #define aout_32_close_and_cleanup                   aout_32_bfd_free_cached_info
 #define	aout_32_set_arch_mach		            aout_adobe_set_arch_mach
 #define	aout_32_set_section_contents	            aout_adobe_set_section_contents
@@ -466,15 +466,15 @@ aout_adobe_sizeof_headers (bfd *ignore_abfd ATTRIBUTE_UNUSED,
 #define aout_32_section_already_linked              _bfd_generic_section_already_linked
 #define aout_32_bfd_define_common_symbol            bfd_generic_define_common_symbol
 #define aout_32_bfd_link_hash_table_create          _bfd_generic_link_hash_table_create
-#define aout_32_bfd_link_hash_table_free            _bfd_generic_link_hash_table_free
 #define aout_32_bfd_link_add_symbols	            _bfd_generic_link_add_symbols
 #define aout_32_bfd_link_just_syms	            _bfd_generic_link_just_syms
 #define aout_32_bfd_copy_link_hash_symbol_type \
   _bfd_generic_copy_link_hash_symbol_type
 #define aout_32_bfd_final_link		            _bfd_generic_final_link
 #define aout_32_bfd_link_split_section	            _bfd_generic_link_split_section
+#define aout_32_bfd_link_check_relocs               _bfd_generic_link_check_relocs
 
-const bfd_target a_out_adobe_vec =
+const bfd_target aout_adobe_vec =
 {
   "a.out.adobe",		/* Name.  */
   bfd_target_aout_flavour,

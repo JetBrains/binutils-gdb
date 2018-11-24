@@ -1,6 +1,6 @@
 /* build-id-related functions.
 
-   Copyright (C) 1991-2013 Free Software Foundation, Inc.
+   Copyright (C) 1991-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,30 +19,27 @@
 
 #include "defs.h"
 #include "bfd.h"
-#include "elf-bfd.h"
 #include "gdb_bfd.h"
 #include "build-id.h"
-#include <string.h>
 #include "gdb_vecs.h"
 #include "symfile.h"
 #include "objfiles.h"
 #include "filenames.h"
+#include "gdbcore.h"
 
-/* Locate NT_GNU_BUILD_ID from ABFD and return its content.  */
+/* See build-id.h.  */
 
-static const struct elf_build_id *
+const struct bfd_build_id *
 build_id_bfd_get (bfd *abfd)
 {
-  if (!bfd_check_format (abfd, bfd_object)
-      || bfd_get_flavour (abfd) != bfd_target_elf_flavour
-      /* Although this is ELF_specific, it is safe to do in generic
-	 code because it does not rely on any ELF-specific symbols at
-	 link time, and if the ELF code is not available in BFD, then
-	 ABFD will not have the ELF flavour.  */
-      || elf_tdata (abfd)->build_id == NULL)
+  if (!bfd_check_format (abfd, bfd_object))
     return NULL;
 
-  return elf_tdata (abfd)->build_id;
+  if (abfd->build_id != NULL)
+    return abfd->build_id;
+
+  /* No build-id */
+  return NULL;
 }
 
 /* See build-id.h.  */
@@ -50,7 +47,7 @@ build_id_bfd_get (bfd *abfd)
 int
 build_id_verify (bfd *abfd, size_t check_len, const bfd_byte *check)
 {
-  const struct elf_build_id *found;
+  const struct bfd_build_id *found;
   int retval = 0;
 
   found = build_id_bfd_get (abfd);
@@ -78,10 +75,13 @@ build_id_to_debug_bfd (size_t build_id_len, const bfd_byte *build_id)
   struct cleanup *back_to;
   int ix;
   bfd *abfd = NULL;
+  int alloc_len;
 
   /* DEBUG_FILE_DIRECTORY/.build-id/ab/cdef */
-  link = alloca (strlen (debug_file_directory) + (sizeof "/.build-id/" - 1) + 1
-		 + 2 * build_id_len + (sizeof ".debug" - 1) + 1);
+  alloc_len = (strlen (debug_file_directory)
+	       + (sizeof "/.build-id/" - 1) + 1
+	       + 2 * build_id_len + (sizeof ".debug" - 1) + 1);
+  link = (char *) alloca (alloc_len);
 
   /* Keep backward compatibility so that DEBUG_FILE_DIRECTORY being "" will
      cause "/.build-id/..." lookups.  */
@@ -96,6 +96,7 @@ build_id_to_debug_bfd (size_t build_id_len, const bfd_byte *build_id)
       size_t size = build_id_len;
       char *s;
       char *filename = NULL;
+      struct cleanup *inner;
 
       memcpy (link, debugdir, debugdir_len);
       s = &link[debugdir_len];
@@ -119,7 +120,10 @@ build_id_to_debug_bfd (size_t build_id_len, const bfd_byte *build_id)
 	continue;
 
       /* We expect to be silent on the non-existing files.  */
-      abfd = gdb_bfd_open_maybe_remote (filename);
+      inner = make_cleanup (xfree, filename);
+      abfd = gdb_bfd_open (filename, gnutarget, -1);
+      do_cleanups (inner);
+
       if (abfd == NULL)
 	continue;
 
@@ -139,7 +143,7 @@ build_id_to_debug_bfd (size_t build_id_len, const bfd_byte *build_id)
 char *
 find_separate_debug_file_by_buildid (struct objfile *objfile)
 {
-  const struct elf_build_id *build_id;
+  const struct bfd_build_id *build_id;
 
   build_id = build_id_bfd_get (objfile->obfd);
   if (build_id != NULL)

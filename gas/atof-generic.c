@@ -1,6 +1,5 @@
 /* atof_generic.c - turn a string of digits into a Flonum
-   Copyright 1987, 1990, 1991, 1992, 1993, 1994, 1995, 1998, 1999, 2000,
-   2001, 2003, 2005, 2006, 2007, 2009 Free Software Foundation, Inc.
+   Copyright (C) 1987-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -306,6 +305,8 @@ atof_generic (/* return pointer to just AFTER number we read.  */
     {
       int count;		/* Number of useful digits left to scan.  */
 
+      LITTLENUM_TYPE *temporary_binary_low = NULL;
+      LITTLENUM_TYPE *power_binary_low = NULL;
       LITTLENUM_TYPE *digits_binary_low;
       unsigned int precision;
       unsigned int maximum_useful_digits;
@@ -363,7 +364,7 @@ atof_generic (/* return pointer to just AFTER number we read.  */
 	* sizeof (LITTLENUM_TYPE);
 
       digits_binary_low = (LITTLENUM_TYPE *)
-	alloca (size_of_digits_in_chars);
+	xmalloc (size_of_digits_in_chars);
 
       memset ((char *) digits_binary_low, '\0', size_of_digits_in_chars);
 
@@ -456,13 +457,11 @@ atof_generic (/* return pointer to just AFTER number we read.  */
 	 * giving return_binary_mantissa and return_binary_exponent.
 	 */
 
-	LITTLENUM_TYPE *power_binary_low;
 	int decimal_exponent_is_negative;
 	/* This refers to the "-56" in "12.34E-56".  */
 	/* FALSE: decimal_exponent is positive (or 0) */
 	/* TRUE:  decimal_exponent is negative */
 	FLONUM_TYPE temporary_flonum;
-	LITTLENUM_TYPE *temporary_binary_low;
 	unsigned int size_of_power_in_littlenums;
 	unsigned int size_of_power_in_chars;
 
@@ -480,8 +479,9 @@ atof_generic (/* return pointer to just AFTER number we read.  */
 	size_of_power_in_chars = size_of_power_in_littlenums
 	  * sizeof (LITTLENUM_TYPE) + 2;
 
-	power_binary_low = (LITTLENUM_TYPE *) alloca (size_of_power_in_chars);
-	temporary_binary_low = (LITTLENUM_TYPE *) alloca (size_of_power_in_chars);
+	power_binary_low = (LITTLENUM_TYPE *) xmalloc (size_of_power_in_chars);
+	temporary_binary_low = (LITTLENUM_TYPE *) xmalloc (size_of_power_in_chars);
+
 	memset ((char *) power_binary_low, '\0', size_of_power_in_chars);
 	*power_binary_low = 1;
 	power_of_10_flonum.exponent = 0;
@@ -572,7 +572,6 @@ atof_generic (/* return pointer to just AFTER number we read.  */
 	  (void) putchar ('\n');
 #endif
 	}
-
       }
 
       /*
@@ -586,6 +585,11 @@ atof_generic (/* return pointer to just AFTER number we read.  */
       /* Assert sign of the number we made is '+'.  */
       address_of_generic_floating_point_number->sign = digits_sign_char;
 
+      if (temporary_binary_low)
+	free (temporary_binary_low);
+      if (power_binary_low)
+	free (power_binary_low);
+      free (digits_binary_low);
     }
   return return_value;
 }

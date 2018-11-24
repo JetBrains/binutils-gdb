@@ -9,6 +9,12 @@ sinclude(acx_configure_dir.m4)
 # This gets GDB_AC_LIBMCHECK.
 sinclude(libmcheck.m4)
 
+# This gets GDB_AC_TRANSFORM.
+sinclude(transform.m4)
+
+# This gets AM_GDB_WARNINGS.
+sinclude(warning.m4)
+
 dnl gdb/configure.in uses BFD_NEED_DECLARATION, so get its definition.
 sinclude(../bfd/bfd.m4)
 
@@ -50,16 +56,27 @@ sinclude([../config/lcmessage.m4])
 dnl For AM_LANGINFO_CODESET.
 sinclude([../config/codeset.m4])
 
+sinclude([../config/iconv.m4])
+
 sinclude([../config/zlib.m4])
 
 m4_include([common/common.m4])
+
+dnl For libiberty_INIT.
+m4_include(libiberty.m4)
+
+dnl For --enable-build-with-cxx and COMPILER.
+m4_include(build-with-cxx.m4)
+
+dnl For GDB_AC_PTRACE.
+m4_include(ptrace.m4)
 
 ## ----------------------------------------- ##
 ## ANSIfy the C compiler whenever possible.  ##
 ## From Franc,ois Pinard                     ##
 ## ----------------------------------------- ##
 
-# Copyright (C) 1996-2013 Free Software Foundation, Inc.
+# Copyright (C) 1996-2016 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -160,131 +177,6 @@ case "x$am_cv_prog_cc_stdc" in
   x|xno) ;;
   *) CC="$CC $am_cv_prog_cc_stdc" ;;
 esac
-])
-
-dnl Originally from Bruno Haible, but with some modifications
-dnl for the GDB project.
-
-AC_DEFUN([AM_ICONV],
-[
-  dnl Some systems have iconv in libc, some have it in libiconv (OSF/1 and
-  dnl those with the standalone portable GNU libiconv installed).
-
-  AC_ARG_WITH([libiconv-prefix],
-    AS_HELP_STRING([--with-libiconv-prefix=DIR], [search for libiconv in DIR/include and DIR/lib]), [
-    for dir in `echo "$withval" | tr : ' '`; do
-      if test -d $dir/include; then LIBICONV_INCLUDE="-I$dir/include"; fi
-      if test -d $dir/lib; then LIBICONV_LIBDIR="-L$dir/lib"; fi
-    done
-   ])
-
-  BUILD_LIBICONV_LIBDIRS="../libiconv/lib/.libs ../libiconv/lib/_libs"
-  BUILD_LIBICONV_INCLUDE="-I../libiconv/include"
-
-  AC_CACHE_CHECK(for iconv, am_cv_func_iconv, [
-    am_cv_func_iconv="no, consider installing GNU libiconv"
-    am_cv_lib_iconv=no
-    am_cv_use_build_libiconv=no
-    am_cv_build_libiconv_path=
-
-    # If libiconv is part of the build tree, then try using it over
-    # any system iconv.
-    if test -d ../libiconv; then
-      for lib_dir in $BUILD_LIBICONV_LIBDIRS; do
-        am_save_LIBS="$LIBS"
-        am_save_CPPFLAGS="$CPPFLAGS"
-        LIBS="$LIBS $lib_dir/libiconv.a"
-        CPPFLAGS="$CPPFLAGS $BUILD_LIBICONV_INCLUDE"
-        AC_TRY_LINK([#include <stdlib.h>
-#include <iconv.h>],
-          [iconv_t cd = iconv_open("","");
-           iconv(cd,NULL,NULL,NULL,NULL);
-           iconv_close(cd);],
-          am_cv_use_build_libiconv=yes
-          am_cv_build_libiconv_path=$lib_dir/libiconv.a
-          am_cv_lib_iconv=yes
-          am_cv_func_iconv=yes)
-        LIBS="$am_save_LIBS"
-        CPPFLAGS="$am_save_CPPFLAGS"
-        if test "$am_cv_use_build_libiconv" = "yes"; then
-          break
-        fi
-      done
-    fi
-
-    # Next, try to find iconv in libc.
-    if test "$am_cv_func_iconv" != yes; then
-      AC_TRY_LINK([#include <stdlib.h>
-#include <iconv.h>],
-        [iconv_t cd = iconv_open("","");
-         iconv(cd,NULL,NULL,NULL,NULL);
-         iconv_close(cd);],
-        am_cv_func_iconv=yes)
-    fi
-
-    # If iconv was not in libc, try -liconv.  In this case, arrange to
-    # look in the libiconv prefix, if it was specified by the user.
-    if test "$am_cv_func_iconv" != yes; then
-      am_save_CPPFLAGS="$CPPFLAGS"
-      am_save_LIBS="$LIBS"
-      if test -n "$LIBICONV_INCLUDE"; then
-        CPPFLAGS="$CPPFLAGS $LIBICONV_INCLUDE"
-        LIBS="$LIBS $LIBICONV_LIBDIR"
-      fi
-      LIBS="$LIBS -liconv"
-      AC_TRY_LINK([#include <stdlib.h>
-#include <iconv.h>],
-        [iconv_t cd = iconv_open("","");
-         iconv(cd,NULL,NULL,NULL,NULL);
-         iconv_close(cd);],
-        am_cv_lib_iconv=yes
-        am_cv_func_iconv=yes)
-      LIBS="$am_save_LIBS"
-      CPPFLAGS="$am_save_CPPFLAGS"
-    fi
-  ])
-
-  # Set the various flags based on the cache variables.  We can't rely
-  # on the flags to remain set from the above code, due to caching.
-  LIBICONV=
-  if test "$am_cv_lib_iconv" = yes; then
-    LIBICONV="-liconv"
-  else
-    LIBICONV_LIBDIR=
-    LIBICONV_INCLUDE=
-  fi
-  if test "$am_cv_use_build_libiconv" = yes; then
-    LIBICONV="$am_cv_build_libiconv_path"
-    LIBICONV_LIBDIR=""
-    LIBICONV_INCLUDE="$BUILD_LIBICONV_INCLUDE"
-  fi
-  CPPFLAGS="$CPPFLAGS $LIBICONV_INCLUDE"
-  LIBS="$LIBS $LIBICONV_LIBDIR $LIBICONV"
-
-  if test "$am_cv_func_iconv" = yes; then
-    AC_DEFINE(HAVE_ICONV, 1, [Define if you have the iconv() function.])
-    AC_MSG_CHECKING([for iconv declaration])
-    AC_CACHE_VAL(am_cv_proto_iconv, [
-      AC_TRY_COMPILE([
-#include <stdlib.h>
-#include <iconv.h>
-extern
-#ifdef __cplusplus
-"C"
-#endif
-#if defined(__STDC__) || defined(__cplusplus)
-size_t iconv (iconv_t cd, char * *inbuf, size_t *inbytesleft, char * *outbuf, size_t *outbytesleft);
-#else
-size_t iconv();
-#endif
-], [], am_cv_proto_iconv_arg1="", am_cv_proto_iconv_arg1="const")
-      am_cv_proto_iconv="extern size_t iconv (iconv_t cd, $am_cv_proto_iconv_arg1 char * *inbuf, size_t *inbytesleft, char * *outbuf, size_t *outbytesleft);"])
-    am_cv_proto_iconv=`echo "[$]am_cv_proto_iconv" | tr -s ' ' | sed -e 's/( /(/'`
-    AC_MSG_RESULT([$]{ac_t:-
-         }[$]am_cv_proto_iconv)
-    AC_DEFINE_UNQUOTED(ICONV_CONST, $am_cv_proto_iconv_arg1,
-      [Define as const if the declaration of iconv() needs const.])
-  fi
 ])
 
 dnl written by Guido Draheim <guidod@gmx.de>, original by Alexandre Oliva 
@@ -456,13 +348,10 @@ AC_DEFUN([GDB_AC_CHECK_BFD], [
   # points somewhere with bfd, with -I/foo/lib and -L/foo/lib.  We
   # always want our bfd.
   CFLAGS="-I${srcdir}/../include -I../bfd -I${srcdir}/../bfd $CFLAGS"
-  LDFLAGS="-L../bfd -L../libiberty $LDFLAGS"
+  ZLIBDIR=`echo $zlibdir | sed 's,\$(top_builddir)/,,g'`
+  LDFLAGS="-L../bfd -L../libiberty $ZLIBDIR $LDFLAGS"
   intl=`echo $LIBINTL | sed 's,${top_builddir}/,,g'`
-  # -ldl is provided by bfd/Makfile.am (LIBDL) <PLUGINS>.
-  if test "$plugins" = "yes"; then
-    AC_SEARCH_LIBS(dlopen, dl)
-  fi
-  LIBS="-lbfd -liberty $intl $LIBS"
+  LIBS="-lbfd -liberty -lz $intl $LIBS"
   AC_CACHE_CHECK([$1], [$2],
   [AC_TRY_LINK(
   [#include <stdlib.h>
@@ -473,3 +362,75 @@ AC_DEFUN([GDB_AC_CHECK_BFD], [
   CFLAGS=$OLD_CFLAGS
   LDFLAGS=$OLD_LDFLAGS
   LIBS=$OLD_LIBS])
+
+dnl GDB_GUILE_PROGRAM_NAMES([PKG-CONFIG], [VERSION])
+dnl
+dnl Define and substitute 'GUILD' to contain the absolute file name of
+dnl the 'guild' command for VERSION, using PKG-CONFIG.  (This is
+dnl similar to Guile's 'GUILE_PROGS' macro.)
+AC_DEFUN([GDB_GUILE_PROGRAM_NAMES], [
+  AC_CACHE_CHECK([for the absolute file name of the 'guild' command],
+    [ac_cv_guild_program_name],
+    [ac_cv_guild_program_name="`$1 --variable guild $2`"
+
+     # In Guile up to 2.0.11 included, guile-2.0.pc would not define
+     # the 'guild' and 'bindir' variables.  In that case, try to guess
+     # what the program name is, at the risk of getting it wrong if
+     # Guile was configured with '--program-suffix' or similar.
+     if test "x$ac_cv_guild_program_name" = "x"; then
+       guile_exec_prefix="`$1 --variable exec_prefix $2`"
+       ac_cv_guild_program_name="$guile_exec_prefix/bin/guild"
+     fi
+  ])
+
+  if ! "$ac_cv_guild_program_name" --version >&AS_MESSAGE_LOG_FD 2>&AS_MESSAGE_LOG_FD; then
+    AC_MSG_ERROR(['$ac_cv_guild_program_name' appears to be unusable])
+  fi
+
+  GUILD="$ac_cv_guild_program_name"
+  AC_SUBST([GUILD])
+])
+
+dnl GDB_GUILD_TARGET_FLAG
+dnl
+dnl Compute the value of GUILD_TARGET_FLAG.
+dnl For native builds this is empty.
+dnl For cross builds this is --target=<host>.
+AC_DEFUN([GDB_GUILD_TARGET_FLAG], [
+  if test "$cross_compiling" = no; then
+    GUILD_TARGET_FLAG=
+  else
+    GUILD_TARGET_FLAG="--target=$host"
+  fi
+  AC_SUBST(GUILD_TARGET_FLAG)
+])
+
+dnl GDB_TRY_GUILD([SRC-FILE])
+dnl
+dnl We precompile the .scm files and install them with gdb, so make sure
+dnl guild works for this host.
+dnl The .scm files are precompiled for several reasons:
+dnl 1) To silence Guile during gdb startup (Guile's auto-compilation output
+dnl    is unnecessarily verbose).
+dnl 2) Make gdb developers see compilation errors/warnings during the build,
+dnl    and not leave it to later when the user runs gdb.
+dnl 3) As a convenience for the user, so that one copy of the files is built
+dnl    instead of one copy per user.
+dnl
+dnl Make sure guild can handle this host by trying to compile SRC-FILE, and
+dnl setting ac_cv_guild_ok to yes or no.
+dnl Note that guild can handle cross-compilation.
+dnl It could happen that guild can't handle the host, but guile would still
+dnl work.  For the time being we're conservative, and if guild doesn't work
+dnl we punt.
+AC_DEFUN([GDB_TRY_GUILD], [
+  AC_REQUIRE([GDB_GUILD_TARGET_FLAG])
+  AC_CACHE_CHECK([whether guild supports this host],
+    [ac_cv_guild_ok],
+    [echo "$ac_cv_guild_program_name compile $GUILD_TARGET_FLAG -o conftest.go $1" >&AS_MESSAGE_LOG_FD
+     if "$ac_cv_guild_program_name" compile $GUILD_TARGET_FLAG -o conftest.go "$1" >&AS_MESSAGE_LOG_FD 2>&AS_MESSAGE_LOG_FD; then
+       ac_cv_guild_ok=yes
+     else
+       ac_cv_guild_ok=no
+     fi])
+])

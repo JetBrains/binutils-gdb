@@ -1,4 +1,10 @@
 # Linker script for PE.
+#
+# Copyright (C) 2014-2016 Free Software Foundation, Inc.
+# 
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
 
 if test -z "${RELOCATEABLE_OUTPUT_FORMAT}"; then
   RELOCATEABLE_OUTPUT_FORMAT=${OUTPUT_FORMAT}
@@ -24,27 +30,29 @@ if test "${RELOCATING}"; then
              *(SORT(.rdata$*))'
   fi
   R_IDATA234='
-    SORT(*)(.idata$2)
-    SORT(*)(.idata$3)
+    KEEP (SORT(*)(.idata$2))
+    KEEP (SORT(*)(.idata$3))
     /* These zeroes mark the end of the import list.  */
     LONG (0); LONG (0); LONG (0); LONG (0); LONG (0);
-    SORT(*)(.idata$4)'
+    KEEP (SORT(*)(.idata$4))'
   R_IDATA5='SORT(*)(.idata$5)'
   R_IDATA67='
-    SORT(*)(.idata$6)
-    SORT(*)(.idata$7)'
-  R_CRT_XC='*(SORT(.CRT$XC*))  /* C initialization */'
-  R_CRT_XI='*(SORT(.CRT$XI*))  /* C++ initialization */'
-  R_CRT_XL='*(SORT(.CRT$XL*))  /* TLS callbacks */'
-  R_CRT_XP='*(SORT(.CRT$XP*))  /* Pre-termination */'
-  R_CRT_XT='*(SORT(.CRT$XT*))  /* Termination */'
+    KEEP (SORT(*)(.idata$6))
+    KEEP (SORT(*)(.idata$7))'
+  R_CRT_XC='KEEP (*(SORT(.CRT$XC*)))  /* C initialization */'
+  R_CRT_XI='KEEP (*(SORT(.CRT$XI*)))  /* C++ initialization */'
+  R_CRT_XL='KEEP (*(SORT(.CRT$XL*)))  /* TLS callbacks */'
+  R_CRT_XP='KEEP (*(SORT(.CRT$XP*)))  /* Pre-termination */'
+  R_CRT_XT='KEEP (*(SORT(.CRT$XT*)))  /* Termination */'
   R_TLS='
-    *(.tls$AAA)    
-    *(.tls)
-    *(.tls$)
-    *(SORT(.tls$*))
-    *(.tls$ZZZ)'
-  R_RSRC='*(SORT(.rsrc$*))'
+    KEEP (*(.tls$AAA))
+    KEEP (*(.tls))
+    KEEP (*(.tls$))
+    KEEP (*(SORT(.tls$*)))
+    KEEP (*(.tls$ZZZ))'
+  R_RSRC='
+    KEEP (*(.rsrc))
+    KEEP (*(.rsrc$*))'
 else
   R_TEXT=
   R_DATA=
@@ -53,10 +61,16 @@ else
   R_IDATA5=
   R_IDATA67=
   R_CRT=
-  R_RSRC=
+  R_RSRC='*(.rsrc)'
 fi
 
 cat <<EOF
+/* Copyright (C) 2014-2016 Free Software Foundation, Inc.
+
+   Copying and distribution of this script, with or without modification,
+   are permitted in any medium without royalty provided the copyright
+   notice and this notice are preserved.  */
+
 ${RELOCATING+OUTPUT_FORMAT(${OUTPUT_FORMAT})}
 ${RELOCATING-OUTPUT_FORMAT(${RELOCATEABLE_OUTPUT_FORMAT})}
 ${OUTPUT_ARCH+OUTPUT_ARCH(${OUTPUT_ARCH})}
@@ -69,9 +83,9 @@ SECTIONS
   ${RELOCATING+   lower than the target page size. */}
   ${RELOCATING+. = SIZEOF_HEADERS;}
   ${RELOCATING+. = ALIGN(__section_alignment__);}
-  .text ${RELOCATING+ __image_base__ + ( __section_alignment__ < ${TARGET_PAGE_SIZE} ? . : __section_alignment__ )} : 
+  .text ${RELOCATING+ __image_base__ + ( __section_alignment__ < ${TARGET_PAGE_SIZE} ? . : __section_alignment__ )} :
   {
-    ${RELOCATING+ *(.init)}
+    ${RELOCATING+ KEEP(*(.init))}
     *(.text)
     ${R_TEXT}
     ${RELOCATING+ *(.text.*)}
@@ -79,15 +93,23 @@ SECTIONS
     *(.glue_7t)
     *(.glue_7)
     ${CONSTRUCTING+. = ALIGN(8);}
-    ${CONSTRUCTING+ ___CTOR_LIST__ = .; __CTOR_LIST__ = . ; 
-			LONG (-1); LONG (-1);*(.ctors); *(.ctor); *(SORT(.ctors.*));  LONG (0); LONG (0); }
-    ${CONSTRUCTING+ ___DTOR_LIST__ = .; __DTOR_LIST__ = . ; 
-			LONG (-1); LONG (-1); *(.dtors); *(.dtor); *(SORT(.dtors.*));  LONG (0); LONG (0); }
-    ${RELOCATING+ *(.fini)}
+    ${CONSTRUCTING+ ___CTOR_LIST__ = .; __CTOR_LIST__ = . ;
+			LONG (-1); LONG (-1);
+			KEEP (*(.ctors));
+			KEEP (*(.ctor));
+			KEEP (*(SORT(.ctors.*)));
+			LONG (0); LONG (0); }
+    ${CONSTRUCTING+ ___DTOR_LIST__ = .; __DTOR_LIST__ = . ;
+			LONG (-1); LONG (-1);
+			KEEP (*(.dtors));
+			KEEP (*(.dtor));
+			KEEP (*(SORT(.dtors.*)));
+			LONG (0); LONG (0); }
+    ${RELOCATING+ KEEP (*(.fini))}
     /* ??? Why is .gcc_exc here?  */
     ${RELOCATING+ *(.gcc_exc)}
     ${RELOCATING+PROVIDE (etext = .);}
-    ${RELOCATING+ *(.gcc_except_table)}
+    ${RELOCATING+ KEEP (*(.gcc_except_table))}
   }
 
   /* The Cygwin32 library uses a section to avoid copying certain data
@@ -96,13 +118,13 @@ SECTIONS
      breaks building the cygwin32 dll.  Instead, we name the section
      ".data_cygwin_nocopy" and explicitly include it after __data_end__. */
 
-  .data ${RELOCATING+BLOCK(__section_alignment__)} : 
+  .data ${RELOCATING+BLOCK(__section_alignment__)} :
   {
     ${RELOCATING+__data_start__ = . ;}
     *(.data)
     *(.data2)
     ${R_DATA}
-    *(.jcr)
+    KEEP(*(.jcr))
     ${RELOCATING+__data_end__ = . ;}
     ${RELOCATING+*(.data_cygwin_nocopy)}
   }
@@ -111,7 +133,7 @@ SECTIONS
   {
     ${R_RDATA}
     ${RELOCATING+__rt_psrelocs_start = .;}
-    *(.rdata_runtime_pseudo_reloc)
+    KEEP(*(.rdata_runtime_pseudo_reloc))
     ${RELOCATING+__rt_psrelocs_end = .;}
   }
   ${RELOCATING+__rt_psrelocs_size = __rt_psrelocs_end - __rt_psrelocs_start;}
@@ -122,17 +144,17 @@ SECTIONS
 
   .eh_frame ${RELOCATING+BLOCK(__section_alignment__)} :
   {
-    *(.eh_frame*)
+    KEEP (*(.eh_frame*))
   }
 
   .pdata ${RELOCATING+BLOCK(__section_alignment__)} :
   {
-    *(.pdata*)
+    KEEP(*(.pdata*))
   }
 
   .xdata ${RELOCATING+BLOCK(__section_alignment__)} :
   {
-    *(.xdata*)
+    KEEP(*(.xdata*))
   }
 
   .bss ${RELOCATING+BLOCK(__section_alignment__)} :
@@ -206,14 +228,13 @@ SECTIONS
     ${RELOCATING+ __end__ = .;}
   }
 
-  .rsrc ${RELOCATING+BLOCK(__section_alignment__)} :
-  { 					
-    *(.rsrc)
+  .rsrc ${RELOCATING+BLOCK(__section_alignment__)} : SUBALIGN(4)
+  {
     ${R_RSRC}
   }
 
   .reloc ${RELOCATING+BLOCK(__section_alignment__)} :
-  { 					
+  {
     *(.reloc)
   }
 
@@ -231,7 +252,7 @@ SECTIONS
      Symbols in the DWARF debugging sections are relative to the beginning
      of the section.  Unlike other targets that fake this by putting the
      section VMA at 0, the PE format will not allow it.  */
-     
+
   /* DWARF 1.1 and DWARF 2.  */
   .debug_aranges ${RELOCATING+BLOCK(__section_alignment__)} ${RELOCATING+(NOLOAD)} :
   {

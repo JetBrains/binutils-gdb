@@ -1,6 +1,6 @@
 /* MI Command Set - MI parser.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -25,7 +25,6 @@
 #include "charset.h"
 
 #include <ctype.h>
-#include <string.h>
 #include "cli/cli-utils.h"
 #include "language.h"
 
@@ -112,7 +111,7 @@ mi_parse_argv (const char *args, struct mi_parse *parse)
 {
   const char *chp = args;
   int argc = 0;
-  char **argv = xmalloc ((argc + 1) * sizeof (char *));
+  char **argv = XNEWVEC (char *, argc + 1);
 
   argv[argc] = NULL;
   while (1)
@@ -166,7 +165,7 @@ mi_parse_argv (const char *args, struct mi_parse *parse)
 		return;
 	      }
 	    /* Create the buffer and copy characters in.  */
-	    arg = xmalloc ((len + 1) * sizeof (char));
+	    arg = XNEWVEC (char, len + 1);
 	    chp = start;
 	    len = 0;
 	    while (*chp != '\0' && *chp != '"')
@@ -196,14 +195,14 @@ mi_parse_argv (const char *args, struct mi_parse *parse)
 		chp++;
 	      }
 	    len = chp - start;
-	    arg = xmalloc ((len + 1) * sizeof (char));
+	    arg = XNEWVEC (char, len + 1);
 	    strncpy (arg, start, len);
 	    arg[len] = '\0';
 	    break;
 	  }
 	}
       /* Append arg to argv.  */
-      argv = xrealloc (argv, (argc + 2) * sizeof (char *));
+      argv = XRESIZEVEC (char *, argv, argc + 2);
       argv[argc++] = arg;
       argv[argc] = NULL;
     }
@@ -230,14 +229,14 @@ mi_parse_free (struct mi_parse *parse)
 static void
 mi_parse_cleanup (void *arg)
 {
-  mi_parse_free (arg);
+  mi_parse_free ((struct mi_parse *) arg);
 }
 
 struct mi_parse *
 mi_parse (const char *cmd, char **token)
 {
   const char *chp;
-  struct mi_parse *parse = XMALLOC (struct mi_parse);
+  struct mi_parse *parse = XNEW (struct mi_parse);
   struct cleanup *cleanup;
 
   memset (parse, 0, sizeof (*parse));
@@ -255,7 +254,7 @@ mi_parse (const char *cmd, char **token)
   /* Find/skip any token and then extract it.  */
   for (chp = cmd; *chp >= '0' && *chp <= '9'; chp++)
     ;
-  *token = xmalloc (chp - cmd + 1);
+  *token = (char *) xmalloc (chp - cmd + 1);
   memcpy (*token, cmd, (chp - cmd));
   (*token)[chp - cmd] = '\0';
 
@@ -277,7 +276,7 @@ mi_parse (const char *cmd, char **token)
 
     for (; *chp && !isspace (*chp); chp++)
       ;
-    parse->command = xmalloc (chp - tmp + 1);
+    parse->command = (char *) xmalloc (chp - tmp + 1);
     memcpy (parse->command, tmp, chp - tmp);
     parse->command[chp - tmp] = '\0';
   }
@@ -285,7 +284,8 @@ mi_parse (const char *cmd, char **token)
   /* Find the command in the MI table.  */
   parse->cmd = mi_lookup (parse->command);
   if (parse->cmd == NULL)
-    error (_("Undefined MI command: %s"), parse->command);
+    throw_error (UNDEFINED_COMMAND_ERROR,
+		 _("Undefined MI command: %s"), parse->command);
 
   /* Skip white space following the command.  */
   chp = skip_spaces_const (chp);

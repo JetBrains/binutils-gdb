@@ -1,6 +1,5 @@
 /* Routines to help build PEI-format DLLs (Win32 etc)
-   Copyright 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,
-   2008, 2009, 2010, 2011, 2012 Free Software Foundation, Inc.
+   Copyright (C) 1998-2016 Free Software Foundation, Inc.
    Written by DJ Delorie <dj@cygnus.com>
 
    This file is part of the GNU Binutils.
@@ -236,6 +235,7 @@ static const autofilter_entry_type autofilter_symbollist_i386[] =
   { STRING_COMMA_LEN ("_impure_ptr") },
   { STRING_COMMA_LEN ("_fmode") },
   { STRING_COMMA_LEN ("environ") },
+  { STRING_COMMA_LEN ("__dso_handle") },
   { NULL, 0 }
 };
 
@@ -655,7 +655,7 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
 
   /* First, run around to all the objects looking for the .drectve
      sections, and push those into the def file too.  */
-  for (b = info->input_bfds; b; b = b->link_next)
+  for (b = info->input_bfds; b; b = b->link.next)
     {
       s = bfd_get_section_by_name (b, ".drectve");
       if (s)
@@ -693,7 +693,7 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
 
   /* If we are building an executable and there is nothing
      to export, we do not build an export table at all.  */
-  if (info->executable && pe_def_file->num_exports == 0
+  if (bfd_link_executable (info) && pe_def_file->num_exports == 0
       && (!pe_dll_export_everything || pe_dll_exclude_all_symbols))
     return;
 
@@ -701,7 +701,7 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
   if ((pe_dll_export_everything || pe_def_file->num_exports == 0)
       && !pe_dll_exclude_all_symbols)
     {
-      for (b = info->input_bfds; b; b = b->link_next)
+      for (b = info->input_bfds; b; b = b->link.next)
 	{
 	  asymbol **symbols;
 	  int nsyms;
@@ -894,16 +894,23 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
 
   for (i = 0; i < NE; i++)
     {
+      char *int_name = pe_def_file->exports[i].internal_name;
       char *name;
-      name = xmalloc (strlen (pe_def_file->exports[i].internal_name) + 2);
-      if (pe_details->underscored
- 	  && (*pe_def_file->exports[i].internal_name != '@'))
+
+      /* PR 19803: Make sure that any exported symbol does not get garbage collected.  */
+      lang_add_gc_name (int_name);
+
+      name = xmalloc (strlen (int_name) + 2);
+      if (pe_details->underscored && int_name[0] != '@')
 	{
 	  *name = '_';
-	  strcpy (name + 1, pe_def_file->exports[i].internal_name);
+	  strcpy (name + 1, int_name);
+
+	  /* PR 19803: The alias must be preserved as well.  */
+	  lang_add_gc_name (xstrdup (name));
 	}
       else
-	strcpy (name, pe_def_file->exports[i].internal_name);
+	strcpy (name, int_name);
 
       blhe = bfd_link_hash_lookup (info->hash,
 				   name,
@@ -939,7 +946,7 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
 	 but we must take care not to be fooled when the user wants to export
 	 a symbol that actually really has a dot in it, so we only check
 	 for them here, after real defined symbols have already been matched.  */
-      else if (strchr (pe_def_file->exports[i].internal_name, '.'))
+      else if (strchr (int_name, '.'))
 	{
 	  count_exported++;
 	  if (!pe_def_file->exports[i].flag_noname)
@@ -960,20 +967,20 @@ process_def_file_and_drectve (bfd *abfd ATTRIBUTE_UNUSED, struct bfd_link_info *
 	{
 	  /* xgettext:c-format */
 	  einfo (_("%XCannot export %s: symbol not defined\n"),
-		 pe_def_file->exports[i].internal_name);
+		 int_name);
 	}
       else if (blhe)
 	{
 	  /* xgettext:c-format */
 	  einfo (_("%XCannot export %s: symbol wrong type (%d vs %d)\n"),
-		 pe_def_file->exports[i].internal_name,
+		 int_name,
 		 blhe->type, bfd_link_hash_defined);
 	}
       else
 	{
 	  /* xgettext:c-format */
 	  einfo (_("%XCannot export %s: symbol not found\n"),
-		 pe_def_file->exports[i].internal_name);
+		 int_name);
 	}
       free (name);
     }
@@ -1170,9 +1177,6 @@ fill_edata (bfd *abfd, struct bfd_link_info *info ATTRIBUTE_UNUSED)
   unsigned char *enameptrs;
   unsigned char *eordinals;
   char *enamestr;
-  time_t now;
-
-  time (&now);
 
   edata_d = xmalloc (edata_sz);
 
@@ -1187,7 +1191,10 @@ fill_edata (bfd *abfd, struct bfd_link_info *info ATTRIBUTE_UNUSED)
 		   + edata_s->output_section->vma - image_base)
 
   memset (edata_d, 0, edata_sz);
-  bfd_put_32 (abfd, now, edata_d + 4);
+
+  if (pe_data (abfd)->insert_timestamp)
+    H_PUT_32 (abfd, time (0), edata_d + 4);
+
   if (pe_def_file->version_major != -1)
     {
       bfd_put_16 (abfd, pe_def_file->version_major, edata_d + 8);
@@ -1268,7 +1275,7 @@ pe_walk_relocs_of_symbol (struct bfd_link_info *info,
   bfd *b;
   asection *s;
 
-  for (b = info->input_bfds; b; b = b->link_next)
+  for (b = info->input_bfds; b; b = b->link.next)
     {
       asymbol **symbols;
 
@@ -1331,7 +1338,7 @@ generate_reloc (bfd *abfd, struct bfd_link_info *info)
   struct bfd_section *s;
 
   total_relocs = 0;
-  for (b = info->input_bfds; b; b = b->link_next)
+  for (b = info->input_bfds; b; b = b->link.next)
     for (s = b->sections; s; s = s->next)
       total_relocs += s->reloc_count;
 
@@ -1339,7 +1346,7 @@ generate_reloc (bfd *abfd, struct bfd_link_info *info)
 
   total_relocs = 0;
   bi = 0;
-  for (bi = 0, b = info->input_bfds; b; bi++, b = b->link_next)
+  for (bi = 0, b = info->input_bfds; b; bi++, b = b->link.next)
     {
       arelent **relocs;
       int relsize, nrelocs;
@@ -2591,7 +2598,7 @@ pe_create_runtime_relocator_reference (bfd *parent)
 		BSF_NO_FLAGS, 0);
 
   bfd_set_section_size (abfd, extern_rt_rel, PE_IDATA5_SIZE);
-  extern_rt_rel_d = xmalloc (PE_IDATA5_SIZE);
+  extern_rt_rel_d = xcalloc (1, PE_IDATA5_SIZE);
   extern_rt_rel->contents = extern_rt_rel_d;
 
   quick_reloc (abfd, 0, BFD_RELOC_RVA, 1);
@@ -2727,7 +2734,7 @@ pe_dll_generate_implib (def_file *def, const char *impfilename, struct bfd_link_
   ar_head = make_head (outarch);
 
   /* Iterate the input BFDs, looking for exclude-modules-for-implib.  */
-  for (ibfd = info->input_bfds; ibfd; ibfd = ibfd->link_next)
+  for (ibfd = info->input_bfds; ibfd; ibfd = ibfd->link.next)
     {
       /* Iterate the exclude list.  */
       struct exclude_list_struct *ex;
@@ -2790,7 +2797,44 @@ pe_dll_generate_implib (def_file *def, const char *impfilename, struct bfd_link_
       /* Don't add PRIVATE entries to import lib.  */
       if (pe_def_file->exports[i].flag_private)
 	continue;
+
       def->exports[i].internal_name = def->exports[i].name;
+
+      /* PR 19803: If a symbol has been discard due to garbage
+	 collection then do not create any exports for it.  */
+      {
+	struct coff_link_hash_entry *h;
+
+	h = coff_link_hash_lookup (coff_hash_table (info), internal,
+				   FALSE, FALSE, FALSE);
+	if (h != NULL
+	    /* If the symbol is hidden and undefined then it
+	       has been swept up by garbage collection.  */
+	    && h->symbol_class == C_HIDDEN
+	    && h->root.u.def.section == bfd_und_section_ptr)
+	  continue;
+
+	/* If necessary, check with an underscore prefix as well.  */
+	if (pe_details->underscored && internal[0] != '@')
+	  {
+	    char *name;
+
+	    name = xmalloc (strlen (internal) + 2);
+	    sprintf (name, "_%s", internal);
+
+	    h = coff_link_hash_lookup (coff_hash_table (info), name,
+				       FALSE, FALSE, FALSE);
+	    free (name);
+
+	    if (h != NULL
+		/* If the symbol is hidden and undefined then it
+		   has been swept up by garbage collection.  */
+		&& h->symbol_class == C_HIDDEN
+		&& h->root.u.def.section == bfd_und_section_ptr)
+	      continue;
+	  }
+      }
+
       n = make_one (def->exports + i, outarch,
 		    ! (def->exports + i)->flag_data);
       n->archive_next = head;
@@ -2846,7 +2890,7 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
   struct bfd_link_hash_entry *h = NULL;
   struct key_value *kv;
   struct key_value key;
-  char *at, *lname = (char *) alloca (strlen (name) + 3);
+  char *at, *lname = xmalloc (strlen (name) + 3);
 
   strcpy (lname, name);
 
@@ -2862,10 +2906,12 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
     {
       h = bfd_link_hash_lookup (linfo->hash, kv->oname, FALSE, FALSE, FALSE);
       if (h->type == bfd_link_hash_undefined)
-        return h;
+        goto return_h;
     }
+
   if (lname[0] == '?')
-    return NULL;
+    goto return_NULL;
+
   if (at || lname[0] == '@')
     {
       if (lname[0] == '@')
@@ -2881,7 +2927,7 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
 	    {
 	      h = bfd_link_hash_lookup (linfo->hash, kv->oname, FALSE, FALSE, FALSE);
 	      if (h->type == bfd_link_hash_undefined)
-		return h;
+		goto return_h;
 	    }
 	}
       if (at)
@@ -2893,9 +2939,9 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
 	{
 	  h = bfd_link_hash_lookup (linfo->hash, kv->oname, FALSE, FALSE, FALSE);
 	  if (h->type == bfd_link_hash_undefined)
-	    return h;
+	    goto return_h;
 	}
-      return NULL;
+      goto return_NULL;
     }
 
   strcat (lname, "@");
@@ -2907,7 +2953,7 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
     {
       h = bfd_link_hash_lookup (linfo->hash, kv->oname, FALSE, FALSE, FALSE);
       if (h->type == bfd_link_hash_undefined)
-	return h;
+	goto return_h;
     }
 
   if (lname[0] == '_' && pe_details->underscored)
@@ -2926,10 +2972,14 @@ pe_find_cdecl_alias_match (struct bfd_link_info *linfo, char *name)
     {
       h = bfd_link_hash_lookup (linfo->hash, kv->oname, FALSE, FALSE, FALSE);
       if (h->type == bfd_link_hash_undefined)
-        return h;
+        goto return_h;
     }
 
-  return NULL;
+ return_NULL:
+  h = NULL;
+ return_h:
+  free (lname);
+  return h;
 }
 
 static bfd_boolean
@@ -3369,7 +3419,7 @@ pe_dll_build_sections (bfd *abfd, struct bfd_link_info *info)
   pe_output_file_set_long_section_names (abfd);
   process_def_file_and_drectve (abfd, info);
 
-  if (pe_def_file->num_exports == 0 && !info->shared)
+  if (pe_def_file->num_exports == 0 && !bfd_link_pic (info))
     return;
 
   generate_edata (abfd, info);
@@ -3411,7 +3461,7 @@ pe_dll_fill_sections (bfd *abfd, struct bfd_link_info *info)
 
   fill_edata (abfd, info);
 
-  if (info->shared && !info->pie)
+  if (bfd_link_dll (info))
     pe_data (abfd)->dll = 1;
 
   edata_s->contents = edata_d;

@@ -1,5 +1,5 @@
 /* Darwin support for GDB, the GNU debugger.
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2016 Free Software Foundation, Inc.
 
    Contributed by AdaCore.
 
@@ -28,14 +28,11 @@
 #include "gdbcmd.h"
 #include "gdbcore.h"
 #include "mach-o.h"
-#include "gdb_assert.h"
 #include "aout/stab_gnu.h"
 #include "vec.h"
 #include "psympriv.h"
 #include "complaints.h"
 #include "gdb_bfd.h"
-
-#include <string.h>
 
 /* If non-zero displays debugging message.  */
 static unsigned int mach_o_debug_level = 0;
@@ -111,23 +108,10 @@ macho_symtab_add_minsym (struct objfile *objfile, const asymbol *sym)
   if (sym->flags & (BSF_GLOBAL | BSF_LOCAL | BSF_WEAK))
     {
       CORE_ADDR symaddr;
-      CORE_ADDR offset;
       enum minimal_symbol_type ms_type;
-
-      offset = ANOFFSET (objfile->section_offsets,
-			 gdb_bfd_section_index (objfile->obfd, sym->section));
 
       /* Bfd symbols are section relative.  */
       symaddr = sym->value + sym->section->vma;
-
-      /* Select global/local/weak symbols.  Note that bfd puts abs
-         symbols in their own section, so all symbols we are
-         interested in will have a section.  */
-      /* Relocate all non-absolute and non-TLS symbols by the
-         section offset.  */
-      if (sym->section != bfd_abs_section_ptr
-          && !(sym->section->flags & SEC_THREAD_LOCAL))
-        symaddr += offset;
 
       if (sym->section == bfd_abs_section_ptr)
         ms_type = mst_abs;
@@ -178,7 +162,6 @@ macho_symtab_read (struct objfile *objfile,
 		   VEC (oso_el) **oso_vector_ptr)
 {
   long i;
-  const asymbol *dir_so = NULL;
   const asymbol *file_so = NULL;
   asymbol **oso_file = NULL;
   unsigned int nbr_syms = 0;
@@ -224,7 +207,6 @@ macho_symtab_read (struct objfile *objfile,
               else
                 {
                   file_so = sym;
-                  dir_so = NULL;
                   state = S_FIRST_SO;
                 }
             }
@@ -261,7 +243,6 @@ macho_symtab_read (struct objfile *objfile,
               else if (state == S_FIRST_SO)
                 {
                   /* Second SO stab for the file name.  */
-                  dir_so = file_so;
                   file_so = sym;
                   state = S_SECOND_SO;
                 }
@@ -308,7 +289,6 @@ macho_symtab_read (struct objfile *objfile,
                 {
                   complaint (&symfile_complaints, _("Missing nul SO"));
                   file_so = sym;
-                  dir_so = NULL;
                   state = S_FIRST_SO;
                 }
             }
@@ -359,7 +339,7 @@ macho_symtab_read (struct objfile *objfile,
 static int
 get_archive_prefix_len (const char *name)
 {
-  char *lparen;
+  const char *lparen;
   int name_len = strlen (name);
 
   if (name_len == 0 || name[name_len - 1] != ')')
@@ -429,19 +409,19 @@ static CORE_ADDR
 macho_resolve_oso_sym_with_minsym (struct objfile *main_objfile, asymbol *sym)
 {
   /* For common symbol and global symbols, use the min symtab.  */
-  struct minimal_symbol *msym;
+  struct bound_minimal_symbol msym;
   const char *name = sym->name;
 
   if (name[0] == bfd_get_symbol_leading_char (main_objfile->obfd))
     ++name;
   msym = lookup_minimal_symbol (name, NULL, main_objfile);
-  if (msym == NULL)
+  if (msym.minsym == NULL)
     {
       warning (_("can't find symbol '%s' in minsymtab"), name);
       return 0;
     }
   else
-    return SYMBOL_VALUE_ADDRESS (msym);
+    return BMSYMBOL_VALUE_ADDRESS (msym);
 }
 
 /* Add oso file OSO/ABFD as a symbol file.  */
@@ -799,7 +779,7 @@ macho_check_dsym (struct objfile *objfile, char **filenamep)
   size_t dsym_len = strlen (DSYM_SUFFIX);
   const char *base_name = lbasename (objfile_name (objfile));
   size_t base_len = strlen (base_name);
-  char *dsym_filename = alloca (name_len + dsym_len + base_len + 1);
+  char *dsym_filename = (char *) alloca (name_len + dsym_len + base_len + 1);
   bfd *dsym_bfd;
   bfd_mach_o_load_command *main_uuid;
   bfd_mach_o_load_command *dsym_uuid;
@@ -854,7 +834,6 @@ static void
 macho_symfile_read (struct objfile *objfile, int symfile_flags)
 {
   bfd *abfd = objfile->obfd;
-  CORE_ADDR offset;
   long storage_needed;
   bfd *dsym_bfd;
   VEC (oso_el) *oso_vector = NULL;
@@ -907,8 +886,6 @@ macho_symfile_read (struct objfile *objfile, int symfile_flags)
       dsym_bfd = macho_check_dsym (objfile, &dsym_filename);
       if (dsym_bfd != NULL)
 	{
-	  int ix;
-	  oso_el *oso;
           struct bfd_section *asect, *dsect;
 
 	  make_cleanup (xfree, dsym_filename);
@@ -979,7 +956,6 @@ macho_symfile_offsets (struct objfile *objfile,
                        const struct section_addr_info *addrs)
 {
   unsigned int i;
-  unsigned int num_sections;
   struct obj_section *osect;
 
   /* Allocate section_offsets.  */
@@ -1020,7 +996,7 @@ macho_symfile_offsets (struct objfile *objfile,
       const char *bfd_sect_name = osect->the_bfd_section->name;
       int sect_index = osect - objfile->sections;;
 
-      if (strncmp (bfd_sect_name, "LC_SEGMENT.", 11) == 0)
+      if (startswith (bfd_sect_name, "LC_SEGMENT."))
 	bfd_sect_name += 11;
       if (strcmp (bfd_sect_name, "__TEXT") == 0
 	  || strcmp (bfd_sect_name, "__TEXT.__text") == 0)

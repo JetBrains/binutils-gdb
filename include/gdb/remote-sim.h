@@ -1,6 +1,6 @@
 /* This file defines the interface between the simulator and gdb.
 
-   Copyright 1993-2013 Free Software Foundation, Inc.
+   Copyright (C) 1993-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -60,9 +60,10 @@ typedef enum {
 } SIM_RC;
 
 
-/* The bfd struct, as an opaque type.  */
+/* Some structs, as opaque types.  */
 
 struct bfd;
+struct host_callback_struct;
 
 
 /* Main simulator entry points.  */
@@ -103,7 +104,8 @@ struct bfd;
    sim_create_inferior.  FIXME: What should the state of the simulator
    be? */
 
-SIM_DESC sim_open (SIM_OPEN_KIND kind, struct host_callback_struct *callback, struct bfd *abfd, char **argv);
+SIM_DESC sim_open (SIM_OPEN_KIND kind, struct host_callback_struct *callback,
+		   struct bfd *abfd, char * const *argv);
 
 
 /* Destory a simulator instance.
@@ -140,7 +142,7 @@ void sim_close (SIM_DESC sd, int quitting);
    Such manipulation should probably (?) occure in
    sim_create_inferior. */
 
-SIM_RC sim_load (SIM_DESC sd, char *prog, struct bfd *abfd, int from_tty);
+SIM_RC sim_load (SIM_DESC sd, const char *prog, struct bfd *abfd, int from_tty);
 
 
 /* Prepare to run the simulated program.
@@ -160,7 +162,8 @@ SIM_RC sim_load (SIM_DESC sd, char *prog, struct bfd *abfd, int from_tty);
    address space (according to the applicable ABI) and the program
    counter and stack pointer set accordingly. */
 
-SIM_RC sim_create_inferior (SIM_DESC sd, struct bfd *abfd, char **argv, char **env);
+SIM_RC sim_create_inferior (SIM_DESC sd, struct bfd *abfd,
+			    char * const *argv, char * const *env);
 
 
 /* Fetch LENGTH bytes of the simulated program's memory.  Start fetch
@@ -273,7 +276,7 @@ void sim_stop_reason (SIM_DESC sd, enum sim_stop *reason, int *sigrc);
    Simulators should be prepared to deal with any combination of NULL
    or empty CMD. */
 
-void sim_do_command (SIM_DESC sd, char *cmd);
+void sim_do_command (SIM_DESC sd, const char *cmd);
 
 /* Complete a command based on the available sim commands.  Returns an
    array of possible matches.  */

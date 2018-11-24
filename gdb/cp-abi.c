@@ -1,6 +1,6 @@
 /* Generic code for supporting multiple C++ ABI's
 
-   Copyright (C) 2001-2013 Free Software Foundation, Inc.
+   Copyright (C) 2001-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,12 +21,8 @@
 #include "value.h"
 #include "cp-abi.h"
 #include "command.h"
-#include "exceptions.h"
 #include "gdbcmd.h"
 #include "ui-out.h"
-#include "gdb_assert.h"
-#include <string.h>
-
 static struct cp_abi_ops *find_cp_abi (const char *short_name);
 
 static struct cp_abi_ops current_cp_abi = { "", NULL };
@@ -73,26 +69,28 @@ baseclass_offset (struct type *type, int index, const gdb_byte *valaddr,
 		  int embedded_offset, CORE_ADDR address,
 		  const struct value *val)
 {
-  volatile struct gdb_exception ex;
   int res = 0;
 
   gdb_assert (current_cp_abi.baseclass_offset != NULL);
 
-  TRY_CATCH (ex, RETURN_MASK_ERROR)
+  TRY
     {
       res = (*current_cp_abi.baseclass_offset) (type, index, valaddr,
 						embedded_offset,
 						address, val);
     }
+  CATCH (ex, RETURN_MASK_ERROR)
+    {
+      if (ex.error != NOT_AVAILABLE_ERROR)
+	throw_exception (ex);
 
-  if (ex.reason < 0 && ex.error == NOT_AVAILABLE_ERROR)
-    throw_error (NOT_AVAILABLE_ERROR,
-		 _("Cannot determine virtual baseclass offset "
-		   "of incomplete object"));
-  else if (ex.reason < 0)
-    throw_exception (ex);
-  else
-    return res;
+      throw_error (NOT_AVAILABLE_ERROR,
+		   _("Cannot determine virtual baseclass offset "
+		     "of incomplete object"));
+    }
+  END_CATCH
+
+  return res;
 }
 
 struct value *
@@ -111,16 +109,19 @@ value_rtti_type (struct value *v, int *full,
 		 int *top, int *using_enc)
 {
   struct type *ret = NULL;
-  volatile struct gdb_exception e;
 
   if ((current_cp_abi.rtti_type) == NULL)
     return NULL;
-  TRY_CATCH (e, RETURN_MASK_ERROR)
+  TRY
     {
       ret = (*current_cp_abi.rtti_type) (v, full, top, using_enc);
     }
-  if (e.reason < 0)
-    return NULL;
+  CATCH (e, RETURN_MASK_ERROR)
+    {
+      return NULL;
+    }
+  END_CATCH
+
   return ret;
 }
 

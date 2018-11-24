@@ -1,16 +1,16 @@
 /*  armcopro.c -- co-processor interface:  ARM6 Instruction Emulator.
     Copyright (C) 1994, 2000 Advanced RISC Machines Ltd.
- 
+
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 3 of the License, or
     (at your option) any later version.
- 
+
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
- 
+
     You should have received a copy of the GNU General Public License
     along with this program; if not, see <http://www.gnu.org/licenses/>.  */
 
@@ -85,6 +85,8 @@ XScale_cp15_init (ARMul_State * state ATTRIBUTE_UNUSED)
 
   /* Initialise the ARM Control Register.  */
   XScale_cp15_opcode_2_is_0_Regs[1] = 0x00000078;
+
+  return TRUE;
 }
 
 /* Check an access to a register.  */
@@ -112,7 +114,7 @@ check_cp15_access (ARMul_State * state,
       /* CRm must be 0.  Opcode_2 can be anything.  */
       if (CRm != 0)
 	return ARMul_CANT;
-      break;      
+      break;
     case 2:
     case 3:
       /* CRm must be 0.  Opcode_2 must be zero.  */
@@ -371,34 +373,6 @@ read_cp15_reg (unsigned reg, unsigned opcode_2, unsigned CRm)
 }
 
 static unsigned
-XScale_cp15_LDC (ARMul_State * state, unsigned type, ARMword instr, ARMword data)
-{
-  unsigned reg = BITS (12, 15);
-  unsigned result;
-  
-  result = check_cp15_access (state, reg, 0, 0, 0);
-
-  if (result == ARMul_DONE && type == ARMul_DATA)
-    write_cp15_reg (state, reg, 0, 0, data);
-
-  return result;
-}
-
-static unsigned
-XScale_cp15_STC (ARMul_State * state, unsigned type, ARMword instr, ARMword * data)
-{
-  unsigned reg = BITS (12, 15);
-  unsigned result;
-
-  result = check_cp15_access (state, reg, 0, 0, 0);
-
-  if (result == ARMul_DONE && type == ARMul_DATA)
-    * data = read_cp15_reg (reg, 0, 0);
-
-  return result;
-}
-
-static unsigned
 XScale_cp15_MRC (ARMul_State * state,
 		 unsigned      type ATTRIBUTE_UNUSED,
 		 ARMword       instr,
@@ -582,6 +556,8 @@ XScale_cp13_init (ARMul_State * state ATTRIBUTE_UNUSED)
       XScale_cp13_CR0_Regs[i] = 0;
       XScale_cp13_CR1_Regs[i] = 0;
     }
+
+  return TRUE;
 }
 
 /* Check an access to a register.  */
@@ -812,6 +788,8 @@ XScale_cp14_init (ARMul_State * state ATTRIBUTE_UNUSED)
 
   for (i = 16; i--;)
     XScale_cp14_Regs[i] = 0;
+
+  return TRUE;
 }
 
 /* Check an access to a register.  */

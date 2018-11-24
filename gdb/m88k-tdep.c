@@ -1,6 +1,6 @@
 /* Target-dependent code for the Motorola 88000 series.
 
-   Copyright (C) 2004-2013 Free Software Foundation, Inc.
+   Copyright (C) 2004-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -30,9 +30,6 @@
 #include "symtab.h"
 #include "trad-frame.h"
 #include "value.h"
-
-#include "gdb_assert.h"
-#include <string.h>
 
 #include "m88k-tdep.h"
 
@@ -536,11 +533,9 @@ m88k_analyze_prologue (struct gdbarch *gdbarch,
   /* Provide a dummy cache if necessary.  */
   if (cache == NULL)
     {
-      size_t sizeof_saved_regs =
-	(M88K_R31_REGNUM + 1) * sizeof (struct trad_frame_saved_reg);
-
-      cache = alloca (sizeof (struct m88k_frame_cache));
-      cache->saved_regs = alloca (sizeof_saved_regs);
+      cache = XALLOCA (struct m88k_frame_cache);
+      cache->saved_regs =
+        XALLOCAVEC (struct trad_frame_saved_reg, M88K_R31_REGNUM + 1);
 
       /* We only initialize the members we care about.  */
       cache->saved_regs[M88K_R1_REGNUM].addr = -1;
@@ -657,7 +652,7 @@ m88k_frame_cache (struct frame_info *this_frame, void **this_cache)
   CORE_ADDR frame_sp;
 
   if (*this_cache)
-    return *this_cache;
+    return (struct m88k_frame_cache *) *this_cache;
 
   cache = FRAME_OBSTACK_ZALLOC (struct m88k_frame_cache);
   cache->saved_regs = trad_frame_alloc_saved_regs (this_frame);
@@ -787,7 +782,7 @@ m88k_supply_gregset (const struct regset *regset,
 		     struct regcache *regcache,
 		     int regnum, const void *gregs, size_t len)
 {
-  const gdb_byte *regs = gregs;
+  const gdb_byte *regs = (const gdb_byte *) gregs;
   int i;
 
   for (i = 0; i < M88K_NUM_REGS; i++)
@@ -799,23 +794,21 @@ m88k_supply_gregset (const struct regset *regset,
 
 /* Motorola 88000 register set.  */
 
-static struct regset m88k_gregset =
+static const struct regset m88k_gregset =
 {
   NULL,
   m88k_supply_gregset
 };
 
-/* Return the appropriate register set for the core section identified
-   by SECT_NAME and SECT_SIZE.  */
+/* Iterate over supported core file register note sections. */
 
-static const struct regset *
-m88k_regset_from_core_section (struct gdbarch *gdbarch,
-			       const char *sect_name, size_t sect_size)
+static void
+m88k_iterate_over_regset_sections (struct gdbarch *gdbarch,
+				   iterate_over_regset_sections_cb *cb,
+				   void *cb_data,
+				   const struct regcache *regcache)
 {
-  if (strcmp (sect_name, ".reg") == 0 && sect_size >= M88K_NUM_REGS * 4)
-    return &m88k_gregset;
-
-  return NULL;
+  cb (".reg", M88K_NUM_REGS * 4, &m88k_gregset, NULL, cb_data);
 }
 
 
@@ -845,8 +838,8 @@ m88k_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_pc_regnum (gdbarch, M88K_SXIP_REGNUM);
 
   /* Core file support.  */
-  set_gdbarch_regset_from_core_section
-    (gdbarch, m88k_regset_from_core_section);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, m88k_iterate_over_regset_sections);
 
   set_gdbarch_print_insn (gdbarch, print_insn_m88k);
 

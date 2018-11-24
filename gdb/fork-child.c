@@ -1,6 +1,6 @@
 /* Fork a Unix child process, and set up to debug it, for GDB.
 
-   Copyright (C) 1990-2013 Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    Contributed by Cygnus Support.
 
@@ -20,14 +20,12 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include <string.h>
 #include "inferior.h"
 #include "terminal.h"
 #include "target.h"
 #include "gdb_wait.h"
 #include "gdb_vfork.h"
 #include "gdbcore.h"
-#include "terminal.h"
 #include "gdbthread.h"
 #include "command.h" /* for dont_repeat () */
 #include "gdbcmd.h"
@@ -172,7 +170,7 @@ fork_inferior (char *exec_file_arg, char *allargs, char **env,
 	 argument.  */
       int argc = (strlen (allargs) + 1) / 2 + 2;
 
-      argv = (char **) alloca (argc * sizeof (*argv));
+      argv = XALLOCAVEC (char *, argc);
       argv[0] = exec_file;
       breakup_args (allargs, &argv[1]);
     }
@@ -367,7 +365,7 @@ fork_inferior (char *exec_file_arg, char *allargs, char **env,
 
       /* If we get here, it's an error.  */
       save_errno = errno;
-      fprintf_unfiltered (gdb_stderr, "Cannot exec %s", exec_file);
+      fprintf_unfiltered (gdb_stderr, "Cannot exec %s", argv[0]);
       for (i = 1; argv[i] != NULL; i++)
 	fprintf_unfiltered (gdb_stderr, " %s", argv[i]);
       fprintf_unfiltered (gdb_stderr, ".\n");

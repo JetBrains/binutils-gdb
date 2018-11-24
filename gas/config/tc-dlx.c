@@ -1,6 +1,5 @@
 /* tc-dlx.c -- Assemble for the DLX
-   Copyright 2002, 2003, 2004, 2005, 2007, 2009, 2010, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -53,7 +52,7 @@ struct machine_it
   int pcrel;
   int size;
   int reloc_offset;		/* Offset of reloc within insn.  */
-  int reloc;
+  bfd_reloc_code_real_type reloc;
   int HI;
   int LO;
 }
@@ -85,7 +84,7 @@ const char EXP_CHARS[] = "eE";
 const char FLT_CHARS[] = "rRsSfFdDxXpP";
 
 static void
-insert_sreg (char *regname, int regnum)
+insert_sreg (const char *regname, int regnum)
 {
   /* Must be large enough to hold the names of the special registers.  */
   char buf[80];
@@ -154,7 +153,7 @@ match_sft_register (char *name)
 #define MAX_REG_NO  35
 /* Currently we have 35 software registers defined -
    we borrowed from MIPS.   */
-  static char *soft_reg[] =
+  static const char *soft_reg[] =
     {
       "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
       "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
@@ -231,11 +230,10 @@ s_proc (int end_p)
 	  return;
 	}
 
-      name = input_line_pointer;
-      delim1 = get_symbol_end ();
+      delim1 = get_symbol_name (&name);
       name = xstrdup (name);
       *input_line_pointer = delim1;
-      SKIP_WHITESPACE ();
+      SKIP_WHITESPACE_AFTER_NAME ();
 
       if (*input_line_pointer != ',')
 	{
@@ -247,7 +245,7 @@ s_proc (int end_p)
 	  if (leading_char)
 	    {
 	      unsigned len = strlen (name) + 1;
-	      label = xmalloc (len + 1);
+	      label = XNEWVEC (char, len + 1);
 	      label[0] = leading_char;
 	      memcpy (label + 1, name, len);
 	    }
@@ -258,10 +256,9 @@ s_proc (int end_p)
 	{
 	  ++input_line_pointer;
 	  SKIP_WHITESPACE ();
-	  label = input_line_pointer;
-	  delim2 = get_symbol_end ();
+	  delim2 = get_symbol_name (&label);
 	  label = xstrdup (label);
-	  *input_line_pointer = delim2;
+	  (void) restore_line_pointer (delim2);
 	}
 
       current_name = name;
@@ -667,6 +664,9 @@ machine_ip (char *str)
   expressionS *operand = &the_operand;
   unsigned int reg, reg_shift = 0;
 
+  memset (&the_insn, '\0', sizeof (the_insn));
+  the_insn.reloc = NO_RELOC;
+
   /* Fixup the opcode string to all lower cases, and also
      allow numerical digits.  */
   s = str;
@@ -691,19 +691,12 @@ machine_ip (char *str)
       return;
     }
 
-  /* Hash the opcode, insn will have the string from opcode table.
-     also initialized the_insn struct.  */
+  /* Hash the opcode, insn will have the string from opcode table.  */
   if ((insn = (struct machine_opcode *) hash_find (op_hash, str)) == NULL)
     {
       /* Handle the ret and return macro here.  */
       if ((strcmp (str, "ret") == 0) || (strcmp (str, "return") == 0))
-	{
-	  memset (&the_insn, '\0', sizeof (the_insn));
-	  the_insn.reloc = NO_RELOC;
-	  the_insn.pcrel = 0;
-	  the_insn.opcode =
-	    (unsigned long)(JROP | 0x03e00000);    /* 0x03e00000 = r31 << 21 */
-	}
+	the_insn.opcode = JROP | 0x03e00000;    /* 0x03e00000 = r31 << 21 */
       else
 	as_bad (_("Unknown opcode `%s'."), str);
 
@@ -711,9 +704,6 @@ machine_ip (char *str)
     }
 
   opcode = insn->opcode;
-  memset (&the_insn, '\0', sizeof (the_insn));
-  the_insn.reloc = NO_RELOC;
-  the_insn.pcrel = 0;
 
   /* Set the sip reloc HI16 flag.  */
   if (!set_dlx_skip_hi16_flag (1))
@@ -811,7 +801,7 @@ machine_ip (char *str)
 	      continue;
 	    }
 
-	  the_insn.reloc        = (the_insn.HI) ? RELOC_DLX_HI16 
+	  the_insn.reloc        = (the_insn.HI) ? RELOC_DLX_HI16
 	    : (the_insn.LO ? RELOC_DLX_LO16 : RELOC_DLX_16);
 	  the_insn.reloc_offset = 2;
 	  the_insn.size         = 2;
@@ -940,7 +930,7 @@ md_assemble (char *str)
       switch (fixP->fx_r_type)
 	{
 	case RELOC_DLX_REL26:
-	  bitP = malloc (sizeof (bit_fixS));
+	  bitP = XNEW (bit_fixS);
 	  bitP->fx_bit_size = 26;
 	  bitP->fx_bit_offset = 25;
 	  bitP->fx_bit_base = the_insn.opcode & 0xFC000000;
@@ -952,7 +942,7 @@ md_assemble (char *str)
 	  break;
 	case RELOC_DLX_LO16:
 	case RELOC_DLX_REL16:
-	  bitP = malloc (sizeof (bit_fixS));
+	  bitP = XNEW (bit_fixS);
 	  bitP->fx_bit_size = 16;
 	  bitP->fx_bit_offset = 15;
 	  bitP->fx_bit_base = the_insn.opcode & 0xFFFF0000;
@@ -963,7 +953,7 @@ md_assemble (char *str)
 	  fixP->fx_bit_fixP = bitP;
 	  break;
 	case RELOC_DLX_HI16:
-	  bitP = malloc (sizeof (bit_fixS));
+	  bitP = XNEW (bit_fixS);
 	  bitP->fx_bit_size = 16;
 	  bitP->fx_bit_offset = 15;
 	  bitP->fx_bit_base = the_insn.opcode & 0xFFFF0000;
@@ -984,7 +974,7 @@ md_assemble (char *str)
    but I'm not sure.  Dlx will not use it anyway, so I just leave it
    here for now.  */
 
-char *
+const char *
 md_atof (int type, char *litP, int *sizeP)
 {
   return ieee_md_atof (type, litP, sizeP, TRUE);
@@ -1086,7 +1076,7 @@ size_t md_longopts_size = sizeof (md_longopts);
 
 int
 md_parse_option (int c     ATTRIBUTE_UNUSED,
-		 char *arg ATTRIBUTE_UNUSED)
+		 const char *arg ATTRIBUTE_UNUSED)
 {
   return 0;
 }
@@ -1197,7 +1187,7 @@ tc_gen_reloc (asection *section ATTRIBUTE_UNUSED,
 {
   arelent * reloc;
 
-  reloc = xmalloc (sizeof (arelent));
+  reloc = XNEW (arelent);
   reloc->howto = bfd_reloc_type_lookup (stdoutput, fixP->fx_r_type);
 
   if (reloc->howto == NULL)
@@ -1211,7 +1201,7 @@ tc_gen_reloc (asection *section ATTRIBUTE_UNUSED,
 
   gas_assert (!fixP->fx_pcrel == !reloc->howto->pc_relative);
 
-  reloc->sym_ptr_ptr = xmalloc (sizeof (asymbol *));
+  reloc->sym_ptr_ptr = XNEW (asymbol *);
   *reloc->sym_ptr_ptr = symbol_get_bfdsym (fixP->fx_addsy);
   reloc->address = fixP->fx_frag->fr_address + fixP->fx_where;
 

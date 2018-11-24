@@ -1,6 +1,5 @@
 /* Intel i386 Mach-O support for BFD.
-   Copyright 2009
-   Free Software Foundation, Inc.
+   Copyright (C) 2009-2016 Free Software Foundation, Inc.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -33,13 +32,13 @@
 static const bfd_target *
 bfd_mach_o_i386_object_p (bfd *abfd)
 {
-  return bfd_mach_o_header_p (abfd, 0, BFD_MACH_O_CPU_TYPE_I386);
+  return bfd_mach_o_header_p (abfd, 0, 0, BFD_MACH_O_CPU_TYPE_I386);
 }
 
 static const bfd_target *
 bfd_mach_o_i386_core_p (bfd *abfd)
 {
-  return bfd_mach_o_header_p (abfd,
+  return bfd_mach_o_header_p (abfd, 0,
                               BFD_MACH_O_MH_CORE, BFD_MACH_O_CPU_TYPE_I386);
 }
 
@@ -113,20 +112,27 @@ static reloc_howto_type i386_howto_table[]=
 };
 
 static bfd_boolean
-bfd_mach_o_i386_swap_reloc_in (arelent *res, bfd_mach_o_reloc_info *reloc)
+bfd_mach_o_i386_canonicalize_one_reloc (bfd *abfd,
+				        struct mach_o_reloc_info_external *raw,
+					arelent *res, asymbol **syms)
 {
-  if (reloc->r_scattered)
+  bfd_mach_o_reloc_info reloc;
+
+  if (!bfd_mach_o_pre_canonicalize_one_reloc (abfd, raw, &reloc, res, syms))
+    return FALSE;
+
+  if (reloc.r_scattered)
     {
-      switch (reloc->r_type)
+      switch (reloc.r_type)
         {
         case BFD_MACH_O_GENERIC_RELOC_PAIR:
-          if (reloc->r_length == 2)
+          if (reloc.r_length == 2)
             {
 	      res->howto = &i386_howto_table[7];
 	      res->address = res[-1].address;
 	      return TRUE;
             }
-          else if (reloc->r_length == 1)
+          else if (reloc.r_length == 1)
 	    {
 	      res->howto = &i386_howto_table[10];
 	      res->address = res[-1].address;
@@ -134,24 +140,24 @@ bfd_mach_o_i386_swap_reloc_in (arelent *res, bfd_mach_o_reloc_info *reloc)
 	    }
           return FALSE;
         case BFD_MACH_O_GENERIC_RELOC_SECTDIFF:
-          if (reloc->r_length == 2)
+          if (reloc.r_length == 2)
             {
 	      res->howto = &i386_howto_table[5];
 	      return TRUE;
             }
-          else if (reloc->r_length == 1)
+          else if (reloc.r_length == 1)
             {
 	      res->howto = &i386_howto_table[8];
 	      return TRUE;
             }
           return FALSE;
         case BFD_MACH_O_GENERIC_RELOC_LOCAL_SECTDIFF:
-          if (reloc->r_length == 2)
+          if (reloc.r_length == 2)
             {
 	      res->howto = &i386_howto_table[6];
 	      return TRUE;
             }
-          else if (reloc->r_length == 1)
+          else if (reloc.r_length == 1)
             {
 	      res->howto = &i386_howto_table[9];
 	      return TRUE;
@@ -163,10 +169,10 @@ bfd_mach_o_i386_swap_reloc_in (arelent *res, bfd_mach_o_reloc_info *reloc)
     }
   else
     {
-      switch (reloc->r_type)
+      switch (reloc.r_type)
         {
         case BFD_MACH_O_GENERIC_RELOC_VANILLA:
-          switch ((reloc->r_length << 1) | reloc->r_pcrel)
+          switch ((reloc.r_length << 1) | reloc.r_pcrel)
             {
             case 0: /* len = 0, pcrel = 0  */
               res->howto = &i386_howto_table[2];
@@ -211,7 +217,8 @@ bfd_mach_o_i386_swap_reloc_out (arelent *rel, bfd_mach_o_reloc_info *rinfo)
       if ((*rel->sym_ptr_ptr)->flags & BSF_SECTION_SYM)
         {
           rinfo->r_extern = 0;
-          rinfo->r_value = (*rel->sym_ptr_ptr)->section->target_index;
+          rinfo->r_value =
+	    (*rel->sym_ptr_ptr)->section->output_section->target_index;
         }
       else
         {
@@ -384,7 +391,7 @@ const mach_o_segment_name_xlat mach_o_i386_segsec_names_xlat[] =
     { NULL, NULL }
   };
 
-#define bfd_mach_o_swap_reloc_in bfd_mach_o_i386_swap_reloc_in
+#define bfd_mach_o_canonicalize_one_reloc bfd_mach_o_i386_canonicalize_one_reloc
 #define bfd_mach_o_swap_reloc_out bfd_mach_o_i386_swap_reloc_out
 #define bfd_mach_o_print_thread bfd_mach_o_i386_print_thread
 
@@ -394,9 +401,10 @@ const mach_o_segment_name_xlat mach_o_i386_segsec_names_xlat[] =
 #define bfd_mach_o_bfd_reloc_type_lookup bfd_mach_o_i386_bfd_reloc_type_lookup
 #define bfd_mach_o_bfd_reloc_name_lookup bfd_mach_o_i386_bfd_reloc_name_lookup
 
-#define TARGET_NAME 		mach_o_i386_vec
+#define TARGET_NAME 		i386_mach_o_vec
 #define TARGET_STRING 		"mach-o-i386"
 #define TARGET_ARCHITECTURE	bfd_arch_i386
+#define TARGET_PAGESIZE		4096
 #define TARGET_BIG_ENDIAN 	0
 #define TARGET_ARCHIVE 		0
 #define TARGET_PRIORITY		0

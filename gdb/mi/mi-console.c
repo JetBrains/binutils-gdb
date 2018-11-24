@@ -1,6 +1,6 @@
 /* MI Console code.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -26,8 +26,6 @@
 
 #include "defs.h"
 #include "mi-console.h"
-#include <string.h>
-
 static ui_file_fputs_ftype mi_console_file_fputs;
 static ui_file_flush_ftype mi_console_file_flush;
 static ui_file_delete_ftype mi_console_file_delete;
@@ -52,7 +50,7 @@ struct ui_file *
 mi_console_file_new (struct ui_file *raw, const char *prefix, char quote)
 {
   struct ui_file *ui_file = ui_file_new ();
-  struct mi_console_file *mi_console = XMALLOC (struct mi_console_file);
+  struct mi_console_file *mi_console = XNEW (struct mi_console_file);
 
   mi_console->magic = &mi_console_file_magic;
   mi_console->raw = raw;
@@ -69,7 +67,8 @@ mi_console_file_new (struct ui_file *raw, const char *prefix, char quote)
 static void
 mi_console_file_delete (struct ui_file *file)
 {
-  struct mi_console_file *mi_console = ui_file_data (file);
+  struct mi_console_file *mi_console
+    = (struct mi_console_file *) ui_file_data (file);
 
   if (mi_console->magic != &mi_console_file_magic)
     internal_error (__FILE__, __LINE__,
@@ -81,7 +80,8 @@ mi_console_file_delete (struct ui_file *file)
 static void
 mi_console_file_fputs (const char *buf, struct ui_file *file)
 {
-  struct mi_console_file *mi_console = ui_file_data (file);
+  struct mi_console_file *mi_console
+    = (struct mi_console_file *) ui_file_data (file);
 
   if (mi_console->magic != &mi_console_file_magic)
     internal_error (__FILE__, __LINE__,
@@ -99,7 +99,7 @@ mi_console_file_fputs (const char *buf, struct ui_file *file)
 static void
 mi_console_raw_packet (void *data, const char *buf, long length_buf)
 {
-  struct mi_console_file *mi_console = data;
+  struct mi_console_file *mi_console = (struct mi_console_file *) data;
 
   if (mi_console->magic != &mi_console_file_magic)
     internal_error (__FILE__, __LINE__,
@@ -110,15 +110,16 @@ mi_console_raw_packet (void *data, const char *buf, long length_buf)
       fputs_unfiltered (mi_console->prefix, mi_console->raw);
       if (mi_console->quote)
 	{
-	  fputs_unfiltered ("\"", mi_console->raw);
+	  fputc_unfiltered (mi_console->quote, mi_console->raw);
 	  fputstrn_unfiltered (buf, length_buf,
 			       mi_console->quote, mi_console->raw);
-	  fputs_unfiltered ("\"\n", mi_console->raw);
+	  fputc_unfiltered (mi_console->quote, mi_console->raw);
+	  fputc_unfiltered ('\n', mi_console->raw);
 	}
       else
 	{
 	  fputstrn_unfiltered (buf, length_buf, 0, mi_console->raw);
-	  fputs_unfiltered ("\n", mi_console->raw);
+	  fputc_unfiltered ('\n', mi_console->raw);
 	}
       gdb_flush (mi_console->raw);
     }
@@ -127,7 +128,8 @@ mi_console_raw_packet (void *data, const char *buf, long length_buf)
 static void
 mi_console_file_flush (struct ui_file *file)
 {
-  struct mi_console_file *mi_console = ui_file_data (file);
+  struct mi_console_file *mi_console
+    = (struct mi_console_file *) ui_file_data (file);
 
   if (mi_console->magic != &mi_console_file_magic)
     internal_error (__FILE__, __LINE__,
@@ -145,7 +147,8 @@ mi_console_file_flush (struct ui_file *file)
 void
 mi_console_set_raw (struct ui_file *file, struct ui_file *raw)
 {
-  struct mi_console_file *mi_console = ui_file_data (file);
+  struct mi_console_file *mi_console
+    = (struct mi_console_file *) ui_file_data (file);
 
   if (mi_console->magic != &mi_console_file_magic)
     internal_error (__FILE__, __LINE__,

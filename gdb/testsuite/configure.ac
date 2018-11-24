@@ -1,7 +1,7 @@
 #                                                       -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-# Copyright 2002-2013 Free Software Foundation, Inc.
+# Copyright 2002-2016 Free Software Foundation, Inc.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -77,8 +77,6 @@ else
       fi ;;
     darwin* | rhapsody*)
       RPATH_ENVVAR=DYLD_LIBRARY_PATH ;;
-    hpux*)
-      RPATH_ENVVAR=SHLIB_PATH ;;
   esac
 fi
 AC_SUBST(RPATH_ENVVAR)
@@ -87,15 +85,23 @@ AC_CHECK_HEADERS(pthread.h)
 
 AC_EXEEXT
 
-AC_OUTPUT([Makefile \
-  gdb.ada/Makefile \
-  gdb.arch/Makefile gdb.asm/Makefile gdb.base/Makefile gdb.btrace/Makefile \
-  gdb.cell/Makefile gdb.cp/Makefile gdb.disasm/Makefile gdb.dwarf2/Makefile \
-  gdb.fortran/Makefile gdb.go/Makefile gdb.server/Makefile gdb.java/Makefile \
-  gdb.hp/Makefile gdb.hp/gdb.objdbg/Makefile gdb.hp/gdb.base-hp/Makefile \
-  gdb.hp/gdb.aCC/Makefile gdb.hp/gdb.compat/Makefile \
-  gdb.hp/gdb.defects/Makefile gdb.linespec/Makefile \
-  gdb.mi/Makefile gdb.modula2/Makefile gdb.multi/Makefile \
-  gdb.objc/Makefile gdb.opencl/Makefile gdb.opt/Makefile gdb.pascal/Makefile \
-  gdb.perf/Makefile gdb.python/Makefile gdb.reverse/Makefile gdb.stabs/Makefile \
-  gdb.threads/Makefile gdb.trace/Makefile gdb.xml/Makefile])
+if test "${build}" = "${host}" -a "${host}" = "${target}"; then
+   case "${host}" in
+     *gnu*)
+       EXTRA_RULES=read1
+       ;;
+   esac
+fi
+AC_SUBST(EXTRA_RULES)
+
+# Transform the name of some programs and generate the lib/pdtrace
+# test tool.
+AC_ARG_PROGRAM
+GDB_AC_TRANSFORM(strip, STRIP_TRANSFORM_NAME)
+GDB_AC_TRANSFORM(readelf, READELF_TRANSFORM_NAME)
+GDB_AC_TRANSFORM(as, GAS_TRANSFORM_NAME)
+GDB_AC_TRANSFORM(nm, NM_TRANSFORM_NAME)
+AC_CONFIG_FILES([lib/pdtrace], [chmod +x lib/pdtrace])
+AC_CONFIG_FILES([Makefile])
+
+AC_OUTPUT

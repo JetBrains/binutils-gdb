@@ -1,6 +1,5 @@
 /* output-file.c -  Deal with the output file
-   Copyright 1987, 1990, 1991, 1992, 1993, 1994, 1996, 1998, 1999, 2001,
-   2003, 2004, 2005, 2006, 2007 Free Software Foundation, Inc.
+   Copyright (C) 1987-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -29,7 +28,7 @@
 bfd *stdoutput;
 
 void
-output_file_create (char *name)
+output_file_create (const char *name)
 {
   if (name[0] == '-' && name[1] == '\0')
     as_fatal (_("can't open a bfd on stdout %s"), name);
@@ -51,7 +50,7 @@ output_file_create (char *name)
 }
 
 void
-output_file_close (char *filename)
+output_file_close (const char *filename)
 {
   bfd_boolean res;
 

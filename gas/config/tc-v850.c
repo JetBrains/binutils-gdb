@@ -1,5 +1,5 @@
 /* tc-v850.c -- Assembler code for the NEC V850
-   Copyright 1996-2013 Free Software Foundation, Inc.
+   Copyright (C) 1996-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -27,19 +27,19 @@
 /* Sign-extend a 16-bit number.  */
 #define SEXT16(x)	((((x) & 0xffff) ^ (~0x7fff)) + 0x8000)
 
-/* Temporarily holds the reloc in a cons expression.  */
-static bfd_reloc_code_real_type hold_cons_reloc = BFD_RELOC_UNUSED;
-
 /* Set to TRUE if we want to be pedantic about signed overflows.  */
 static bfd_boolean warn_signed_overflows   = FALSE;
 static bfd_boolean warn_unsigned_overflows = FALSE;
+
+/* Non-zero if floating point insns are not being used.  */
+static signed int soft_float = -1;
 
 /* Indicates the target BFD machine number.  */
 static int machine = -1;
 
 
 /* Indiciates the target BFD architecture.  */
-int          v850_target_arch = bfd_arch_v850_rh850;
+enum bfd_architecture v850_target_arch = bfd_arch_v850_rh850;
 const char * v850_target_format = "elf32-v850-rh850";
 static flagword v850_e_flags = 0;
 
@@ -270,8 +270,7 @@ v850_comm (int area)
   symbolS *symbolP;
   int have_align;
 
-  name = input_line_pointer;
-  c = get_symbol_end ();
+  c = get_symbol_name (&name);
 
   /* Just after name is now '\0'.  */
   p = input_line_pointer;
@@ -1005,15 +1004,14 @@ register_name (expressionS *expressionP)
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
 
   reg_number = reg_name_search (pre_defined_registers, REG_NAME_CNT,
 				name, FALSE);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   expressionP->X_add_symbol = NULL;
   expressionP->X_op_symbol  = NULL;
@@ -1057,14 +1055,13 @@ system_register_name (expressionS *expressionP,
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
   reg_number = reg_name_search (system_registers, SYSREG_NAME_CNT, name,
 				accept_numbers);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   if (reg_number < 0
       && accept_numbers)
@@ -1118,13 +1115,12 @@ cc_name (expressionS *expressionP,
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
   reg_number = reg_name_search (cc_names, CC_NAME_CNT, name, accept_numbers);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   if (reg_number < 0
       && accept_numbers)
@@ -1169,13 +1165,12 @@ float_cc_name (expressionS *expressionP,
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
   reg_number = reg_name_search (float_cc_names, FLOAT_CC_NAME_CNT, name, accept_numbers);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   if (reg_number < 0
       && accept_numbers)
@@ -1220,13 +1215,12 @@ cacheop_name (expressionS * expressionP,
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
   reg_number = reg_name_search (cacheop_names, CACHEOP_NAME_CNT, name, accept_numbers);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   if (reg_number < 0
       && accept_numbers)
@@ -1269,13 +1263,12 @@ prefop_name (expressionS * expressionP,
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
   reg_number = reg_name_search (prefop_names, PREFOP_NAME_CNT, name, accept_numbers);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   if (reg_number < 0
       && accept_numbers)
@@ -1317,15 +1310,14 @@ vector_register_name (expressionS *expressionP)
   char c;
 
   /* Find the spelling of the operand.  */
-  start = name = input_line_pointer;
-
-  c = get_symbol_end ();
+  start = input_line_pointer;
+  c = get_symbol_name (&name);
 
   reg_number = reg_name_search (vector_registers, VREG_NAME_CNT,
 				name, FALSE);
 
   /* Put back the delimiting char.  */
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   expressionP->X_add_symbol = NULL;
   expressionP->X_op_symbol  = NULL;
@@ -1380,7 +1372,7 @@ skip_white_space (void)
    and so on upwards.  System registers are considered to be very
    high numbers.  */
 
-static char *
+static const char *
 parse_register_list (unsigned long *insn,
 		     const struct v850_operand *operand)
 {
@@ -1540,6 +1532,8 @@ struct option md_longopts[] =
 
 size_t md_longopts_size = sizeof (md_longopts);
 
+static bfd_boolean v850_data_8 = FALSE;
+
 void
 md_show_usage (FILE *stream)
 {
@@ -1563,10 +1557,12 @@ md_show_usage (FILE *stream)
   fprintf (stream, _("  -mrh850-abi               Mark the binary as using the RH850 ABI (default)\n"));
   fprintf (stream, _("  -m8byte-align             Mark the binary as using 64-bit alignment\n"));
   fprintf (stream, _("  -m4byte-align             Mark the binary as using 32-bit alignment (default)\n"));
+  fprintf (stream, _("  -msoft-float              Mark the binary as not using FP insns (default for pre e2v3)\n"));
+  fprintf (stream, _("  -mhard-float              Mark the binary as using FP insns (default for e2v3 and up)\n"));
 }
 
 int
-md_parse_option (int c, char *arg)
+md_parse_option (int c, const char *arg)
 {
   if (c != 'm')
     {
@@ -1649,9 +1645,19 @@ md_parse_option (int c, char *arg)
       v850_target_format = "elf32-v850-rh850";
     }
   else if (strcmp (arg, "8byte-align") == 0)
-    v850_e_flags |= EF_RH850_DATA_ALIGN8;
+    {
+      v850_data_8 = TRUE;
+      v850_e_flags |= EF_RH850_DATA_ALIGN8;
+    }
   else if (strcmp (arg, "4byte-align") == 0)
-    v850_e_flags &= ~ EF_RH850_DATA_ALIGN8;
+    {
+      v850_data_8 = FALSE;
+      v850_e_flags &= ~ EF_RH850_DATA_ALIGN8;
+    }
+  else if (strcmp (arg, "soft-float") == 0)
+    soft_float = 1;
+  else if (strcmp (arg, "hard-float") == 0)
+    soft_float = 0;
   else
     return 0;
 
@@ -1664,7 +1670,7 @@ md_undefined_symbol (char *name ATTRIBUTE_UNUSED)
   return 0;
 }
 
-char *
+const char *
 md_atof (int type, char *litp, int *sizep)
 {
   return ieee_md_atof (type, litp, sizep, FALSE);
@@ -1753,7 +1759,7 @@ md_convert_frag (bfd *abfd ATTRIBUTE_UNUSED,
   /* Out of range conditional branch.  Emit a branch around a 22bit jump.  */
   else if (fragP->fr_subtype == SUBYPTE_COND_9_22 + 1
 	   || fragP->fr_subtype == SUBYPTE_COND_9_22_32 + 1
-	   || fragP->fr_subtype == SUBYPTE_COND_9_17_22 + 2 
+	   || fragP->fr_subtype == SUBYPTE_COND_9_17_22 + 2
 	   || fragP->fr_subtype == SUBYPTE_COND_9_17_22_32 + 2)
     {
       unsigned char *buffer =
@@ -1873,13 +1879,13 @@ valueT
 md_section_align (asection *seg, valueT addr)
 {
   int align = bfd_get_section_alignment (stdoutput, seg);
-  return ((addr + (1 << align) - 1) & (-1 << align));
+  return ((addr + (1 << align) - 1) & -(1 << align));
 }
 
 void
 md_begin (void)
 {
-  char *prev_name = "";
+  const char *prev_name = "";
   const struct v850_opcode *op;
 
   if (strncmp (TARGET_CPU, "v850e3v5", 8) == 0)
@@ -1942,6 +1948,9 @@ md_begin (void)
     /* xgettext:c-format  */
     as_bad (_("Unable to determine default target processor from string: %s"),
 	    TARGET_CPU);
+
+  if (soft_float == -1)
+    soft_float = machine < bfd_mach_v850e2v3;
 
   v850_hash = hash_new ();
 
@@ -2032,6 +2041,12 @@ handle_lo16 (const struct v850_operand *operand, const char **errmsg)
 static bfd_reloc_code_real_type
 handle_ctoff (const struct v850_operand *operand, const char **errmsg)
 {
+  if (v850_target_arch == bfd_arch_v850_rh850)
+    {
+      *errmsg = _("ctoff() is not supported by the rh850 ABI. Use -mgcc-abi instead");
+      return BFD_RELOC_64;  /* Used to indicate an error condition.  */
+    }
+
   if (operand == NULL)
     return BFD_RELOC_V850_CALLT_16_16_OFFSET;
 
@@ -2156,7 +2171,7 @@ v850_reloc_prefix (const struct v850_operand *operand, const char **errmsg)
   if (paren_skipped)
     --input_line_pointer;
 
-  return BFD_RELOC_UNUSED;
+  return BFD_RELOC_NONE;
 }
 
 /* Insert an operand value into an instruction.  */
@@ -2407,7 +2422,7 @@ md_assemble (char *str)
 	  input_line_pointer = str;
 
 	  /* lo(), hi(), hi0(), etc...  */
-	  if ((reloc = v850_reloc_prefix (operand, &errmsg)) != BFD_RELOC_UNUSED)
+	  if ((reloc = v850_reloc_prefix (operand, &errmsg)) != BFD_RELOC_NONE)
 	    {
 	      /* This is a fake reloc, used to indicate an error condition.  */
 	      if (reloc == BFD_RELOC_64)
@@ -2769,18 +2784,19 @@ md_assemble (char *str)
 	      else if ((operand->flags & V850_OPERAND_EP) != 0)
 		{
 		  char *start = input_line_pointer;
-		  char c = get_symbol_end ();
+		  char *name;
+		  char c = get_symbol_name (&name);
 
-		  if (strcmp (start, "ep") != 0 && strcmp (start, "r30") != 0)
+		  if (strcmp (name, "ep") != 0 && strcmp (name, "r30") != 0)
 		    {
 		      /* Put things back the way we found them.  */
-		      *input_line_pointer = c;
+		      (void) restore_line_pointer (c);
 		      input_line_pointer = start;
 		      errmsg = _("expected EP register");
 		      goto error;
 		    }
 
-		  *input_line_pointer = c;
+		  (void) restore_line_pointer (c);
 		  str = input_line_pointer;
 		  input_line_pointer = hold;
 
@@ -2827,6 +2843,7 @@ md_assemble (char *str)
 	      else if ((register_name (&ex)
 			&& (operand->flags & V850_OPERAND_REG) == 0))
 		{
+		  char *name;
 		  char c;
 		  int exists = 0;
 
@@ -2839,12 +2856,12 @@ md_assemble (char *str)
 
 		  input_line_pointer = str;
 
-		  c = get_symbol_end ();
+		  c = get_symbol_name (&name);
 
-		  if (symbol_find (str) != NULL)
+		  if (symbol_find (name) != NULL)
 		    exists = 1;
 
-		  *input_line_pointer = c;
+		  (void) restore_line_pointer (c);
 		  input_line_pointer = str;
 
 		  expression (&ex);
@@ -2977,7 +2994,7 @@ md_assemble (char *str)
 
 		  fixups[fc].exp     = ex;
 		  fixups[fc].opindex = *opindex_ptr;
-		  fixups[fc].reloc   = BFD_RELOC_UNUSED;
+		  fixups[fc].reloc   = BFD_RELOC_NONE;
 		  ++fc;
 		  break;
 		}
@@ -3239,7 +3256,7 @@ md_assemble (char *str)
 
       reloc = fixups[i].reloc;
 
-      if (reloc != BFD_RELOC_UNUSED)
+      if (reloc != BFD_RELOC_NONE)
 	{
 	  reloc_howto_type *reloc_howto =
 	    bfd_reloc_type_lookup (stdoutput, reloc);
@@ -3320,8 +3337,8 @@ tc_gen_reloc (asection *seg ATTRIBUTE_UNUSED, fixS *fixp)
 {
   arelent *reloc;
 
-  reloc		      = xmalloc (sizeof (arelent));
-  reloc->sym_ptr_ptr  = xmalloc (sizeof (asymbol *));
+  reloc		      = XNEW (arelent);
+  reloc->sym_ptr_ptr  = XNEW (asymbol *);
   *reloc->sym_ptr_ptr = symbol_get_bfdsym (fixp->fx_addsy);
   reloc->address      = fixp->fx_frag->fr_address + fixp->fx_where;
 
@@ -3634,15 +3651,18 @@ md_apply_fix (fixS *fixP, valueT *valueP, segT seg ATTRIBUTE_UNUSED)
 /* Parse a cons expression.  We have to handle hi(), lo(), etc
    on the v850.  */
 
-void
+bfd_reloc_code_real_type
 parse_cons_expression_v850 (expressionS *exp)
 {
   const char *errmsg;
+  bfd_reloc_code_real_type r;
+
   /* See if there's a reloc prefix like hi() we have to handle.  */
-  hold_cons_reloc = v850_reloc_prefix (NULL, &errmsg);
+  r = v850_reloc_prefix (NULL, &errmsg);
 
   /* Do normal expression parsing.  */
   expression (exp);
+  return r;
 }
 
 /* Create a fixup for a cons expression.  If parse_cons_expression_v850
@@ -3653,24 +3673,23 @@ void
 cons_fix_new_v850 (fragS *frag,
 		   int where,
 		   int size,
-		   expressionS *exp)
+		   expressionS *exp,
+		   bfd_reloc_code_real_type r)
 {
-  if (hold_cons_reloc == BFD_RELOC_UNUSED)
+  if (r == BFD_RELOC_NONE)
     {
       if (size == 4)
-	hold_cons_reloc = BFD_RELOC_32;
+	r = BFD_RELOC_32;
       if (size == 2)
-	hold_cons_reloc = BFD_RELOC_16;
+	r = BFD_RELOC_16;
       if (size == 1)
-	hold_cons_reloc = BFD_RELOC_8;
+	r = BFD_RELOC_8;
     }
 
   if (exp != NULL)
-    fix_new_exp (frag, where, size, exp, 0, hold_cons_reloc);
+    fix_new_exp (frag, where, size, exp, 0, r);
   else
-    fix_new (frag, where, size, NULL, 0, 0, hold_cons_reloc);
-
-  hold_cons_reloc = BFD_RELOC_UNUSED;
+    fix_new (frag, where, size, NULL, 0, 0, r);
 }
 
 bfd_boolean
@@ -3710,4 +3729,74 @@ v850_force_relocation (struct fix *fixP)
     return 1;
 
   return generic_force_reloc (fixP);
+}
+
+/* Create a v850 note section.  */
+void
+v850_md_end (void)
+{
+  segT note_sec;
+  segT orig_seg = now_seg;
+  subsegT orig_subseg = now_subseg;
+  enum v850_notes id;
+
+  note_sec = subseg_new (V850_NOTE_SECNAME, 0);
+  bfd_set_section_flags (stdoutput, note_sec, SEC_HAS_CONTENTS | SEC_READONLY | SEC_MERGE);
+  bfd_set_section_alignment (stdoutput, note_sec, 2);
+
+  /* Provide default values for all of the notes.  */
+  for (id = V850_NOTE_ALIGNMENT; id <= NUM_V850_NOTES; id++)
+    {
+      int val = 0;
+      char * p;
+
+      /* Follow the standard note section layout:
+	 First write the length of the name string.  */
+      p = frag_more (4);
+      md_number_to_chars (p, 4, 4);
+
+      /* Next comes the length of the "descriptor", i.e., the actual data.  */
+      p = frag_more (4);
+      md_number_to_chars (p, 4, 4);
+
+      /* Write the note type.  */
+      p = frag_more (4);
+      md_number_to_chars (p, (valueT) id, 4);
+
+      /* Write the name field.  */
+      p = frag_more (4);
+      memcpy (p, V850_NOTE_NAME, 4);
+
+      /* Finally, write the descriptor.  */
+      p = frag_more (4);
+      switch (id)
+	{
+	case V850_NOTE_ALIGNMENT:
+	  val = v850_data_8 ? EF_RH850_DATA_ALIGN8 : EF_RH850_DATA_ALIGN4;
+	  break;
+
+	case V850_NOTE_DATA_SIZE:
+	  /* GCC does not currently support an option
+	     for 32-bit doubles with the V850 backend.  */
+	  val = EF_RH850_DOUBLE64;
+	  break;
+
+	case V850_NOTE_FPU_INFO:
+	  if (! soft_float)
+	    switch (machine)
+	      {
+	      case bfd_mach_v850e3v5: val = EF_RH850_FPU30; break;
+	      case bfd_mach_v850e2v3: val = EF_RH850_FPU20; break;
+	      default: break;
+	      }
+	  break;
+
+	default:
+	  break;
+	}
+      md_number_to_chars (p, val, 4);
+    }
+
+  /* Paranoia - we probably do not need this.  */
+  subseg_set (orig_seg, orig_subseg);
 }

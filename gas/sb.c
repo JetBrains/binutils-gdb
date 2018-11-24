@@ -1,6 +1,5 @@
 /* sb.c - string buffer manipulation routines
-   Copyright 1994, 1995, 2000, 2003, 2005, 2006, 2007, 2009, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1994-2016 Free Software Foundation, Inc.
 
    Written by Steve and Judy Chamberlain of Cygnus Support,
       sac@cygnus.com
@@ -60,7 +59,7 @@ static void sb_check (sb *, size_t);
 void
 sb_build (sb *ptr, size_t size)
 {
-  ptr->ptr = xmalloc (size + 1);
+  ptr->ptr = XNEWVEC (char, size + 1);
   ptr->max = size;
   ptr->len = 0;
 }
@@ -148,7 +147,7 @@ sb_check (sb *ptr, size_t len)
 #endif
       max -= MALLOC_OVERHEAD + 1;
       ptr->max = max;
-      ptr->ptr = xrealloc (ptr->ptr, max + 1);
+      ptr->ptr = XRESIZEVEC (char, ptr->ptr, max + 1);
     }
 }
 

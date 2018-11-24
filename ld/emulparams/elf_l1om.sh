@@ -1,7 +1,11 @@
 . ${srcdir}/emulparams/plt_unwind.sh
+. ${srcdir}/emulparams/extern_protected_data.sh
+. ${srcdir}/emulparams/dynamic_undefined_weak.sh
+. ${srcdir}/emulparams/call_nop.sh
 SCRIPT_NAME=elf
 ELFSIZE=64
 OUTPUT_FORMAT="elf64-l1om"
+CHECK_RELOCS_AFTER_OPEN_INPUT=yes
 NO_REL_RELOCS=yes
 TEXT_START_ADDR=0x400000
 MAXPAGESIZE="CONSTANT (MAXPAGESIZE)"
@@ -16,6 +20,7 @@ NO_SMALL_DATA=yes
 LARGE_SECTIONS=yes
 LARGE_BSS_AFTER_BSS=
 SEPARATE_GOTPLT="SIZEOF (.got.plt) >= 24 ? 24 : 0"
+IREL_IN_PLT=
 
 if [ "x${host}" = "x${target}" ]; then
   case " $EMULATION_LIBPATH " in

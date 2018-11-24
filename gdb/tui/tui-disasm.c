@@ -1,6 +1,6 @@
 /* Disassembly display.
 
-   Copyright (C) 1998-2013 Free Software Foundation, Inc.
+   Copyright (C) 1998-2016 Free Software Foundation, Inc.
 
    Contributed by Hewlett-Packard Company.
 
@@ -27,7 +27,6 @@
 #include "value.h"
 #include "source.h"
 #include "disasm.h"
-#include <string.h>
 #include "tui/tui.h"
 #include "tui/tui-data.h"
 #include "tui/tui-win.h"
@@ -37,6 +36,7 @@
 #include "tui/tui-file.h"
 #include "tui/tui-disasm.h"
 #include "progspace.h"
+#include "objfiles.h"
 
 #include "gdb_curses.h"
 
@@ -99,8 +99,7 @@ tui_find_disassembly_address (struct gdbarch *gdbarch, CORE_ADDR pc, int from)
   if (max_lines <= 1)
      return pc;
 
-  asm_lines = (struct tui_asm_line*) alloca (sizeof (struct tui_asm_line)
-                                         * max_lines);
+  asm_lines = XALLOCAVEC (struct tui_asm_line, max_lines);
   memset (asm_lines, 0, sizeof (struct tui_asm_line) * max_lines);
 
   new_low = pc;
@@ -113,7 +112,7 @@ tui_find_disassembly_address (struct gdbarch *gdbarch, CORE_ADDR pc, int from)
     {
       CORE_ADDR last_addr;
       int pos;
-      struct minimal_symbol *msymbol;
+      struct bound_minimal_symbol msymbol;
               
       /* Find backward an address which is a symbol and for which
          disassembling from that address will fill completely the
@@ -121,16 +120,16 @@ tui_find_disassembly_address (struct gdbarch *gdbarch, CORE_ADDR pc, int from)
       pos = max_lines - 1;
       do {
          new_low -= 1 * max_lines;
-         msymbol = lookup_minimal_symbol_by_pc_section (new_low, 0).minsym;
+         msymbol = lookup_minimal_symbol_by_pc_section (new_low, 0);
 
-         if (msymbol)
-            new_low = SYMBOL_VALUE_ADDRESS (msymbol);
+         if (msymbol.minsym)
+            new_low = BMSYMBOL_VALUE_ADDRESS (msymbol);
          else
             new_low += 1 * max_lines;
 
          tui_disassemble (gdbarch, asm_lines, new_low, max_lines);
          last_addr = asm_lines[pos].addr;
-      } while (last_addr > pc && msymbol);
+      } while (last_addr > pc && msymbol.minsym);
 
       /* Scan forward disassembling one instruction at a time until
          the last visible instruction of the window matches the pc.
@@ -192,15 +191,13 @@ tui_set_disassem_content (struct gdbarch *gdbarch, CORE_ADDR pc)
   TUI_DISASM_WIN->detail.source_info.gdbarch = gdbarch;
   TUI_DISASM_WIN->detail.source_info.start_line_or_addr.loa = LOA_ADDRESS;
   TUI_DISASM_WIN->detail.source_info.start_line_or_addr.u.addr = pc;
-  cur_pc = (CORE_ADDR) (((struct tui_win_element *)
-			 locator->content[0])->which_element.locator.addr);
+  cur_pc = locator->content[0]->which_element.locator.addr;
 
   max_lines = TUI_DISASM_WIN->generic.height - 2;	/* Account for
 							   hilite.  */
 
   /* Get temporary table that will hold all strings (addr & insn).  */
-  asm_lines = (struct tui_asm_line*) alloca (sizeof (struct tui_asm_line)
-                                         * max_lines);
+  asm_lines = XALLOCAVEC (struct tui_asm_line, max_lines);
   memset (asm_lines, 0, sizeof (struct tui_asm_line) * max_lines);
 
   tui_disassemble (gdbarch, asm_lines, pc, max_lines);
@@ -232,7 +229,7 @@ tui_set_disassem_content (struct gdbarch *gdbarch, CORE_ADDR pc)
       struct tui_source_element *src;
       int cur_len;
 
-      element = (struct tui_win_element *) TUI_DISASM_WIN->generic.content[i];
+      element = TUI_DISASM_WIN->generic.content[i];
       src = &element->which_element.source;
       strcpy (line, asm_lines[i].addr_string);
       cur_len = strlen (line);
@@ -275,7 +272,7 @@ tui_set_disassem_content (struct gdbarch *gdbarch, CORE_ADDR pc)
 void
 tui_show_disassem (struct gdbarch *gdbarch, CORE_ADDR start_addr)
 {
-  struct symtab *s = find_pc_symtab (start_addr);
+  struct symtab *s = find_pc_line_symtab (start_addr);
   struct tui_win_info *win_with_focus = tui_win_with_focus ();
   struct tui_line_or_address val;
 
@@ -334,22 +331,21 @@ tui_get_begin_asm_address (struct gdbarch **gdbarch_p, CORE_ADDR *addr_p)
   CORE_ADDR addr;
 
   locator = tui_locator_win_info_ptr ();
-  element = &((struct tui_win_element *)
-	      locator->content[0])->which_element.locator;
+  element = &locator->content[0]->which_element.locator;
 
   if (element->addr == 0)
     {
-      struct minimal_symbol *main_symbol;
+      struct bound_minimal_symbol main_symbol;
 
       /* Find address of the start of program.
          Note: this should be language specific.  */
       main_symbol = lookup_minimal_symbol ("main", NULL, NULL);
-      if (main_symbol == 0)
+      if (main_symbol.minsym == 0)
         main_symbol = lookup_minimal_symbol ("MAIN", NULL, NULL);
-      if (main_symbol == 0)
+      if (main_symbol.minsym == 0)
         main_symbol = lookup_minimal_symbol ("_start", NULL, NULL);
-      if (main_symbol)
-        addr = SYMBOL_VALUE_ADDRESS (main_symbol);
+      if (main_symbol.minsym)
+        addr = BMSYMBOL_VALUE_ADDRESS (main_symbol);
       else
         addr = 0;
     }

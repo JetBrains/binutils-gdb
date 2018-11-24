@@ -1,5 +1,5 @@
 /* SPU target-dependent code for GDB, the GNU debugger.
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2016 Free Software Foundation, Inc.
 
    Contributed by Ulrich Weigand <uweigand@de.ibm.com>.
    Based on a port by Sid Manning <sid@us.ibm.com>.
@@ -24,8 +24,6 @@
 #include "gdbtypes.h"
 #include "gdbcmd.h"
 #include "gdbcore.h"
-#include <string.h>
-#include "gdb_assert.h"
 #include "frame.h"
 #include "frame-unwind.h"
 #include "frame-base.h"
@@ -44,9 +42,10 @@
 #include "observer.h"
 #include "infcall.h"
 #include "dwarf2.h"
-#include "exceptions.h"
+#include "dwarf2-frame.h"
+#include "ax.h"
 #include "spu-tdep.h"
-
+#include "location.h"
 
 /* The list of available "set spu " and "show spu " commands.  */
 static struct cmd_list_element *setspucmdlist = NULL;
@@ -311,13 +310,59 @@ spu_pseudo_register_write (struct gdbarch *gdbarch, struct regcache *regcache,
     }
 }
 
+static int
+spu_ax_pseudo_register_collect (struct gdbarch *gdbarch,
+				struct agent_expr *ax, int regnum)
+{
+  switch (regnum)
+    {
+    case SPU_SP_REGNUM:
+      ax_reg_mask (ax, SPU_RAW_SP_REGNUM);
+      return 0;
+
+    case SPU_FPSCR_REGNUM:
+    case SPU_SRR0_REGNUM:
+    case SPU_LSLR_REGNUM:
+    case SPU_DECR_REGNUM:
+    case SPU_DECR_STATUS_REGNUM:
+      return -1;
+
+    default:
+      internal_error (__FILE__, __LINE__, _("invalid regnum"));
+    }
+}
+
+static int
+spu_ax_pseudo_register_push_stack (struct gdbarch *gdbarch,
+				   struct agent_expr *ax, int regnum)
+{
+  switch (regnum)
+    {
+    case SPU_SP_REGNUM:
+      ax_reg (ax, SPU_RAW_SP_REGNUM);
+      return 0;
+
+    case SPU_FPSCR_REGNUM:
+    case SPU_SRR0_REGNUM:
+    case SPU_LSLR_REGNUM:
+    case SPU_DECR_REGNUM:
+    case SPU_DECR_STATUS_REGNUM:
+      return -1;
+
+    default:
+      internal_error (__FILE__, __LINE__, _("invalid regnum"));
+    }
+}
+
+
 /* Value conversion -- access scalar values at the preferred slot.  */
 
 static struct value *
-spu_value_from_register (struct type *type, int regnum,
-			 struct frame_info *frame)
+spu_value_from_register (struct gdbarch *gdbarch, struct type *type,
+			 int regnum, struct frame_id frame_id)
 {
-  struct value *value = default_value_from_register (type, regnum, frame);
+  struct value *value = default_value_from_register (gdbarch, type,
+						     regnum, frame_id);
   int len = TYPE_LENGTH (type);
 
   if (regnum < SPU_NUM_GPRS && len < 16)
@@ -349,6 +394,15 @@ spu_register_reggroup_p (struct gdbarch *gdbarch, int regnum,
     return 1;
 
   return default_register_reggroup_p (gdbarch, regnum, group);
+}
+
+/* DWARF-2 register numbers.  */
+
+static int
+spu_dwarf_reg_to_regnum (struct gdbarch *gdbarch, int reg)
+{
+  /* Use cooked instead of raw SP.  */
+  return (reg == SPU_RAW_SP_REGNUM)? SPU_SP_REGNUM : reg;
 }
 
 
@@ -827,8 +881,7 @@ spu_virtual_frame_pointer (struct gdbarch *gdbarch, CORE_ADDR pc,
     }
 }
 
-/* Return true if we are in the function's epilogue, i.e. after the
-   instruction that destroyed the function's stack frame.
+/* Implement the stack_frame_destroyed_p gdbarch method.
 
    1) scan forward from the point of execution:
        a) If you find an instruction that modifies the stack pointer
@@ -845,7 +898,7 @@ spu_virtual_frame_pointer (struct gdbarch *gdbarch, CORE_ADDR pc,
            limit for the size of an epilogue.  */
 
 static int
-spu_in_function_epilogue_p (struct gdbarch *gdbarch, CORE_ADDR pc)
+spu_stack_frame_destroyed_p (struct gdbarch *gdbarch, CORE_ADDR pc)
 {
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   CORE_ADDR scan_pc, func_start, func_end, epilogue_start, epilogue_end;
@@ -947,7 +1000,7 @@ spu_frame_unwind_cache (struct frame_info *this_frame,
   gdb_byte buf[16];
 
   if (*this_prologue_cache)
-    return *this_prologue_cache;
+    return (struct spu_unwind_cache *) *this_prologue_cache;
 
   info = FRAME_OBSTACK_ZALLOC (struct spu_unwind_cache);
   *this_prologue_cache = info;
@@ -1155,7 +1208,7 @@ struct spu2ppu_cache
 static struct gdbarch *
 spu2ppu_prev_arch (struct frame_info *this_frame, void **this_cache)
 {
-  struct spu2ppu_cache *cache = *this_cache;
+  struct spu2ppu_cache *cache = (struct spu2ppu_cache *) *this_cache;
   return get_regcache_arch (cache->regcache);
 }
 
@@ -1163,7 +1216,7 @@ static void
 spu2ppu_this_id (struct frame_info *this_frame,
 		 void **this_cache, struct frame_id *this_id)
 {
-  struct spu2ppu_cache *cache = *this_cache;
+  struct spu2ppu_cache *cache = (struct spu2ppu_cache *) *this_cache;
   *this_id = cache->frame_id;
 }
 
@@ -1171,11 +1224,11 @@ static struct value *
 spu2ppu_prev_register (struct frame_info *this_frame,
 		       void **this_cache, int regnum)
 {
-  struct spu2ppu_cache *cache = *this_cache;
+  struct spu2ppu_cache *cache = (struct spu2ppu_cache *) *this_cache;
   struct gdbarch *gdbarch = get_regcache_arch (cache->regcache);
   gdb_byte *buf;
 
-  buf = alloca (register_size (gdbarch, regnum));
+  buf = (gdb_byte *) alloca (register_size (gdbarch, regnum));
   regcache_cooked_read (cache->regcache, regnum, buf);
   return frame_unwind_got_bytes (this_frame, regnum, buf);
 }
@@ -1233,7 +1286,7 @@ spu2ppu_sniffer (const struct frame_unwind *self,
 static void
 spu2ppu_dealloc_cache (struct frame_info *self, void *this_cache)
 {
-  struct spu2ppu_cache *cache = this_cache;
+  struct spu2ppu_cache *cache = (struct spu2ppu_cache *) this_cache;
   regcache_xfree (cache->regcache);
 }
 
@@ -1579,7 +1632,9 @@ spu_software_single_step (struct frame_info *frame)
   pc = get_frame_pc (frame);
 
   if (target_read_memory (pc, buf, 4))
-    return 1;
+    throw_error (MEMORY_ERROR, _("Could not read instruction at %s."),
+		 paddress (gdbarch, pc));
+
   insn = extract_unsigned_integer (buf, 4, byte_order);
 
   /* Get local store limit.  */
@@ -1614,8 +1669,9 @@ spu_software_single_step (struct frame_info *frame)
 	  else
 	    {
 	      if (optim)
-		error (_("Could not determine address of "
-			 "single-step breakpoint."));
+		throw_error (OPTIMIZED_OUT_ERROR,
+			     _("Could not determine address of "
+			       "single-step breakpoint."));
 	      if (unavail)
 		throw_error (NOT_AVAILABLE_ERROR,
 			     _("Could not determine address of "
@@ -1671,8 +1727,10 @@ struct spu_dis_asm_data
 static void
 spu_dis_asm_print_address (bfd_vma addr, struct disassemble_info *info)
 {
-  struct spu_dis_asm_data *data = info->application_data;
-  print_address (data->gdbarch, SPUADDR (data->id, addr), info->stream);
+  struct spu_dis_asm_data *data
+    = (struct spu_dis_asm_data *) info->application_data;
+  print_address (data->gdbarch, SPUADDR (data->id, addr),
+		 (struct ui_file *) info->stream);
 }
 
 static int
@@ -1683,7 +1741,7 @@ gdb_print_insn_spu (bfd_vma memaddr, struct disassemble_info *info)
      call print_address.  */
   struct disassemble_info spu_info = *info;
   struct spu_dis_asm_data data;
-  data.gdbarch = info->application_data;
+  data.gdbarch = (struct gdbarch *) info->application_data;
   data.id = SPUADDR_SPU (memaddr);
 
   spu_info.application_data = &data;
@@ -1746,7 +1804,7 @@ spu_get_overlay_table (struct objfile *objfile)
 {
   enum bfd_endian byte_order = bfd_big_endian (objfile->obfd)?
 		   BFD_ENDIAN_BIG : BFD_ENDIAN_LITTLE;
-  struct minimal_symbol *ovly_table_msym, *ovly_buf_table_msym;
+  struct bound_minimal_symbol ovly_table_msym, ovly_buf_table_msym;
   CORE_ADDR ovly_table_base, ovly_buf_table_base;
   unsigned ovly_table_size, ovly_buf_table_size;
   struct spu_overlay_table *tbl;
@@ -1754,26 +1812,26 @@ spu_get_overlay_table (struct objfile *objfile)
   gdb_byte *ovly_table;
   int i;
 
-  tbl = objfile_data (objfile, spu_overlay_data);
+  tbl = (struct spu_overlay_table *) objfile_data (objfile, spu_overlay_data);
   if (tbl)
     return tbl;
 
   ovly_table_msym = lookup_minimal_symbol ("_ovly_table", NULL, objfile);
-  if (!ovly_table_msym)
+  if (!ovly_table_msym.minsym)
     return NULL;
 
   ovly_buf_table_msym = lookup_minimal_symbol ("_ovly_buf_table",
 					       NULL, objfile);
-  if (!ovly_buf_table_msym)
+  if (!ovly_buf_table_msym.minsym)
     return NULL;
 
-  ovly_table_base = SYMBOL_VALUE_ADDRESS (ovly_table_msym);
-  ovly_table_size = MSYMBOL_SIZE (ovly_table_msym);
+  ovly_table_base = BMSYMBOL_VALUE_ADDRESS (ovly_table_msym);
+  ovly_table_size = MSYMBOL_SIZE (ovly_table_msym.minsym);
 
-  ovly_buf_table_base = SYMBOL_VALUE_ADDRESS (ovly_buf_table_msym);
-  ovly_buf_table_size = MSYMBOL_SIZE (ovly_buf_table_msym);
+  ovly_buf_table_base = BMSYMBOL_VALUE_ADDRESS (ovly_buf_table_msym);
+  ovly_buf_table_size = MSYMBOL_SIZE (ovly_buf_table_msym.minsym);
 
-  ovly_table = xmalloc (ovly_table_size);
+  ovly_table = (gdb_byte *) xmalloc (ovly_table_size);
   read_memory (ovly_table_base, ovly_table, ovly_table_size);
 
   tbl = OBSTACK_CALLOC (&objfile->objfile_obstack,
@@ -1897,10 +1955,11 @@ spu_overlay_new_objfile (struct objfile *objfile)
 static void
 spu_catch_start (struct objfile *objfile)
 {
-  struct minimal_symbol *minsym;
-  struct symtab *symtab;
+  struct bound_minimal_symbol minsym;
+  struct compunit_symtab *cust;
   CORE_ADDR pc;
-  char buf[32];
+  struct event_location *location;
+  struct cleanup *back_to;
 
   /* Do this only if requested by "set spu stop-on-load on".  */
   if (!spu_stop_on_load_p)
@@ -1917,21 +1976,23 @@ spu_catch_start (struct objfile *objfile)
   /* There can be multiple symbols named "main".  Search for the
      "main" in *this* objfile.  */
   minsym = lookup_minimal_symbol ("main", NULL, objfile);
-  if (!minsym)
+  if (!minsym.minsym)
     return;
 
   /* If we have debugging information, try to use it -- this
      will allow us to properly skip the prologue.  */
-  pc = SYMBOL_VALUE_ADDRESS (minsym);
-  symtab = find_pc_sect_symtab (pc, SYMBOL_OBJ_SECTION (objfile, minsym));
-  if (symtab != NULL)
+  pc = BMSYMBOL_VALUE_ADDRESS (minsym);
+  cust
+    = find_pc_sect_compunit_symtab (pc, MSYMBOL_OBJ_SECTION (minsym.objfile,
+							     minsym.minsym));
+  if (cust != NULL)
     {
-      struct blockvector *bv = BLOCKVECTOR (symtab);
+      const struct blockvector *bv = COMPUNIT_BLOCKVECTOR (cust);
       struct block *block = BLOCKVECTOR_BLOCK (bv, GLOBAL_BLOCK);
       struct symbol *sym;
       struct symtab_and_line sal;
 
-      sym = lookup_block_symbol (block, "main", VAR_DOMAIN);
+      sym = block_lookup_symbol (block, "main", VAR_DOMAIN);
       if (sym)
 	{
 	  fixup_symbol_section (sym, objfile);
@@ -1942,8 +2003,9 @@ spu_catch_start (struct objfile *objfile)
 
   /* Use a numerical address for the set_breakpoint command to avoid having
      the breakpoint re-set incorrectly.  */
-  xsnprintf (buf, sizeof buf, "*%s", core_addr_to_string (pc));
-  create_breakpoint (get_objfile_arch (objfile), buf /* arg */,
+  location = new_address_location (pc, NULL, 0);
+  back_to = make_cleanup_delete_event_location (location);
+  create_breakpoint (get_objfile_arch (objfile), location,
 		     NULL /* cond_string */, -1 /* thread */,
 		     NULL /* extra_string */,
 		     0 /* parse_condition_and_thread */, 1 /* tempflag */,
@@ -1952,6 +2014,7 @@ spu_catch_start (struct objfile *objfile)
 		     AUTO_BOOLEAN_FALSE /* pending_break_support */,
 		     &bkpt_breakpoint_ops /* ops */, 0 /* from_tty */,
 		     1 /* enabled */, 0 /* internal  */, 0);
+  do_cleanups (back_to);
 }
 
 
@@ -1980,7 +2043,7 @@ spu_objfile_from_frame (struct frame_info *frame)
 static void
 flush_ea_cache (void)
 {
-  struct minimal_symbol *msymbol;
+  struct bound_minimal_symbol msymbol;
   struct objfile *obj;
 
   if (!has_stack_frames ())
@@ -1992,7 +2055,7 @@ flush_ea_cache (void)
 
   /* Lookup inferior function __cache_flush.  */
   msymbol = lookup_minimal_symbol ("__cache_flush", NULL, obj);
-  if (msymbol != NULL)
+  if (msymbol.minsym != NULL)
     {
       struct type *type;
       CORE_ADDR addr;
@@ -2000,7 +2063,7 @@ flush_ea_cache (void)
       type = objfile_type (obj)->builtin_void;
       type = lookup_function_type (type);
       type = lookup_pointer_type (type);
-      addr = SYMBOL_VALUE_ADDRESS (msymbol);
+      addr = BMSYMBOL_VALUE_ADDRESS (msymbol);
 
       call_function_by_hand (value_from_pointer (type, addr), 0, NULL);
     }
@@ -2297,7 +2360,7 @@ info_spu_dma_cmdlist (gdb_byte *buf, int nr, enum bfd_endian byte_order)
              NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     };
 
-  int *seq = alloca (nr * sizeof (int));
+  int *seq = XALLOCAVEC (int, nr);
   int done = 0;
   struct cleanup *chain;
   int i, j;
@@ -2362,7 +2425,7 @@ info_spu_dma_cmdlist (gdb_byte *buf, int nr, enum bfd_endian byte_order)
       int mfc_cmd_opcode, mfc_cmd_tag, rclass_id, tclass_id;
       int list_lsa, list_size, mfc_lsa, mfc_size;
       ULONGEST mfc_ea;
-      int list_valid_p, noop_valid_p, qw_valid_p, ea_valid_p, cmd_error_p;
+      int list_valid_p, qw_valid_p, ea_valid_p, cmd_error_p;
 
       /* Decode contents of MFC Command Queue Context Save/Restore Registers.
 	 See "Cell Broadband Engine Registers V1.3", section 3.3.2.1.  */
@@ -2387,7 +2450,6 @@ info_spu_dma_cmdlist (gdb_byte *buf, int nr, enum bfd_endian byte_order)
 
       mfc_lsa = spu_mfc_get_bitfield (mfc_cq_dw2, 0, 13);
       mfc_size = spu_mfc_get_bitfield (mfc_cq_dw2, 14, 24);
-      noop_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 37, 37);
       qw_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 38, 38);
       ea_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 39, 39);
       cmd_error_p = spu_mfc_get_bitfield (mfc_cq_dw2, 40, 40);
@@ -2590,7 +2652,7 @@ info_spu_command (char *args, int from_tty)
 {
   printf_unfiltered (_("\"info spu\" must be followed by "
 		       "the name of an SPU facility.\n"));
-  help_list (infospucmdlist, "info spu ", -1, gdb_stdout);
+  help_list (infospucmdlist, "info spu ", all_commands, gdb_stdout);
 }
 
 
@@ -2641,7 +2703,7 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
      This assumes the filename convention employed by solib-spu.c.  */
   else if (info.abfd)
     {
-      char *name = strrchr (info.abfd->filename, '@');
+      const char *name = strrchr (info.abfd->filename, '@');
       if (name)
 	sscanf (name, "@0x%*x <%d>", &id);
     }
@@ -2657,7 +2719,7 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
     }
 
   /* None found, so create a new architecture.  */
-  tdep = XCALLOC (1, struct gdbarch_tdep);
+  tdep = XCNEW (struct gdbarch_tdep);
   tdep->id = id;
   gdbarch = gdbarch_alloc (&info, tdep);
 
@@ -2677,6 +2739,11 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_pseudo_register_write (gdbarch, spu_pseudo_register_write);
   set_gdbarch_value_from_register (gdbarch, spu_value_from_register);
   set_gdbarch_register_reggroup_p (gdbarch, spu_register_reggroup_p);
+  set_gdbarch_dwarf2_reg_to_regnum (gdbarch, spu_dwarf_reg_to_regnum);
+  set_gdbarch_ax_pseudo_register_collect
+    (gdbarch, spu_ax_pseudo_register_collect);
+  set_gdbarch_ax_pseudo_register_push_stack
+    (gdbarch, spu_ax_pseudo_register_push_stack);
 
   /* Data types.  */
   set_gdbarch_char_signed (gdbarch, 0);
@@ -2715,6 +2782,7 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   /* Frame handling.  */
   set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
+  dwarf2_append_unwinders (gdbarch);
   frame_unwind_append_unwinder (gdbarch, &spu_frame_unwind);
   frame_base_set_default (gdbarch, &spu_frame_base);
   set_gdbarch_unwind_pc (gdbarch, spu_unwind_pc);
@@ -2722,7 +2790,7 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_virtual_frame_pointer (gdbarch, spu_virtual_frame_pointer);
   set_gdbarch_frame_args_skip (gdbarch, 0);
   set_gdbarch_skip_prologue (gdbarch, spu_skip_prologue);
-  set_gdbarch_in_function_epilogue_p (gdbarch, spu_in_function_epilogue_p);
+  set_gdbarch_stack_frame_destroyed_p (gdbarch, spu_stack_frame_destroyed_p);
 
   /* Cell/B.E. cross-architecture unwinder support.  */
   frame_unwind_prepend_unwinder (gdbarch, &spu2ppu_unwind);
@@ -2731,7 +2799,6 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_decr_pc_after_break (gdbarch, 4);
   set_gdbarch_breakpoint_from_pc (gdbarch, spu_breakpoint_from_pc);
   set_gdbarch_memory_remove_breakpoint (gdbarch, spu_memory_remove_breakpoint);
-  set_gdbarch_cannot_step_breakpoint (gdbarch, 1);
   set_gdbarch_software_single_step (gdbarch, spu_software_single_step);
   set_gdbarch_get_longjmp_target (gdbarch, spu_get_longjmp_target);
 

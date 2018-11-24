@@ -1,6 +1,6 @@
 /* Functions specific to running GDB native on HPPA running GNU/Linux.
 
-   Copyright (C) 2004-2013 Free Software Foundation, Inc.
+   Copyright (C) 2004-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,13 +20,12 @@
 #include "defs.h"
 #include "gdbcore.h"
 #include "regcache.h"
-#include <string.h>
 #include "inferior.h"
 #include "target.h"
 #include "linux-nat.h"
 
 #include <sys/procfs.h>
-#include <sys/ptrace.h>
+#include "nat/gdb_ptrace.h"
 #include <linux/version.h>
 
 #include <asm/ptrace.h>

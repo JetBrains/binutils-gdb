@@ -1,4 +1,4 @@
-#   Copyright 1988-2013 Free Software Foundation, Inc.
+#   Copyright 1988-2016 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,52 +31,95 @@ if { [prepare_for_testing ${testfile}.exp $testfile $srcfile] } {
 }
 
 # Run with no arguments.
-# On VxWorks this justs make sure the program was run.
 gdb_run_cmd
 
-if [istarget "*-*-vxworks*"] then {
-    set timeout 120
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect {
-	 "$inferior_exited_re normally" {
-	    unresolved "run \"$testfile\" with no args"
-	}
-	 -re "usage:  factorial <number>" {
-	    pass "run \"$testfile\" with no args"
-	}
-	timeout	{
-	    fail "(timeout) run \"$testfile\" with no args"
+set saw_usage 0
+set saw_exit_wrapper 0
+set saw_spurious_output 0
+
+set test "run \"$testfile\" with no args"
+
+# Indirect spawn id lists.  Used to be able to disable the inferior
+# and gdb's spawn_ids and regexes as soon as we see the expected
+# output.
+set inferior_spawn_list "$inferior_spawn_id"
+set gdb_spawn_list "$gdb_spawn_id"
+
+# Clear either the gdb or the inferior spawn_id list and iff
+# afterwards we still have any spawn id in the indirect lists,
+# continue expecting.
+proc maybe_exp_continue {which} {
+    global inferior_spawn_list gdb_spawn_list
+
+    if {$which == "gdb"} {
+	set gdb_spawn_list ""
+    } elseif {$which == "inferior"} {
+	set inferior_spawn_list ""
+    } else {
+	error "invalid parameter"
+    }
+
+    if {$inferior_spawn_list != "" || $gdb_spawn_list != ""} {
+	exp_continue
+    }
+}
+
+# Note that if $inferior_spawn_id != $gdb_spawn_id the order we pick
+# output from each spawn id is undefined.
+set res [gdb_test_multiple "" $test {
+    -i inferior_spawn_list
+    -re "usage:  factorial <number>" {
+	set saw_usage 1
+	maybe_exp_continue inferior
+    }
+    -re "EXIT code 1" {
+	set saw_exit_wrapper 1
+	maybe_exp_continue inferior
+    }
+    eof {
+	if {$inferior_spawn_id != $gdb_spawn_id} {
+	    # In this case we may see the server/inferior exit before
+	    # GDB's program exit output.  Remove from spawn list and
+	    # continue waiting.
+	    maybe_exp_continue inferior
+	} else {
+	    # GDB crash.
+	    fail "$test (eof)"
 	}
     }
-    set timeout 10
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect -re "$gdb_prompt $" {}
-} else {
-    gdb_expect {
-	-re ".*usage:  factorial <number>.*$inferior_exited_re with code 01.\r\n$gdb_prompt $" {
-	    pass "run \"$testfile\" with no args"
-	    pass "no spurious messages at program exit"
-	}
-	-re ".*usage:  factorial <number>.*$inferior_exited_re with code 01.*$gdb_prompt $" {
-	    pass "run \"$testfile\" with no args"
-	    fail "no spurious messages at program exit"
-	}
-	-re ".*usage:  factorial <number>.* EXIT code 1.*$inferior_exited_re normally.\r\n$gdb_prompt $" {
-	    pass "run \"$testfile\" with no args (exit wrapper)"
-	    pass "no spurious messages at program exit"
-	}
-	-re ".*usage:  factorial <number>.* EXIT code 1.*$inferior_exited_re normally.*$gdb_prompt $" {
-	    pass "run \"$testfile\" with no args (exit wrapper)"
-	    fail "no spurious messages at program exit"
-	}
-	-re ".*$gdb_prompt $" {
-	    fail "run \"$testfile\" with no args"
-	    verbose "expect_out is $expect_out(buffer)" 2
-	}
-	timeout	{
-	    fail "(timeout) run \"$testfile\" no args"
-	}
+
+    -i gdb_spawn_list
+
+    -re "$inferior_exited_re with code 01.\r\n$gdb_prompt $" {
+	maybe_exp_continue gdb
     }
+    -re "$inferior_exited_re with code 01.*$gdb_prompt $" {
+	set saw_spurious_output 1
+	maybe_exp_continue gdb
+    }
+
+    -re "$inferior_exited_re normally.\r\n$gdb_prompt $" {
+	# This is only considered a pass if we see the exit wrapper
+	# status.
+	maybe_exp_continue gdb
+    }
+    -re "$inferior_exited_re normally.*$gdb_prompt $" {
+	set saw_spurious_output 1
+	maybe_exp_continue gdb
+    }
+}]
+
+if {$res == 0} {
+    gdb_assert ${saw_usage} $test
+
+    if {$saw_exit_wrapper} {
+	set msg "$test (exit wrapper)"
+    } else {
+	set msg $test
+    }
+
+    gdb_assert !$saw_spurious_output "no spurious messages at program exit"
+
 }
 
 # The remaining tests don't work for targets can't take arguments...
@@ -87,152 +130,34 @@ if [target_info exists noargs] then {
 }
 
 # Now run with some arguments
-if [istarget "*-*-vxworks*"] then {
-    send_gdb "run vxmain \"5\"\n"
-    gdb_expect -re "run vxmain \"5\"\r\n" {}
-    set timeout 120
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect {
-	 "$inferior_exited_re normally" {
-	    unresolved "run \"$testfile\" with arg"
-	}
-	 "120" {
-	    pass "run \"$testfile\" with arg"
-	}
-	timeout {
-	    fail "(timeout) run \"$testfile\" with arg"
-	}
-    }
-    set timeout 10
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect -re "$gdb_prompt $" {}
-} else {
-	setup_xfail "arm-*-coff"
-	gdb_run_cmd 5
-	gdb_expect {
-	    -re ".*120.*$gdb_prompt $"\
-				{ pass "run \"$testfile\" with arg" }
-	    -re ".*$gdb_prompt $"	{ fail "run \"$testfile\" with arg" }
-	    timeout		{ fail "(timeout) run \"$testfile\" with arg" }
-	}
-}
+setup_xfail "arm-*-coff"
+gdb_run_cmd 5
+gdb_test_stdio "" "120" "" "run \"$testfile\" with arg"
 
 # Run again with same arguments.
 gdb_run_cmd
 
-if [istarget "*-*-vxworks*"] then {
-    set timeout 120
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect {
-	 "$inferior_exited_re normally" {
-	    unresolved "run \"$testfile\" again with same args"
-	}
-	 "120" { pass "run \"$testfile\" again with same args" }
-	timeout { fail "(timeout) run \"$testfile\" again with same args" }
-    }
-    set timeout 10
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect -re "$gdb_prompt $" {}
-} else {
-    setup_xfail "arm-*-coff"
-    gdb_expect {
-	    -re ".*120.*$gdb_prompt $"\
-				{ pass "run \"$testfile\" again with same args" }
-	    -re ".*$gdb_prompt $"	{ fail "run \"$testfile\" again with same args" }
-	    timeout		{ fail "(timeout) run \"$testfile\" again with same args" }
-	}
-}
+setup_xfail "arm-*-coff"
+gdb_test_stdio "" "120" "" "run \"$testfile\" again with same args"
 
 # Use "set args" command to specify no arguments as default and run again.
-if [istarget "*-*-vxworks*"] then {
-    gdb_test_no_output "set args main"
-} else {
-    gdb_test_no_output "set args"
-}
+gdb_test_no_output "set args"
 
 gdb_run_cmd
 
-if [istarget "*-*-vxworks*"] then {
-    set timeout 120
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect {
-	 "$inferior_exited_re normally" {
-	    unresolved "run after setting args to nil"
-	}
-	 "usage:  factorial <number>" {
-	    pass "run after setting args to nil"
-	}
-	timeout {
-	    fail "(timeout) run after setting args to nil"
-	}
-    }
-    set timeout 10
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect -re "$gdb_prompt $" {}
-} else {
-    gdb_expect {
-	-re ".*usage:  factorial <number>.*$gdb_prompt $" {
-	    pass "run after setting args to nil"
-	}
-	-re ".*$gdb_prompt $" {
-	    fail "run after setting args to nil"
-	}
-	timeout {
-	    fail "(timeout) run after setting args to nil"
-	}
-    }
-}
+gdb_test_stdio "" "usage:  factorial <number>" "" "run after setting args to nil"
 
 # Use "set args" command to specify an argument and run again.
-if [istarget "*-*-vxworks*"] then {
-    gdb_test_no_output "set args vxmain \"6\""
-} else {
-    gdb_test_no_output "set args 6"
-}
+gdb_test_no_output "set args 6"
 
 gdb_run_cmd
 
-if [istarget "*-*-vxworks*"] then {
-    set timeout 120
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect {
-	 "$inferior_exited_re normally" {
-	    unresolved "run \"$testfile\" again after setting args"
-	}
-	 "720" {
-	    pass "run \"$testfile\" again after setting args"
-	}
-	timeout {
-	    fail "(timeout) run \"$testfile\" again after setting args"
-	}
-    }
-    set timeout 10
-    verbose "Timeout is now $timeout seconds" 2
-    gdb_expect -re "$gdb_prompt $" {}
-} else {
-    setup_xfail "arm-*-coff"
-    gdb_expect {
-	    -re ".*720.*$gdb_prompt $" {
-		pass "run \"$testfile\" again after setting args"
-	    }
-	    -re ".*$gdb_prompt $" {
-		fail "run \"$testfile\" again after setting args"
-	    }
-	    timeout {
-		fail "(timeout) run \"$testfile\" again after setting args"
-	    }
-	}
-}
+setup_xfail "arm-*-coff"
+gdb_test_stdio "" "720" "" "run \"$testfile\" again after setting args"
 
 # GOAL: Test that shell is being used with "run".  For remote debugging
 # targets, there is no guarantee that a "shell" (whatever that is) is used.
 if ![is_remote target] then {
-    gdb_test "run `echo 8`" \
-	"Starting program.*40320.*" \
-	"run \"$testfile\" with shell"
-}
-
-# Reset the default arguments for VxWorks
-if [istarget "*-*-vxworks*"] then {
-    gdb_test_no_output "set args main"
+    gdb_test_stdio "run `echo 8`" \
+	"40320" "" "run \"$testfile\" with shell"
 }

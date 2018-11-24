@@ -1,6 +1,6 @@
 /* Routines for handling XML generic OS data provided by target.
 
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,7 +22,6 @@
 #include "vec.h"
 #include "xml-support.h"
 #include "osdata.h"
-#include <string.h>
 #include "ui-out.h"
 #include "gdbcmd.h"
 
@@ -45,8 +44,6 @@ osdata_parse (const char *xml)
 
 #else /* HAVE_LIBEXPAT */
 
-#include "xml-support.h"
-
 /* Internal parsing data passed to all XML callbacks.  */
 struct osdata_parsing_data
   {
@@ -61,15 +58,15 @@ osdata_start_osdata (struct gdb_xml_parser *parser,
                         const struct gdb_xml_element *element,
                         void *user_data, VEC(gdb_xml_value_s) *attributes)
 {
-  struct osdata_parsing_data *data = user_data;
+  struct osdata_parsing_data *data = (struct osdata_parsing_data *) user_data;
   char *type;
   struct osdata *osdata;
 
   if (data->osdata)
     gdb_xml_error (parser, _("Seen more than on osdata element"));
 
-  type = xml_find_attribute (attributes, "type")->value;
-  osdata = XZALLOC (struct osdata);
+  type = (char *) xml_find_attribute (attributes, "type")->value;
+  osdata = XCNEW (struct osdata);
   osdata->type = xstrdup (type);
   data->osdata = osdata;
 }
@@ -81,7 +78,7 @@ osdata_start_item (struct gdb_xml_parser *parser,
                   const struct gdb_xml_element *element,
                   void *user_data, VEC(gdb_xml_value_s) *attributes)
 {
-  struct osdata_parsing_data *data = user_data;
+  struct osdata_parsing_data *data = (struct osdata_parsing_data *) user_data;
   struct osdata_item item = { NULL };
 
   VEC_safe_push (osdata_item_s, data->osdata->items, &item);
@@ -94,8 +91,9 @@ osdata_start_column (struct gdb_xml_parser *parser,
                     const struct gdb_xml_element *element,
                     void *user_data, VEC(gdb_xml_value_s) *attributes)
 {
-  struct osdata_parsing_data *data = user_data;
-  const char *name = xml_find_attribute (attributes, "name")->value;
+  struct osdata_parsing_data *data = (struct osdata_parsing_data *) user_data;
+  const char *name
+    = (const char *) xml_find_attribute (attributes, "name")->value;
 
   data->property_name = xstrdup (name);
 }
@@ -107,7 +105,7 @@ osdata_end_column (struct gdb_xml_parser *parser,
                   const struct gdb_xml_element *element,
                   void *user_data, const char *body_text)
 {
-  struct osdata_parsing_data *data = user_data;
+  struct osdata_parsing_data *data = (struct osdata_parsing_data *) user_data;
   struct osdata *osdata = data->osdata;
   struct osdata_item *item = VEC_last (osdata_item_s, osdata->items);
   struct osdata_column *col = VEC_safe_push (osdata_column_s,
@@ -124,7 +122,7 @@ osdata_end_column (struct gdb_xml_parser *parser,
 static void
 clear_parsing_data (void *p)
 {
-  struct osdata_parsing_data *data = p;
+  struct osdata_parsing_data *data = (struct osdata_parsing_data *) p;
 
   osdata_free (data->osdata);
   data->osdata = NULL;
@@ -232,7 +230,7 @@ osdata_free (struct osdata *osdata)
 static void
 osdata_free_cleanup (void *arg)
 {
-  struct osdata *osdata = arg;
+  struct osdata *osdata = (struct osdata *) arg;
 
   osdata_free (osdata);
 }

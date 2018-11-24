@@ -1,4 +1,4 @@
-/* Copyright (C) 2009-2013 Free Software Foundation, Inc.
+/* Copyright (C) 2009-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,9 +18,7 @@
 #include "defs.h"
 #include "gdb_usleep.h"
 #include "gdb_select.h"
-#include "gdb_usleep.h"
-
-#include <sys/time.h>
+#include "gdb_sys_time.h"
 
 int
 gdb_usleep (int usec)

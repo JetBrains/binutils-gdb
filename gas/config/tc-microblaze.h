@@ -1,6 +1,6 @@
 /* tc-microblaze.h -- Header file for tc-microblaze.c.
 
-   Copyright 2009 Free Software Foundation, Inc.
+   Copyright (C) 2009-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -36,8 +36,10 @@
    relocs for such expressions as -relax in linker can change the value
    of such expressions */
 #define TC_CONS_FIX_NEW cons_fix_new_microblaze
-#define TC_PARSE_CONS_EXPRESSION(EXP, NBYTES) parse_cons_expression_microblaze (EXP, NBYTES)
-extern void parse_cons_expression_microblaze PARAMS ((expressionS *, int));
+#define TC_PARSE_CONS_EXPRESSION(EXP, NBYTES) \
+  parse_cons_expression_microblaze (EXP, NBYTES)
+extern bfd_reloc_code_real_type parse_cons_expression_microblaze
+  (expressionS *, int);
 
 #define TC_FORCE_RELOCATION_SECTION(FIXP,SEG) 1
 #define UNDEFINED_DIFFERENCE_OK 1
@@ -66,7 +68,7 @@ extern const struct relax_type md_relax_table[];
 
 /* We want local label support.  */
 #define LOCAL_LABELS_FB 1
-     
+
 /* Want the section information too... */
 #define MD_PCREL_FROM_SECTION(FIXP, SEC) md_pcrel_from_section (FIXP, SEC)
 
@@ -94,12 +96,10 @@ extern const struct relax_type md_relax_table[];
 #endif
 
 #include "write.h"        /* For definition of fixS */
-  
+
 extern void      md_begin            (void);
 extern void      md_assemble         (char *);
 extern symbolS * md_undefined_symbol (char *);
-extern char *    md_atof             (int, char *, int *);
-extern int       md_parse_option     (int, char *);
 extern void      md_show_usage       (FILE *);
 extern void      md_convert_frag               (bfd *, segT, fragS *);
 extern void      md_operand                    (expressionS *);
@@ -108,7 +108,9 @@ extern void      md_number_to_chars            (char *, valueT, int);
 extern valueT    md_section_align              (segT, valueT);
 extern long      md_pcrel_from_section         (fixS *, segT);
 extern arelent * tc_gen_reloc                  (asection *, fixS *);
-extern void 	 cons_fix_new_microblaze       (fragS *, int, int, expressionS *);
+extern void 	 cons_fix_new_microblaze       (fragS *, int, int,
+						expressionS *,
+						bfd_reloc_code_real_type);
 extern void 	 md_apply_fix3 		       (fixS *, valueT *, segT);
 
 #define EXTERN_FORCE_RELOC -1

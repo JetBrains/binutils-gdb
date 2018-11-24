@@ -1,5 +1,5 @@
 # This shell script emits a C file. -*- C -*-
-#   Copyright 2004, 2006, 2007, 2008 Free Software Foundation, Inc.
+#   Copyright (C) 2004-2016 Free Software Foundation, Inc.
 #
 # This file is part of the GNU Binutils.
 #
@@ -47,7 +47,7 @@ mips_after_parse (void)
       link_info.emit_hash = TRUE;
       link_info.emit_gnu_hash = FALSE;
     }
-  after_parse_default ();
+  gld${EMULATION_NAME}_after_parse ();
 }
 
 struct hook_stub_info
@@ -136,7 +136,6 @@ mips_add_stub_section (const char *stub_sec_name, asection *input_section,
 {
   asection *stub_sec;
   flagword flags;
-  const char *secname;
   lang_output_section_statement_type *os;
   struct hook_stub_info info;
 
@@ -176,9 +175,7 @@ mips_add_stub_section (const char *stub_sec_name, asection *input_section,
   if (!bfd_set_section_flags (stub_bfd, stub_sec, flags))
     goto err_ret;
 
-  /* Create an output section statement.  */
-  secname = bfd_get_section_name (output_section->owner, output_section);
-  os = lang_output_section_find (secname);
+  os = lang_output_section_get (output_section);
 
   /* Initialize a statement list that contains only the new statement.  */
   lang_list_init (&info.add);
@@ -219,7 +216,7 @@ mips_before_allocation (void)
   flagword flags;
 
   flags = elf_elfheader (link_info.output_bfd)->e_flags;
-  if (!link_info.shared
+  if (!bfd_link_pic (&link_info)
       && !link_info.nocopyreloc
       && (flags & (EF_MIPS_PIC | EF_MIPS_CPIC)) == EF_MIPS_CPIC)
     _bfd_mips_elf_use_plts_and_copy_relocs (&link_info);
@@ -253,8 +250,11 @@ EOF
 # parse_args and list_options functions.
 #
 PARSE_AND_LIST_PROLOGUE='
-#define OPTION_INSN32			301
-#define OPTION_NO_INSN32		(OPTION_INSN32 + 1)
+enum
+  {
+    OPTION_INSN32 = 301,
+    OPTION_NO_INSN32
+  };
 '
 
 PARSE_AND_LIST_LONGOPTS='

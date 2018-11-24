@@ -1,5 +1,5 @@
 /* libthread_db helper functions for the remote server for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -80,7 +80,7 @@ ps_err_e
 ps_pdread (gdb_ps_prochandle_t ph, psaddr_t addr,
 	   gdb_ps_read_buf_t buf, gdb_ps_size_t size)
 {
-  read_inferior_memory ((unsigned long) addr, buf, size);
+  read_inferior_memory ((uintptr_t) addr, (gdb_byte *) buf, size);
   return PS_OK;
 }
 
@@ -90,7 +90,10 @@ ps_err_e
 ps_pdwrite (gdb_ps_prochandle_t ph, psaddr_t addr,
 	    gdb_ps_write_buf_t buf, gdb_ps_size_t size)
 {
-  return write_inferior_memory ((unsigned long) addr, buf, size);
+  if (write_inferior_memory ((uintptr_t) addr, (const gdb_byte *) buf, size)
+      != 0)
+    return PS_ERR;
+  return PS_OK;
 }
 
 /* Get the general registers of LWP LWPID within the target process PH
@@ -101,20 +104,20 @@ ps_lgetregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, prgregset_t gregset)
 {
 #ifdef HAVE_REGSETS
   struct lwp_info *lwp;
-  struct thread_info *reg_inferior, *save_inferior;
+  struct thread_info *reg_thread, *saved_thread;
   struct regcache *regcache;
 
   lwp = find_lwp_pid (pid_to_ptid (lwpid));
   if (lwp == NULL)
     return PS_ERR;
 
-  reg_inferior = get_lwp_thread (lwp);
-  save_inferior = current_inferior;
-  current_inferior = reg_inferior;
-  regcache = get_thread_regcache (current_inferior, 1);
+  reg_thread = get_lwp_thread (lwp);
+  saved_thread = current_thread;
+  current_thread = reg_thread;
+  regcache = get_thread_regcache (current_thread, 1);
   gregset_info ()->fill_function (regcache, gregset);
 
-  current_inferior = save_inferior;
+  current_thread = saved_thread;
   return PS_OK;
 #else
   return PS_ERR;
@@ -135,7 +138,7 @@ ps_lsetregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, const prgregset_t gregset)
    process PH and store them in FPREGSET.  */
 
 ps_err_e
-ps_lgetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, void *fpregset)
+ps_lgetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, prfpregset_t *fpregset)
 {
   /* Unneeded.  */
   return PS_ERR;
@@ -145,7 +148,7 @@ ps_lgetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, void *fpregset)
    process PH from FPREGSET.  */
 
 ps_err_e
-ps_lsetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, void *fpregset)
+ps_lsetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, const prfpregset_t *fpregset)
 {
   /* Unneeded.  */
   return PS_ERR;
@@ -157,5 +160,5 @@ ps_lsetfpregs (gdb_ps_prochandle_t ph, lwpid_t lwpid, void *fpregset)
 pid_t
 ps_getpid (gdb_ps_prochandle_t ph)
 {
-  return pid_of (get_thread_lwp (current_inferior));
+  return pid_of (current_thread);
 }

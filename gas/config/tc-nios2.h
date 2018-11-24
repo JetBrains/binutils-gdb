@@ -1,5 +1,5 @@
 /* Definitions for Altera Nios II assembler.
-   Copyright (C) 2012, 2013 Free Software Foundation, Inc.
+   Copyright (C) 2012-2016 Free Software Foundation, Inc.
    Contributed by Nigel Gray (ngray@altera.com).
    Contributed by Mentor Graphics, Inc.
 
@@ -92,7 +92,7 @@ extern long nios2_relax_frag (segT segment, fragS * fragP, long stretch);
 
 /* Processor-specific section directives.  */
 #define md_elf_section_letter		nios2_elf_section_letter
-extern int nios2_elf_section_letter (int, char **);
+extern int nios2_elf_section_letter (int, const char **);
 #define md_elf_section_flags		nios2_elf_section_flags
 extern flagword nios2_elf_section_flags (flagword, int, int);
 #endif
@@ -107,11 +107,7 @@ extern flagword nios2_elf_section_flags (flagword, int, int);
 #define CFI_DIFF_EXPR_OK 0
 
 #define TC_PARSE_CONS_EXPRESSION(EXP, NBYTES) nios2_cons (EXP, NBYTES)
-extern void nios2_cons (expressionS *exp, int size);
-
-#define TC_CONS_FIX_NEW nios2_cons_fix_new
-extern void nios2_cons_fix_new (struct frag *frag, int where,
-				unsigned int nbytes, struct expressionS *exp);
+extern bfd_reloc_code_real_type nios2_cons (expressionS *exp, int size);
 
 /* We want .cfi_* pseudo-ops for generating unwind info.  */
 #define TARGET_USE_CFIPOP 1
@@ -121,5 +117,8 @@ extern void nios2_cons_fix_new (struct frag *frag, int where,
 extern int nios2_regname_to_dw2regnum (char *regname);
 #define tc_cfi_frame_initial_instructions  nios2_frame_initial_instructions
 extern void nios2_frame_initial_instructions (void);
+
+#define elf_tc_final_processing nios2_elf_final_processing
+extern void nios2_elf_final_processing (void);
 
 #endif /* TC_NIOS2 */

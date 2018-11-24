@@ -1,4 +1,5 @@
-# DO NOT EDIT: generated from i386/i386-mpx-linux.xml
+# THIS FILE IS GENERATED.  -*- buffer-read-only: t -*- vi :set ro:
+# Generated from: i386/i386-mpx-linux.xml
 name:i386_mpx_linux
 xmltarget:i386-mpx-linux.xml
 expedite:ebp,esp,eip
@@ -44,14 +45,6 @@ expedite:ebp,esp,eip
 128:xmm7
 32:mxcsr
 32:orig_eax
-128:ymm0h
-128:ymm1h
-128:ymm2h
-128:ymm3h
-128:ymm4h
-128:ymm5h
-128:ymm6h
-128:ymm7h
 128:bnd0raw
 128:bnd1raw
 128:bnd2raw

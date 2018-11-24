@@ -1,5 +1,5 @@
 /* C preprocessor macro expansion for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
    Contributed by Red Hat, Inc.
 
    This file is part of GDB.
@@ -22,7 +22,6 @@
 #include "bcache.h"
 #include "macrotab.h"
 #include "macroexp.h"
-#include "gdb_assert.h"
 #include "c-lang.h"
 
 
@@ -147,7 +146,7 @@ resize_buffer (struct macro_buffer *b, int n)
     while (b->size <= n)
       b->size *= 2;
 
-  b->text = xrealloc (b->text, b->size);
+  b->text = (char *) xrealloc (b->text, b->size);
 }
 
 
@@ -815,7 +814,7 @@ gather_arguments (const char *name, struct macro_buffer *src,
 
   args_len = 0;
   args_size = 6;
-  args = (struct macro_buffer *) xmalloc (sizeof (*args) * args_size);
+  args = XNEWVEC (struct macro_buffer, args_size);
 
   for (;;)
     {
@@ -826,7 +825,7 @@ gather_arguments (const char *name, struct macro_buffer *src,
       if (args_len >= args_size)
         {
           args_size *= 2;
-          args = xrealloc (args, sizeof (*args) * args_size);
+          args = XRESIZEVEC (struct macro_buffer, args, args_size);
         }
 
       /* Initialize the next argument.  */
@@ -859,7 +858,8 @@ gather_arguments (const char *name, struct macro_buffer *src,
 		      if (args_len >= args_size)
 			{
 			  args_size++;
-			  args = xrealloc (args, sizeof (*args) * args_size);
+			  args = XRESIZEVEC (struct macro_buffer, args,
+					     args_size);
 			}
 		      arg = &args[args_len++];
 		      set_token (arg, src->text, src->text);
@@ -1331,7 +1331,7 @@ maybe_expand (struct macro_buffer *dest,
     {
       /* Make a null-terminated copy of it, since that's what our
          lookup function expects.  */
-      char *id = xmalloc (src_first->len + 1);
+      char *id = (char *) xmalloc (src_first->len + 1);
       struct cleanup *back_to = make_cleanup (xfree, id);
 
       memcpy (id, src_first->text, src_first->len);

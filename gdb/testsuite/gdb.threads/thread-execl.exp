@@ -1,4 +1,4 @@
-# Copyright (C) 2009-2013 Free Software Foundation, Inc.
+# Copyright (C) 2009-2016 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,11 +16,6 @@
 # Test that GDB doesn't get stuck when stepping over an exec call done
 # by a thread other than the main thread.
 
-# There's no support for exec events in the remote protocol.
-if { [is_remote target] } {
-    return 0
-}
-
 standard_testfile
 
 if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
@@ -28,19 +23,51 @@ if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
     return -1
 }
 
-clean_restart ${binfile}
+# Run the test proper.  SCHEDLOCK specifies what scheduler-locking
+# should be set to.
 
-runto_main
+proc do_test { schedlock } {
+    global binfile
 
-# Get ourselves to the thread that execs
-gdb_breakpoint "thread_execler"
-gdb_test "continue" ".*thread_execler.*" "continue to thread start"
+    if {$schedlock == "non-stop"} {
+	set prefix $schedlock
+    } else {
+	set prefix "schedlock $schedlock"
+    }
+    with_test_prefix "$prefix" {
+	clean_restart ${binfile}
 
-# Now set a breakpoint at `main', and step over the execl call.  The
-# breakpoint at main should be reached.  GDB should not try to revert
-# back to the old thread from the old image and resume stepping it
-# (since it is gone).
-gdb_breakpoint "main"
-gdb_test "next" ".*main.*" "get to main in new image"
+	if {$schedlock == "non-stop"} {
+	    gdb_test_no_output "set non-stop 1"
+	}
 
-return 0
+	if ![runto_main] {
+	    return 0
+	}
+
+	# Get ourselves to the thread that execs.
+	gdb_breakpoint "thread_execler"
+	gdb_test "continue" ".*thread_execler.*" "continue to thread start"
+
+	if {$schedlock == "non-stop"} {
+	    gdb_test "thread 2" \
+		"Switching to .*thread_execler.*" \
+		"switch to event thread"
+	}
+
+	# Now set a breakpoint at `main', and step over the execl call.  The
+	# breakpoint at main should be reached.  GDB should not try to revert
+	# back to the old thread from the old image and resume stepping it
+	# (since it is gone).
+	gdb_breakpoint "main"
+
+	if {$schedlock != "non-stop"} {
+	    gdb_test_no_output "set scheduler-locking $schedlock"
+	}
+	gdb_test "next" ".*main.*" "get to main in new image"
+    }
+}
+
+foreach schedlock {"off" "step" "on" "non-stop"} {
+    do_test $schedlock
+}

@@ -1,6 +1,5 @@
 /* tc-sh64.c -- Assemble code for the SuperH SH SHcompact and SHmedia.
-   Copyright 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009
-   Free Software Foundation.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -440,7 +439,7 @@ shmedia_frob_section_type (asection *sec)
       sec_elf_data = sh64_elf_section_data (sec)->sh64_info;
       if (sec_elf_data == NULL)
 	{
-	  sec_elf_data = xcalloc (1, sizeof (*sec_elf_data));
+	  sec_elf_data = XCNEW (struct sh64_section_data);
 	  sh64_elf_section_data (sec)->sh64_info = sec_elf_data;
 	}
 
@@ -1474,7 +1473,7 @@ shmedia_check_limits (offsetT *valp, bfd_reloc_code_real_type reloc,
 {
   offsetT val = *valp;
 
-  char *msg = NULL;
+  const char *msg = NULL;
 
   switch (reloc)
     {
@@ -2021,7 +2020,7 @@ shmedia_md_estimate_size_before_relax (fragS *fragP,
 	  offsetT value = fragP->fr_offset
 	    + (fragP->fr_symbol == NULL ? 0 : S_GET_VALUE (fragP->fr_symbol));
 
-	  if (value >= ((offsetT) -1 << 15) && value < ((offsetT) 1 << 15))
+	  if (value >= (-((offsetT) 1 << 15)) && value < ((offsetT) 1 << 15))
 	    {
 	      /* Fits in 16-bit signed number.  */
 	      int what = GET_WHAT (fragP->fr_subtype);
@@ -3274,8 +3273,7 @@ sh64_consume_datalabel (const char *name, expressionS *exp,
 	    {
 	      symbolS *dl_symp;
 	      const char * sname = S_GET_NAME (symp);
-	      char *dl_name
-		= xmalloc (strlen (sname) + sizeof (DATALABEL_SUFFIX));
+	      char *dl_name = concat (sname, DATALABEL_SUFFIX, (char *) NULL);
 
 	      /* Now we copy the datalabel-qualified symbol into a symbol
 		 with the same name, but with " DL" appended.  We mark the
@@ -3283,8 +3281,6 @@ sh64_consume_datalabel (const char *name, expressionS *exp,
 		 the main symbol, so we don't have to inspect all symbol
 		 names.  Note that use of "datalabel" is not expected to
 		 be a common case.  */
-	      strcpy (dl_name, sname);
-	      strcat (dl_name, DATALABEL_SUFFIX);
 
 	      /* A FAKE_LABEL_NAME marks "$" or ".".  There can be any
 		 number of them and all have the same (faked) name; we

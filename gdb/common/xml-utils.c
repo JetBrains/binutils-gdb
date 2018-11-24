@@ -1,6 +1,6 @@
 /* Shared helper routines for manipulating XML.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -17,15 +17,8 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef GDBSERVER
-#include "server.h"
-#else
-#include "defs.h"
-#endif
-
+#include "common-defs.h"
 #include "xml-utils.h"
-
-#include <string.h>
 
 /* Return a malloc allocated string with special characters from TEXT
    replaced by entity references.  */
@@ -56,7 +49,7 @@ xml_escape_text (const char *text)
       }
 
   /* Expand the result.  */
-  result = xmalloc (i + special + 1);
+  result = (char *) xmalloc (i + special + 1);
   for (i = 0, special = 0; text[i] != '\0'; i++)
     switch (text[i])
       {

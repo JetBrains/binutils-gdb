@@ -1,6 +1,6 @@
 /* Readline support for Python.
 
-   Copyright (C) 2012-2013 Free Software Foundation, Inc.
+   Copyright (C) 2012-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -19,13 +19,8 @@
 
 #include "defs.h"
 #include "python-internal.h"
-#include "exceptions.h"
 #include "top.h"
 #include "cli/cli-utils.h"
-#include <string.h>
-
-#include <stddef.h>
-
 /* Readline function suitable for PyOS_ReadlineFunctionPointer, which
    is used for Python's interactive parser and raw_input.  In both
    cases, sys_stdin and sys_stdout are always stdin and stdout
@@ -34,22 +29,26 @@
 
 static char *
 gdbpy_readline_wrapper (FILE *sys_stdin, FILE *sys_stdout,
+#if PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 4
+			const char *prompt)
+#else
 			char *prompt)
+#endif
 {
   int n;
   char *p = NULL, *q;
-  volatile struct gdb_exception except;
 
-  TRY_CATCH (except, RETURN_MASK_ALL)
-    p = command_line_input (prompt, 0, "python");
-
-  /* Detect user interrupt (Ctrl-C).  */
-  if (except.reason == RETURN_QUIT)
-    return NULL;
-
-  /* Handle errors by raising Python exceptions.  */
-  if (except.reason < 0)
+  TRY
     {
+      p = command_line_input (prompt, 0, "python");
+    }
+  /* Handle errors by raising Python exceptions.  */
+  CATCH (except, RETURN_MASK_ALL)
+    {
+      /* Detect user interrupt (Ctrl-C).  */
+      if (except.reason == RETURN_QUIT)
+	return NULL;
+
       /* The thread state is nulled during gdbpy_readline_wrapper,
 	 with the original value saved in the following undocumented
 	 variable (see Python's Parser/myreadline.c and
@@ -59,11 +58,12 @@ gdbpy_readline_wrapper (FILE *sys_stdin, FILE *sys_stdout,
       PyEval_SaveThread ();
       return NULL;
     }
+  END_CATCH
 
   /* Detect EOF (Ctrl-D).  */
   if (p == NULL)
     {
-      q = PyMem_Malloc (1);
+      q = (char *) PyMem_Malloc (1);
       if (q != NULL)
 	q[0] = '\0';
       return q;
@@ -72,7 +72,7 @@ gdbpy_readline_wrapper (FILE *sys_stdin, FILE *sys_stdout,
   n = strlen (p);
 
   /* Copy the line to Python and return.  */
-  q = PyMem_Malloc (n + 2);
+  q = (char *) PyMem_Malloc (n + 2);
   if (q != NULL)
     {
       strncpy (q, p, n);

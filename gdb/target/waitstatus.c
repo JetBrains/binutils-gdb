@@ -1,6 +1,6 @@
 /* Target waitstatus implementations.
 
-   Copyright (C) 1990-2013 Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -17,12 +17,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#ifdef GDBSERVER
-#include "server.h"
-#else
-#include "defs.h"
-#endif
-
+#include "common-defs.h"
 #include "waitstatus.h"
 
 /* Return a pretty printed form of target_waitstatus.
@@ -68,6 +63,11 @@ target_waitstatus_to_string (const struct target_waitstatus *ws)
       return xstrprintf ("%sno-history", kind_str);
     case TARGET_WAITKIND_NO_RESUMED:
       return xstrprintf ("%sno-resumed", kind_str);
+    case TARGET_WAITKIND_THREAD_CREATED:
+      return xstrprintf ("%sthread created", kind_str);
+    case TARGET_WAITKIND_THREAD_EXITED:
+      return xstrprintf ("%sthread exited, status = %d",
+			 kind_str, ws->value.integer);
     default:
       return xstrprintf ("%sunknown???", kind_str);
     }

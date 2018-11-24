@@ -1,7 +1,6 @@
 // target.h -- target support for gold   -*- C++ -*-
 
-// Copyright 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2016 Free Software Foundation, Inc.
 // Written by Ian Lance Taylor <iant@google.com>.
 
 // This file is part of gold.
@@ -37,6 +36,7 @@
 #include "elfcpp.h"
 #include "options.h"
 #include "parameters.h"
+#include "stringpool.h"
 #include "debug.h"
 
 namespace gold
@@ -62,6 +62,7 @@ class Output_section;
 class Input_objects;
 class Task;
 struct Symbol_location;
+class Versions;
 
 // The abstract class for target specific handling.
 
@@ -320,13 +321,15 @@ class Target
   ehframe_datarel_base() const
   { return this->do_ehframe_datarel_base(); }
 
-  // Return true if a reference to SYM from a reloc of type R_TYPE
+  // Return true if a reference to SYM from a reloc at *PRELOC
   // means that the current function may call an object compiled
   // without -fsplit-stack.  SYM is known to be defined in an object
   // compiled without -fsplit-stack.
   bool
-  is_call_to_non_split(const Symbol* sym, unsigned int r_type) const
-  { return this->do_is_call_to_non_split(sym, r_type); }
+  is_call_to_non_split(const Symbol* sym, const unsigned char* preloc,
+		       const unsigned char* view,
+		       section_size_type view_size) const
+  { return this->do_is_call_to_non_split(sym, preloc, view, view_size); }
 
   // A function starts at OFFSET in section SHNDX in OBJECT.  That
   // function was compiled with -fsplit-stack, but it refers to a
@@ -337,10 +340,12 @@ class Target
   void
   calls_non_split(Relobj* object, unsigned int shndx,
 		  section_offset_type fnoffset, section_size_type fnsize,
+		  const unsigned char* prelocs, size_t reloc_count,
 		  unsigned char* view, section_size_type view_size,
 		  std::string* from, std::string* to) const
   {
-    this->do_calls_non_split(object, shndx, fnoffset, fnsize, view, view_size,
+    this->do_calls_non_split(object, shndx, fnoffset, fnsize,
+			     prelocs, reloc_count, view, view_size,
 			     from, to);
   }
 
@@ -454,6 +459,41 @@ class Target
   entry_symbol_name() const
   { return this->pti_->entry_symbol_name; }
 
+  // Return the size in bits of SHT_HASH entry.
+  int
+  hash_entry_size() const
+  { return this->pti_->hash_entry_size; }
+
+  // Whether the target has a custom set_dynsym_indexes method.
+  bool
+  has_custom_set_dynsym_indexes() const
+  { return this->do_has_custom_set_dynsym_indexes(); }
+
+  // Custom set_dynsym_indexes method for a target.
+  unsigned int
+  set_dynsym_indexes(std::vector<Symbol*>* dyn_symbols, unsigned int index,
+                     std::vector<Symbol*>* syms, Stringpool* dynpool,
+                     Versions* versions, Symbol_table* symtab) const
+  {
+    return this->do_set_dynsym_indexes(dyn_symbols, index, syms, dynpool,
+                                       versions, symtab);
+  }
+
+  // Get the custom dynamic tag value.
+  unsigned int
+  dynamic_tag_custom_value(elfcpp::DT tag) const
+  { return this->do_dynamic_tag_custom_value(tag); }
+
+  // Adjust the value written to the dynamic symbol table.
+  void
+  adjust_dyn_symbol(const Symbol* sym, unsigned char* view) const
+  { this->do_adjust_dyn_symbol(sym, view); }
+
+  // Return whether to include the section in the link.
+  bool
+  should_include_section(elfcpp::Elf_Word sh_type) const
+  { return this->do_should_include_section(sh_type); }
+
  protected:
   // This struct holds the constant information for a child class.  We
   // use a struct to avoid the overhead of virtual function calls for
@@ -509,6 +549,9 @@ class Target
     const char* attributes_vendor;
     // Name of the main entry point to the program.
     const char* entry_symbol_name;
+    // Size (in bits) of SHT_HASH entry. Always equal to 32, except for
+    // 64-bit S/390.
+    const int hash_entry_size;
   };
 
   Target(const Target_info* pti)
@@ -620,12 +663,14 @@ class Target
   // default implementation is that any function not defined by the
   // ABI is a call to a non-split function.
   virtual bool
-  do_is_call_to_non_split(const Symbol* sym, unsigned int) const;
+  do_is_call_to_non_split(const Symbol* sym, const unsigned char*,
+			  const unsigned char*, section_size_type) const;
 
   // Virtual function which may be overridden by the child class.
   virtual void
   do_calls_non_split(Relobj* object, unsigned int, section_offset_type,
-		     section_size_type, unsigned char*, section_size_type,
+		     section_size_type, const unsigned char*, size_t,
+		     unsigned char*, section_size_type,
 		     std::string*, std::string*) const;
 
   // make_elf_object hooks.  There are four versions of these for
@@ -725,6 +770,33 @@ class Target
   do_gc_mark_symbol(Symbol_table*, Symbol*) const
   { }
 
+  // This may be overridden by the child class.
+  virtual bool
+  do_has_custom_set_dynsym_indexes() const
+  { return false; }
+
+  // This may be overridden by the child class.
+  virtual unsigned int
+  do_set_dynsym_indexes(std::vector<Symbol*>*, unsigned int,
+                        std::vector<Symbol*>*, Stringpool*, Versions*,
+                        Symbol_table*) const
+  { gold_unreachable(); }
+
+  // This may be overridden by the child class.
+  virtual unsigned int
+  do_dynamic_tag_custom_value(elfcpp::DT) const
+  { gold_unreachable(); }
+
+  // This may be overridden by the child class.
+  virtual void
+  do_adjust_dyn_symbol(const Symbol*, unsigned char*) const
+  { }
+
+  // This may be overridden by the child class.
+  virtual bool
+  do_should_include_section(elfcpp::Elf_Word) const
+  { return true; }
+
  private:
   // The implementations of the four do_make_elf_object virtual functions are
   // almost identical except for their sizes and endianness.  We use a template.
@@ -762,7 +834,7 @@ class Sized_target : public Target
   // symbol table.  This will only be called if has_make_symbol()
   // returns true.
   virtual Sized_symbol<size>*
-  make_symbol() const
+  make_symbol(const char*, elfcpp::STT, Object*, unsigned int, uint64_t)
   { gold_unreachable(); }
 
   // Resolve a symbol for the target.  This should be overridden by a
@@ -857,6 +929,22 @@ class Sized_target : public Target
 			  const unsigned char* plocal_symbols,
 			  Relocatable_relocs*) = 0;
 
+  // Scan the relocs for --emit-relocs.  The parameters are
+  // like scan_relocatable_relocs.
+  virtual void
+  emit_relocs_scan(Symbol_table* symtab,
+		   Layout* layout,
+		   Sized_relobj_file<size, big_endian>* object,
+		   unsigned int data_shndx,
+		   unsigned int sh_type,
+		   const unsigned char* prelocs,
+		   size_t reloc_count,
+		   Output_section* output_section,
+		   bool needs_special_offset_handling,
+		   size_t local_symbol_count,
+		   const unsigned char* plocal_syms,
+		   Relocatable_relocs* rr) = 0;
+
   // Emit relocations for a section during a relocatable link, and for
   // --emit-relocs.  The parameters are like relocate_section, with
   // additional parameters for the view of the output reloc section.
@@ -868,7 +956,6 @@ class Sized_target : public Target
 		  Output_section* output_section,
 		  typename elfcpp::Elf_types<size>::Elf_Off
                     offset_in_output_section,
-		  const Relocatable_relocs*,
 		  unsigned char* view,
 		  typename elfcpp::Elf_types<size>::Elf_Addr view_address,
 		  section_size_type view_size,
@@ -938,6 +1025,14 @@ class Sized_target : public Target
   plt_entry_size() const
   { gold_unreachable(); }
 
+  // Return the size of each GOT entry.  This is only used for
+  // laying out the incremental link info sections.  A target needs
+  // to implement this if its GOT size is different.
+
+  virtual unsigned int
+  got_entry_size() const
+  { return size / 8; }
+
   // Create the GOT and PLT sections for an incremental update.
   // A target needs to implement this to support incremental linking.
 
@@ -998,14 +1093,27 @@ class Sized_target : public Target
   // and DST_OFF.
   void
   gc_add_reference(Symbol_table* symtab,
-		   Object* src_obj,
+		   Relobj* src_obj,
 		   unsigned int src_shndx,
-		   Object* dst_obj,
+		   Relobj* dst_obj,
 		   unsigned int dst_shndx,
 		   typename elfcpp::Elf_types<size>::Elf_Addr dst_off) const
   {
     this->do_gc_add_reference(symtab, src_obj, src_shndx,
 			      dst_obj, dst_shndx, dst_off);
+  }
+
+  // Return the r_sym field from a relocation.
+  // Most targets can use the default version of this routine,
+  // but some targets have a non-standard r_info field, and will
+  // need to provide a target-specific version.
+  virtual unsigned int
+  get_r_sym(const unsigned char* preloc) const
+  {
+    // Since REL and RELA relocs share the same structure through
+    // the r_info field, we can just use REL here.
+    elfcpp::Rel<size, big_endian> rel(preloc);
+    return elfcpp::elf_r_sym<size>(rel.get_r_info());
   }
 
  protected:
@@ -1022,8 +1130,8 @@ class Sized_target : public Target
 
   // Handle target specific gc actions when adding a gc reference.
   virtual void
-  do_gc_add_reference(Symbol_table*, Object*, unsigned int,
-		      Object*, unsigned int,
+  do_gc_add_reference(Symbol_table*, Relobj*, unsigned int,
+		      Relobj*, unsigned int,
 		      typename elfcpp::Elf_types<size>::Elf_Addr) const
   { }
 

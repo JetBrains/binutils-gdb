@@ -1,6 +1,5 @@
 /* BFD back-end for binary objects.
-   Copyright 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003,
-   2004, 2005, 2006, 2007, 2009, 2011 Free Software Foundation, Inc.
+   Copyright (C) 1994-2016 Free Software Foundation, Inc.
    Written by Ian Lance Taylor, Cygnus Support, <ian@cygnus.com>
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -191,6 +190,8 @@ binary_canonicalize_symtab (bfd *abfd, asymbol **alocation)
 
 #define binary_make_empty_symbol  _bfd_generic_make_empty_symbol
 #define binary_print_symbol       _bfd_nosymbols_print_symbol
+#define binary_get_symbol_version_string \
+  _bfd_nosymbols_get_symbol_version_string
 
 /* Get information about a symbol.  */
 
@@ -205,6 +206,7 @@ binary_get_symbol_info (bfd *ignore_abfd ATTRIBUTE_UNUSED,
 #define binary_bfd_is_local_label_name      bfd_generic_is_local_label_name
 #define binary_get_lineno                  _bfd_nosymbols_get_lineno
 #define binary_find_nearest_line           _bfd_nosymbols_find_nearest_line
+#define binary_find_line                   _bfd_nosymbols_find_line
 #define binary_find_inliner_info           _bfd_nosymbols_find_inliner_info
 #define binary_bfd_make_debug_symbol       _bfd_nosymbols_bfd_make_debug_symbol
 #define binary_read_minisymbols            _bfd_generic_read_minisymbols
@@ -306,14 +308,13 @@ binary_sizeof_headers (bfd *abfd ATTRIBUTE_UNUSED,
 #define binary_section_already_linked             _bfd_generic_section_already_linked
 #define binary_bfd_define_common_symbol            bfd_generic_define_common_symbol
 #define binary_bfd_link_hash_table_create         _bfd_generic_link_hash_table_create
-#define binary_bfd_link_hash_table_free           _bfd_generic_link_hash_table_free
 #define binary_bfd_link_just_syms                 _bfd_generic_link_just_syms
-#define binary_bfd_copy_link_hash_symbol_type \
-  _bfd_generic_copy_link_hash_symbol_type
+#define binary_bfd_copy_link_hash_symbol_type     _bfd_generic_copy_link_hash_symbol_type
 #define binary_bfd_link_add_symbols               _bfd_generic_link_add_symbols
 #define binary_bfd_final_link                     _bfd_generic_final_link
 #define binary_bfd_link_split_section             _bfd_generic_link_split_section
 #define binary_get_section_contents_in_window     _bfd_generic_get_section_contents_in_window
+#define binary_bfd_link_check_relocs              _bfd_generic_link_check_relocs
 
 const bfd_target binary_vec =
 {

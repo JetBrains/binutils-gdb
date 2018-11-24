@@ -1,5 +1,5 @@
 /* This file is tc-msp430.h
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2016 Free Software Foundation, Inc.
 
    Contributed by Dmitry Diky <diwil@mail.ru>
 
@@ -120,6 +120,10 @@ extern long msp430_relax_frag (segT, fragS *, long);
    msp430_force_relocation_local (FIX)
 extern int msp430_force_relocation_local (struct fix *);
 
+/* We need to add reference symbols for .data/.bss.  */
+#define tc_frob_section(sec) msp430_frob_section (sec)
+extern void msp430_frob_section (asection *);
+
 extern int msp430_enable_relax;
 extern int msp430_enable_polys;
 
@@ -155,7 +159,8 @@ extern bfd_boolean msp430_allow_local_subtract (expressionS *, expressionS *, se
    linker, but this fix is simpler, and it pretty much only affects
    object size a little bit.  */
 #define TC_FORCE_RELOCATION_SUB_SAME(FIX, SEC)	\
-  (((SEC)->flags & SEC_CODE) != 0		\
+  (   ((SEC)->flags & SEC_CODE) != 0		\
+   || ((SEC)->flags & SEC_DEBUGGING) != 0	\
    || ! SEG_NORMAL (SEC)			\
    || TC_FORCE_RELOCATION (FIX))
 
@@ -165,4 +170,6 @@ extern bfd_boolean msp430_allow_local_subtract (expressionS *, expressionS *, se
 
 #define DWARF2_USE_FIXED_ADVANCE_PC 1
 
-#define TC_LINKRELAX_FIXUP(seg) (seg->flags & SEC_CODE)
+#define TC_LINKRELAX_FIXUP(seg) ((seg->flags & SEC_CODE) || (seg->flags & SEC_DEBUGGING))
+
+#define DWARF2_ADDR_SIZE(bfd) 4

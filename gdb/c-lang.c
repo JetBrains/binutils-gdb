@@ -1,6 +1,6 @@
 /* C language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1992-2013 Free Software Foundation, Inc.
+   Copyright (C) 1992-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -27,15 +27,12 @@
 #include "c-lang.h"
 #include "valprint.h"
 #include "macroscope.h"
-#include "gdb_assert.h"
 #include "charset.h"
-#include <string.h>
 #include "demangle.h"
 #include "cp-abi.h"
 #include "cp-support.h"
 #include "gdb_obstack.h"
 #include <ctype.h>
-#include "exceptions.h"
 #include "gdbcore.h"
 
 extern void _initialize_c_language (void);
@@ -44,8 +41,7 @@ extern void _initialize_c_language (void);
    character set name.  */
 
 static const char *
-charset_for_string_type (enum c_string_type str_type,
-			 struct gdbarch *gdbarch)
+charset_for_string_type (c_string_type str_type, struct gdbarch *gdbarch)
 {
   switch (str_type & ~C_CHAR)
     {
@@ -75,11 +71,11 @@ charset_for_string_type (enum c_string_type str_type,
    characters of this type in target BYTE_ORDER to the host character
    set.  */
 
-static enum c_string_type
+static c_string_type
 classify_type (struct type *elttype, struct gdbarch *gdbarch,
 	       const char **encoding)
 {
-  enum c_string_type result;
+  c_string_type result;
 
   /* We loop because ELTTYPE may be a typedef, and we want to
      successively peel each typedef until we reach a type we
@@ -127,7 +123,7 @@ classify_type (struct type *elttype, struct gdbarch *gdbarch,
 	  /* Perhaps check_typedef did not update the target type.  In
 	     this case, force the lookup again and hope it works out.
 	     It never will for C, but it might for C++.  */
-	  CHECK_TYPEDEF (elttype);
+	  elttype = check_typedef (elttype);
 	}
     }
 
@@ -158,7 +154,7 @@ c_emit_char (int c, struct type *type,
 void
 c_printchar (int c, struct type *type, struct ui_file *stream)
 {
-  enum c_string_type str_type;
+  c_string_type str_type;
 
   str_type = classify_type (type, get_type_arch (type), NULL);
   switch (str_type)
@@ -194,7 +190,7 @@ c_printstr (struct ui_file *stream, struct type *type,
 	    const char *user_encoding, int force_ellipses,
 	    const struct value_print_options *options)
 {
-  enum c_string_type str_type;
+  c_string_type str_type;
   const char *type_encoding;
   const char *encoding;
 
@@ -227,9 +223,13 @@ c_printstr (struct ui_file *stream, struct type *type,
    until a null character of the appropriate width is found, otherwise
    the string is read to the length of characters specified.  The size
    of a character is determined by the length of the target type of
-   the pointer or array.  If VALUE is an array with a known length,
-   the function will not read past the end of the array.  On
-   completion, *LENGTH will be set to the size of the string read in
+   the pointer or array.
+
+   If VALUE is an array with a known length, and *LENGTH is -1,
+   the function will not read past the end of the array.  However, any
+   declared size of the array is ignored if *LENGTH > 0.
+
+   On completion, *LENGTH will be set to the size of the string read in
    characters.  (If a length of -1 is specified, the length returned
    will not include the null character).  CHARSET is always set to the
    target charset.  */
@@ -301,7 +301,7 @@ c_get_string (struct value *value, gdb_byte **buffer,
       /* I is now either a user-defined length, the number of non-null
  	 characters, or FETCHLIMIT.  */
       *length = i * width;
-      *buffer = xmalloc (*length);
+      *buffer = (gdb_byte *) xmalloc (*length);
       memcpy (*buffer, contents, *length);
       err = 0;
     }
@@ -309,12 +309,27 @@ c_get_string (struct value *value, gdb_byte **buffer,
     {
       CORE_ADDR addr = value_as_address (value);
 
+      /* Prior to the fix for PR 16196 read_string would ignore fetchlimit
+	 if length > 0.  The old "broken" behaviour is the behaviour we want:
+	 The caller may want to fetch 100 bytes from a variable length array
+	 implemented using the common idiom of having an array of length 1 at
+	 the end of a struct.  In this case we want to ignore the declared
+	 size of the array.  However, it's counterintuitive to implement that
+	 behaviour in read_string: what does fetchlimit otherwise mean if
+	 length > 0.  Therefore we implement the behaviour we want here:
+	 If *length > 0, don't specify a fetchlimit.  This preserves the
+	 previous behaviour.  We could move this check above where we know
+	 whether the array is declared with a fixed size, but we only want
+	 to apply this behaviour when calling read_string.  PR 16286.  */
+      if (*length > 0)
+	fetchlimit = UINT_MAX;
+
       err = read_string (addr, *length, width, fetchlimit,
 			 byte_order, buffer, length);
-      if (err)
+      if (err != 0)
 	{
 	  xfree (*buffer);
-	  memory_error (err, addr);
+	  memory_error (TARGET_XFER_E_IO, addr);
 	}
     }
 
@@ -396,7 +411,7 @@ emit_numeric_character (struct type *type, unsigned long value,
 {
   gdb_byte *buffer;
 
-  buffer = alloca (TYPE_LENGTH (type));
+  buffer = (gdb_byte *) alloca (TYPE_LENGTH (type));
   pack_long (buffer, type, value);
   obstack_grow (output, buffer, TYPE_LENGTH (type));
 }
@@ -561,7 +576,7 @@ evaluate_subexp_c (struct type *expect_type, struct expression *exp,
 	struct obstack output;
 	struct cleanup *cleanup;
 	struct value *result;
-	enum c_string_type dest_type;
+	c_string_type dest_type;
 	const char *dest_charset;
 	int satisfy_expected = 0;
 
@@ -573,8 +588,8 @@ evaluate_subexp_c (struct type *expect_type, struct expression *exp,
 
 	++*pos;
 	limit = *pos + BYTES_TO_EXP_ELEM (oplen + 1);
-	dest_type
-	  = (enum c_string_type) longest_to_int (exp->elts[*pos].longconst);
+	dest_type = ((enum c_string_type_values)
+		     longest_to_int (exp->elts[*pos].longconst));
 	switch (dest_type & ~C_CHAR)
 	  {
 	  case C_STRING:
@@ -686,7 +701,7 @@ evaluate_subexp_c (struct type *expect_type, struct expression *exp,
 			obstack_object_size (&output));
 	      }
 	    else
-	      result = value_cstring (obstack_base (&output),
+	      result = value_cstring ((const char *) obstack_base (&output),
 				      obstack_object_size (&output),
 				      type);
 	  }
@@ -738,7 +753,7 @@ const struct op_print c_op_print_tab[] =
   {"sizeof ", UNOP_SIZEOF, PREC_PREFIX, 0},
   {"++", UNOP_PREINCREMENT, PREC_PREFIX, 0},
   {"--", UNOP_PREDECREMENT, PREC_PREFIX, 0},
-  {NULL, 0, 0, 0}
+  {NULL, OP_NULL, PREC_PREFIX, 0}
 };
 
 enum c_primitive_types {
@@ -820,7 +835,7 @@ const struct language_defn c_language_defn =
   macro_expansion_c,
   &exp_descriptor_c,
   c_parse,
-  c_error,
+  c_yyerror,
   null_post_parser,
   c_printchar,			/* Print a character constant */
   c_printstr,			/* Function to print string constant */
@@ -849,6 +864,8 @@ const struct language_defn c_language_defn =
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
   &c_varobj_ops,
+  c_get_compile_context,
+  c_compute_program,
   LANG_MAGIC
 };
 
@@ -945,7 +962,7 @@ const struct language_defn cplus_language_defn =
   macro_expansion_c,
   &exp_descriptor_c,
   c_parse,
-  c_error,
+  c_yyerror,
   null_post_parser,
   c_printchar,			/* Print a character constant */
   c_printstr,			/* Function to print string constant */
@@ -974,6 +991,8 @@ const struct language_defn cplus_language_defn =
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
   &cplus_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -988,7 +1007,7 @@ const struct language_defn asm_language_defn =
   macro_expansion_c,
   &exp_descriptor_c,
   c_parse,
-  c_error,
+  c_yyerror,
   null_post_parser,
   c_printchar,			/* Print a character constant */
   c_printstr,			/* Function to print string constant */
@@ -1017,6 +1036,8 @@ const struct language_defn asm_language_defn =
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
   &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -1036,7 +1057,7 @@ const struct language_defn minimal_language_defn =
   macro_expansion_c,
   &exp_descriptor_c,
   c_parse,
-  c_error,
+  c_yyerror,
   null_post_parser,
   c_printchar,			/* Print a character constant */
   c_printstr,			/* Function to print string constant */
@@ -1065,6 +1086,8 @@ const struct language_defn minimal_language_defn =
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
   &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 

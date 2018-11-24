@@ -1,6 +1,5 @@
 /* tc-mmix.c -- Assembler for Don Knuth's MMIX.
-   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-   2012  Free Software Foundation.
+   Copyright (C) 2001-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -113,6 +112,7 @@ static struct loc_assert_s
  {
    segT old_seg;
    symbolS *loc_sym;
+   fragS *frag;
    struct loc_assert_s *next;
  } *loc_asserts = NULL;
 
@@ -186,7 +186,7 @@ int mmix_next_semicolon_is_eoln = 1;
 
 /* Do we have a BSPEC in progress?  */
 static int doing_bspec = 0;
-static char *bspec_file;
+static const char *bspec_file;
 static unsigned int bspec_line;
 
 struct option md_longopts[] =
@@ -395,9 +395,9 @@ const char line_comment_chars[] = "*#";
 
 const char line_separator_chars[] = ";";
 
-const char mmix_exp_chars[] = "eE";
+const char EXP_CHARS[] = "eE";
 
-const char mmix_flt_chars[] = "rf";
+const char FLT_CHARS[] = "rf";
 
 
 /* Fill in the offset-related part of GETA or Bcc.  */
@@ -587,8 +587,10 @@ get_putget_operands (struct mmix_opcode *insn, char *operands,
 	    p++;
 	  sregp = p;
 	  input_line_pointer = sregp;
-	  c = get_symbol_end ();
+	  c = get_symbol_name (&sregp);
 	  sregend = input_line_pointer;
+	  if (c == '"')
+	    ++ input_line_pointer;
 	}
     }
   else
@@ -596,10 +598,10 @@ get_putget_operands (struct mmix_opcode *insn, char *operands,
       expp_sreg = &exp[0];
       expp_reg = &exp[1];
 
-      sregp = p;
-      c = get_symbol_end ();
-      sregend = p = input_line_pointer;
-      *p = c;
+      c = get_symbol_name (&sregp);
+      sregend = input_line_pointer;
+      restore_line_pointer (c);
+      p = input_line_pointer;
 
       /* Skip whitespace */
       while (*p == ' ' || *p == '\t')
@@ -638,7 +640,7 @@ get_putget_operands (struct mmix_opcode *insn, char *operands,
 /* Handle MMIX-specific option.  */
 
 int
-md_parse_option (int c, char *arg ATTRIBUTE_UNUSED)
+md_parse_option (int c, const char *arg ATTRIBUTE_UNUSED)
 {
   switch (c)
     {
@@ -1475,8 +1477,8 @@ md_assemble (char *str)
 		&& ((exp[1].X_op == O_register
 		     && exp[1].X_add_number < 512)
 		    || (exp[1].X_op == O_constant
-			&& exp[1].X_add_number < 0
-			&& exp[1].X_add_number > 4)
+			&& (exp[1].X_add_number < 0
+			    || exp[1].X_add_number > 4))
 		    || (exp[1].X_op != O_register
 			&& exp[1].X_op != O_constant))))
 	  {
@@ -1939,10 +1941,8 @@ s_prefix (int unused ATTRIBUTE_UNUSED)
 
   SKIP_WHITESPACE ();
 
-  p = input_line_pointer;
-
-  c = get_symbol_end ();
-
+  c = get_symbol_name (&p);
+  
   /* Reseting prefix?  */
   if (*p == ':' && p[1] == 0)
     mmix_current_prefix = NULL;
@@ -1961,7 +1961,7 @@ s_prefix (int unused ATTRIBUTE_UNUSED)
       mmix_current_prefix = p;
     }
 
-  *input_line_pointer = c;
+  (void) restore_line_pointer (c);
 
   mmix_handle_rest_of_empty_line ();
 }
@@ -2057,13 +2057,15 @@ s_greg (int unused ATTRIBUTE_UNUSED)
 {
   char *p;
   char c;
-  p = input_line_pointer;
 
   /* This will skip over what can be a symbol and zero out the next
      character, which we assume is a ',' or other meaningful delimiter.
      What comes after that is the initializer expression for the
      register.  */
-  c = get_symbol_end ();
+  c = get_symbol_name (&p);
+
+  if (c == '"')
+    c = * ++ input_line_pointer;
 
   if (! is_end_of_line[(unsigned char) c])
     input_line_pointer++;
@@ -2139,7 +2141,7 @@ s_bspec (int unused ATTRIBUTE_UNUSED)
   subseg_set (sec, 0);
 
   /* Save position for missing ESPEC.  */
-  as_where (&bspec_file, &bspec_line);
+  bspec_file = as_where (&bspec_line);
 
   doing_bspec = 1;
 }
@@ -2270,12 +2272,12 @@ md_estimate_size_before_relax (fragS *fragP, segT segment)
    emitted is stored in *sizeP .  An error message is returned, or NULL on
    OK.  */
 
-char *
+const char *
 md_atof (int type, char *litP, int *sizeP)
 {
   if (type == 'r')
     type = 'f';
-  /* FIXME: Having 'f' in mmix_flt_chars (and here) makes it
+  /* FIXME: Having 'f' in FLT_CHARS (and here) makes it
      problematic to also have a forward reference in an expression.
      The testsuite wants it, and it's customary.
      We'll deal with the real problems when they come; we share the
@@ -2872,9 +2874,9 @@ tc_gen_reloc (asection *section ATTRIBUTE_UNUSED, fixS *fixP)
       return NULL;
     }
 
-  relP = (arelent *) xmalloc (sizeof (arelent));
+  relP = XNEW (arelent);
   gas_assert (relP != 0);
-  relP->sym_ptr_ptr = (asymbol **) xmalloc (sizeof (asymbol *));
+  relP->sym_ptr_ptr = XNEW (asymbol *);
   *relP->sym_ptr_ptr = baddsy;
   relP->address = fixP->fx_frag->fr_address + fixP->fx_where;
 
@@ -2937,18 +2939,16 @@ mmix_handle_mmixal (void)
 	 caller is about to bump the counters.  Adjust the error messages.  */
       if (is_end_of_line[(unsigned int) *s])
 	{
-	  char *name;
 	  unsigned int line;
-	  as_where (&name, &line);
+	  const char * name = as_where (&line);
 	  as_bad_where (name, line + 1,
 			_("[0-9]H labels may not appear alone on a line"));
 	  current_fb_label = -1;
 	}
       if (*s == '.')
 	{
-	  char *name;
 	  unsigned int line;
-	  as_where (&name, &line);
+	  const char * name  = as_where (&line);
 	  as_bad_where (name, line + 1,
 			_("[0-9]H labels do not mix with dot-pseudos"));
 	  current_fb_label = -1;
@@ -2973,7 +2973,7 @@ mmix_handle_mmixal (void)
   if (*s == 0 || is_end_of_line[(unsigned int) *s])
     /* We avoid handling empty lines here.  */
     return;
-      
+
   if (is_name_beginner (*s))
     label = s;
 
@@ -3007,7 +3007,7 @@ mmix_handle_mmixal (void)
 	 it the same alignment and address as the associated instruction.  */
 
       /* Make room for the label including the ending nul.  */
-      int len_0 = s - label + 1;
+      size_t len_0 = s - label + 1;
 
       /* Save this label on the MMIX symbol obstack.  Saving it on an
 	 obstack is needless for "IS"-pseudos, but it's harmless and we
@@ -3413,7 +3413,7 @@ mmix_md_relax_frag (segT seg, fragS *fragP, long stretch)
 	fragP->fr_subtype = ENCODE_RELAX (STATE_PUSHJSTUB, STATE_ZERO);
       }
       /* FALLTHROUGH.  */
-    
+
       /* See if this PUSHJ is redirectable to a stub.  */
     case ENCODE_RELAX (STATE_PUSHJSTUB, STATE_ZERO):
       {
@@ -3553,7 +3553,7 @@ mmix_md_end (void)
       actual_seg = S_GET_SEGMENT (loc_assert->loc_sym);
       if (actual_seg != loc_assert->old_seg)
 	{
-	  char *fnam;
+	  const char *fnam;
 	  unsigned int line;
 	  int e_valid = expr_symbol_where (loc_assert->loc_sym, &fnam, &line);
 
@@ -3561,6 +3561,15 @@ mmix_md_end (void)
 	  as_bad_where (fnam, line,
 			_("LOC to section unknown or indeterminable "
 			  "at first pass"));
+
+	  /* Patch up the generic location data to avoid cascading
+	     error messages from later passes.  (See original in
+	     write.c:relax_segment.)  */
+	  fragP = loc_assert->frag;
+	  fragP->fr_type = rs_align;
+	  fragP->fr_subtype = 0;
+	  fragP->fr_offset = 0;
+	  fragP->fr_fix = 0;
 	}
     }
 
@@ -3766,7 +3775,7 @@ mmix_frob_file (void)
 
       if (gregs == NULL)
 	{
-	  gregs = xmalloc (sizeof (*gregs));
+	  gregs = XNEW (struct mmix_symbol_gregs);
 	  gregs->n_gregs = 0;
 	  symbol_set_tc (sym, &gregs);
 	  all_greg_symbols[n_greg_symbols++] = gregs;
@@ -3804,7 +3813,7 @@ int
 mmix_parse_predefined_name (char *name, expressionS *expP)
 {
   char *canon_name;
-  char *handler_charp;
+  const char *handler_charp;
   const char handler_chars[] = "DVWIOUZX";
   symbolS *symp;
 
@@ -4080,11 +4089,11 @@ s_loc (int ignore ATTRIBUTE_UNUSED)
       if (section == undefined_section)
 	{
 	  struct loc_assert_s *next = loc_asserts;
-	  loc_asserts
-	    = (struct loc_assert_s *) xmalloc (sizeof (*loc_asserts));
+	  loc_asserts = XNEW (struct loc_assert_s);
 	  loc_asserts->next = next;
 	  loc_asserts->old_seg = now_seg;
 	  loc_asserts->loc_sym = esym;
+	  loc_asserts->frag = frag_now;
 	}
 
       p = frag_var (rs_org, 1, 1, (relax_substateT) 0, sym, off, (char *) 0);

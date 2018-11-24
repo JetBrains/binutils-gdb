@@ -1,6 +1,6 @@
 /* Serial interface for local (hardwired) serial ports on Windows systems
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -29,9 +29,6 @@
 #include <unistd.h>
 #include <sys/types.h>
 
-#include "gdb_assert.h"
-#include <string.h>
-
 #include "command.h"
 
 void _initialize_ser_windows (void);
@@ -47,7 +44,8 @@ struct ser_windows_state
 /* CancelIo is not available for Windows 95 OS, so we need to use
    LoadLibrary/GetProcAddress to avoid a startup failure.  */
 #define CancelIo dyn_CancelIo
-static BOOL WINAPI (*CancelIo) (HANDLE);
+typedef BOOL WINAPI (CancelIo_ftype) (HANDLE);
+static CancelIo_ftype *CancelIo;
 
 /* Open up a real live device for serial I/O.  */
 
@@ -90,8 +88,7 @@ ser_windows_open (struct serial *scb, const char *name)
       return -1;
     }
 
-  state = xmalloc (sizeof (struct ser_windows_state));
-  memset (state, 0, sizeof (struct ser_windows_state));
+  state = XCNEW (struct ser_windows_state);
   scb->state = state;
 
   /* Create a manual reset event to watch the input buffer.  */
@@ -156,7 +153,6 @@ ser_windows_raw (struct serial *scb)
   if (GetCommState (h, &state) == 0)
     return;
 
-  state.fParity = FALSE;
   state.fOutxCtsFlow = FALSE;
   state.fOutxDsrFlow = FALSE;
   state.fDtrControl = DTR_CONTROL_ENABLE;
@@ -166,7 +162,6 @@ ser_windows_raw (struct serial *scb)
   state.fNull = FALSE;
   state.fAbortOnError = FALSE;
   state.ByteSize = 8;
-  state.Parity = NOPARITY;
 
   scb->current_timeout = 0;
 
@@ -201,6 +196,40 @@ ser_windows_setstopbits (struct serial *scb, int num)
   return (SetCommState (h, &state) != 0) ? 0 : -1;
 }
 
+/* Implement the "setparity" serial_ops callback.  */
+
+static int
+ser_windows_setparity (struct serial *scb, int parity)
+{
+  HANDLE h = (HANDLE) _get_osfhandle (scb->fd);
+  DCB state;
+
+  if (GetCommState (h, &state) == 0)
+    return -1;
+
+  switch (parity)
+    {
+    case GDBPARITY_NONE:
+      state.Parity = NOPARITY;
+      state.fParity = FALSE;
+      break;
+    case GDBPARITY_ODD:
+      state.Parity = ODDPARITY;
+      state.fParity = TRUE;
+      break;
+    case GDBPARITY_EVEN:
+      state.Parity = EVENPARITY;
+      state.fParity = TRUE;
+      break;
+    default:
+      internal_warning (__FILE__, __LINE__,
+			"Incorrect parity value: %d", parity);
+      return -1;
+    }
+
+  return (SetCommState (h, &state) != 0) ? 0 : -1;
+}
+
 static int
 ser_windows_setbaudrate (struct serial *scb, int rate)
 {
@@ -226,7 +255,7 @@ ser_windows_close (struct serial *scb)
      by calling close (scb->fd) below.  */
   if (CancelIo)
     CancelIo ((HANDLE) _get_osfhandle (scb->fd));
-  state = scb->state;
+  state = (struct ser_windows_state *) scb->state;
   CloseHandle (state->ov.hEvent);
   CloseHandle (state->except_event);
 
@@ -247,7 +276,7 @@ ser_windows_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
   DWORD errors;
   HANDLE h = (HANDLE) _get_osfhandle (scb->fd);
 
-  state = scb->state;
+  state = (struct ser_windows_state *) scb->state;
 
   *except = state->except_event;
   *read = state->ov.hEvent;
@@ -300,7 +329,7 @@ ser_windows_read_prim (struct serial *scb, size_t count)
   HANDLE h;
   gdb_byte *p;
 
-  state = scb->state;
+  state = (struct ser_windows_state *) scb->state;
   if (state->in_progress)
     {
       WaitForSingleObject (state->ov.hEvent, INFINITE);
@@ -504,12 +533,12 @@ stop_select_thread (struct ser_console_state *state)
 static DWORD WINAPI
 console_select_thread (void *arg)
 {
-  struct serial *scb = arg;
+  struct serial *scb = (struct serial *) arg;
   struct ser_console_state *state;
   int event_index;
   HANDLE h;
 
-  state = scb->state;
+  state = (struct ser_console_state *) scb->state;
   h = (HANDLE) _get_osfhandle (scb->fd);
 
   while (1)
@@ -607,12 +636,12 @@ fd_is_file (int fd)
 static DWORD WINAPI
 pipe_select_thread (void *arg)
 {
-  struct serial *scb = arg;
+  struct serial *scb = (struct serial *) arg;
   struct ser_console_state *state;
   int event_index;
   HANDLE h;
 
-  state = scb->state;
+  state = (struct ser_console_state *) scb->state;
   h = (HANDLE) _get_osfhandle (scb->fd);
 
   while (1)
@@ -650,12 +679,12 @@ pipe_select_thread (void *arg)
 static DWORD WINAPI
 file_select_thread (void *arg)
 {
-  struct serial *scb = arg;
+  struct serial *scb = (struct serial *) arg;
   struct ser_console_state *state;
   int event_index;
   HANDLE h;
 
-  state = scb->state;
+  state = (struct ser_console_state *) scb->state;
   h = (HANDLE) _get_osfhandle (scb->fd);
 
   while (1)
@@ -676,7 +705,7 @@ file_select_thread (void *arg)
 static void
 ser_console_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 {
-  struct ser_console_state *state = scb->state;
+  struct ser_console_state *state = (struct ser_console_state *) scb->state;
 
   if (state == NULL)
     {
@@ -691,8 +720,7 @@ ser_console_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 	  return;
 	}
 
-      state = xmalloc (sizeof (struct ser_console_state));
-      memset (state, 0, sizeof (struct ser_console_state));
+      state = XCNEW (struct ser_console_state);
       scb->state = state;
 
       if (is_tty)
@@ -731,7 +759,7 @@ ser_console_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 static void
 ser_console_done_wait_handle (struct serial *scb)
 {
-  struct ser_console_state *state = scb->state;
+  struct ser_console_state *state = (struct ser_console_state *) scb->state;
 
   if (state == NULL)
     return;
@@ -742,7 +770,7 @@ ser_console_done_wait_handle (struct serial *scb)
 static void
 ser_console_close (struct serial *scb)
 {
-  struct ser_console_state *state = scb->state;
+  struct ser_console_state *state = (struct ser_console_state *) scb->state;
 
   if (scb->state)
     {
@@ -763,7 +791,7 @@ ser_console_get_tty_state (struct serial *scb)
     {
       struct ser_console_ttystate *state;
 
-      state = (struct ser_console_ttystate *) xmalloc (sizeof *state);
+      state = XNEW (struct ser_console_ttystate);
       state->is_a_tty = 1;
       return state;
     }
@@ -788,9 +816,8 @@ struct pipe_state
 static struct pipe_state *
 make_pipe_state (void)
 {
-  struct pipe_state *ps = XMALLOC (struct pipe_state);
+  struct pipe_state *ps = XCNEW (struct pipe_state);
 
-  memset (ps, 0, sizeof (*ps));
   ps->wait.read_event = INVALID_HANDLE_VALUE;
   ps->wait.except_event = INVALID_HANDLE_VALUE;
   ps->wait.start_select = INVALID_HANDLE_VALUE;
@@ -828,7 +855,7 @@ free_pipe_state (struct pipe_state *ps)
 static void
 cleanup_pipe_state (void *untyped)
 {
-  struct pipe_state *ps = untyped;
+  struct pipe_state *ps = (struct pipe_state *) untyped;
 
   free_pipe_state (ps);
 }
@@ -931,7 +958,7 @@ pipe_windows_fdopen (struct serial *scb, int fd)
 static void
 pipe_windows_close (struct serial *scb)
 {
-  struct pipe_state *ps = scb->state;
+  struct pipe_state *ps = (struct pipe_state *) scb->state;
 
   /* In theory, we should try to kill the subprocess here, but the pex
      interface doesn't give us enough information to do that.  Usually
@@ -967,7 +994,7 @@ pipe_windows_read (struct serial *scb, size_t count)
 static int
 pipe_windows_write (struct serial *scb, const void *buf, size_t count)
 {
-  struct pipe_state *ps = scb->state;
+  struct pipe_state *ps = (struct pipe_state *) scb->state;
   HANDLE pipeline_in;
   DWORD written;
 
@@ -989,7 +1016,7 @@ pipe_windows_write (struct serial *scb, const void *buf, size_t count)
 static void
 pipe_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 {
-  struct pipe_state *ps = scb->state;
+  struct pipe_state *ps = (struct pipe_state *) scb->state;
 
   /* Have we allocated our events yet?  */
   if (ps->wait.read_event == INVALID_HANDLE_VALUE)
@@ -1010,7 +1037,7 @@ pipe_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 static void
 pipe_done_wait_handle (struct serial *scb)
 {
-  struct pipe_state *ps = scb->state;
+  struct pipe_state *ps = (struct pipe_state *) scb->state;
 
   /* Have we allocated our events yet?  */
   if (ps->wait.read_event == INVALID_HANDLE_VALUE)
@@ -1046,14 +1073,40 @@ struct net_windows_state
   HANDLE sock_event;
 };
 
+/* Check whether the socket has any pending data to be read.  If so,
+   set the select thread's read event.  On error, set the select
+   thread's except event.  If any event was set, return true,
+   otherwise return false.  */
+
+static int
+net_windows_socket_check_pending (struct serial *scb)
+{
+  struct net_windows_state *state = (struct net_windows_state *) scb->state;
+  unsigned long available;
+
+  if (ioctlsocket (scb->fd, FIONREAD, &available) != 0)
+    {
+      /* The socket closed, or some other error.  */
+      SetEvent (state->base.except_event);
+      return 1;
+    }
+  else if (available > 0)
+    {
+      SetEvent (state->base.read_event);
+      return 1;
+    }
+
+  return 0;
+}
+
 static DWORD WINAPI
 net_windows_select_thread (void *arg)
 {
-  struct serial *scb = arg;
+  struct serial *scb = (struct serial *) arg;
   struct net_windows_state *state;
   int event_index;
 
-  state = scb->state;
+  state = (struct net_windows_state *) scb->state;
 
   while (1)
     {
@@ -1065,39 +1118,60 @@ net_windows_select_thread (void *arg)
       wait_events[0] = state->base.stop_select;
       wait_events[1] = state->sock_event;
 
-      event_index = WaitForMultipleObjects (2, wait_events, FALSE, INFINITE);
-
-      if (event_index == WAIT_OBJECT_0
-	  || WaitForSingleObject (state->base.stop_select, 0) == WAIT_OBJECT_0)
-	/* We have been requested to stop.  */
-	;
-      else if (event_index != WAIT_OBJECT_0 + 1)
-	/* Some error has occured.  Assume that this is an error
-	   condition.  */
-	SetEvent (state->base.except_event);
-      else
+      /* Wait for something to happen on the socket.  */
+      while (1)
 	{
+	  event_index = WaitForMultipleObjects (2, wait_events, FALSE, INFINITE);
+
+	  if (event_index == WAIT_OBJECT_0
+	      || WaitForSingleObject (state->base.stop_select, 0) == WAIT_OBJECT_0)
+	    {
+	      /* We have been requested to stop.  */
+	      break;
+	    }
+
+	  if (event_index != WAIT_OBJECT_0 + 1)
+	    {
+	      /* Some error has occured.  Assume that this is an error
+		 condition.  */
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
+
 	  /* Enumerate the internal network events, and reset the
 	     object that signalled us to catch the next event.  */
-	  WSAEnumNetworkEvents (scb->fd, state->sock_event, &events);
-	  
-	  gdb_assert (events.lNetworkEvents & (FD_READ | FD_CLOSE));
-	  
+	  if (WSAEnumNetworkEvents (scb->fd, state->sock_event, &events) != 0)
+	    {
+	      /* Something went wrong.  Maybe the socket is gone.  */
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
+
 	  if (events.lNetworkEvents & FD_READ)
-	    SetEvent (state->base.read_event);
-	  
+	    {
+	      if (net_windows_socket_check_pending (scb))
+		break;
+
+	      /* Spurious wakeup.  That is, the socket's event was
+		 signalled before we last called recv.  */
+	    }
+
 	  if (events.lNetworkEvents & FD_CLOSE)
-	    SetEvent (state->base.except_event);
+	    {
+	      SetEvent (state->base.except_event);
+	      break;
+	    }
 	}
 
       SetEvent (state->base.have_stopped);
     }
+  return 0;
 }
 
 static void
 net_windows_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
 {
-  struct net_windows_state *state = scb->state;
+  struct net_windows_state *state = (struct net_windows_state *) scb->state;
 
   /* Start from a clean slate.  */
   ResetEvent (state->base.read_event);
@@ -1107,66 +1181,16 @@ net_windows_wait_handle (struct serial *scb, HANDLE *read, HANDLE *except)
   *read = state->base.read_event;
   *except = state->base.except_event;
 
-  /* Check any pending events.  This both avoids starting the thread
-     unnecessarily, and handles stray FD_READ events (see below).  */
-  if (WaitForSingleObject (state->sock_event, 0) == WAIT_OBJECT_0)
-    {
-      WSANETWORKEVENTS events;
-      int any = 0;
-
-      /* Enumerate the internal network events, and reset the object that
-	 signalled us to catch the next event.  */
-      WSAEnumNetworkEvents (scb->fd, state->sock_event, &events);
-
-      /* You'd think that FD_READ or FD_CLOSE would be set here.  But,
-	 sometimes, neither is.  I suspect that the FD_READ is set and
-	 the corresponding event signalled while recv is running, and
-	 the FD_READ is then lowered when recv consumes all the data,
-	 but there's no way to un-signal the event.  This isn't a
-	 problem for the call in net_select_thread, since any new
-	 events after this point will not have been drained by recv.
-	 It just means that we can't have the obvious assert here.  */
-
-      /* If there is a read event, it might be still valid, or it might
-	 not be - it may have been signalled before we last called
-	 recv.  Double-check that there is data.  */
-      if (events.lNetworkEvents & FD_READ)
-	{
-	  unsigned long available;
-
-	  if (ioctlsocket (scb->fd, FIONREAD, &available) == 0
-	      && available > 0)
-	    {
-	      SetEvent (state->base.read_event);
-	      any = 1;
-	    }
-	  else
-	    /* Oops, no data.  This call to recv will cause future
-	       data to retrigger the event, e.g. while we are
-	       in net_select_thread.  */
-	    recv (scb->fd, NULL, 0, 0);
-	}
-
-      /* If there's a close event, then record it - it is obviously
-	 still valid, and it will not be resignalled.  */
-      if (events.lNetworkEvents & FD_CLOSE)
-	{
-	  SetEvent (state->base.except_event);
-	  any = 1;
-	}
-
-      /* If we set either handle, there's no need to wake the thread.  */
-      if (any)
-	return;
-    }
-
-  start_select_thread (&state->base);
+  /* Check any pending events.  Otherwise, start the select
+     thread.  */
+  if (!net_windows_socket_check_pending (scb))
+    start_select_thread (&state->base);
 }
 
 static void
 net_windows_done_wait_handle (struct serial *scb)
 {
-  struct net_windows_state *state = scb->state;
+  struct net_windows_state *state = (struct net_windows_state *) scb->state;
 
   stop_select_thread (&state->base);
 }
@@ -1182,8 +1206,7 @@ net_windows_open (struct serial *scb, const char *name)
   if (ret != 0)
     return ret;
 
-  state = xmalloc (sizeof (struct net_windows_state));
-  memset (state, 0, sizeof (struct net_windows_state));
+  state = XCNEW (struct net_windows_state);
   scb->state = state;
 
   /* Associate an event with the socket.  */
@@ -1200,7 +1223,7 @@ net_windows_open (struct serial *scb, const char *name)
 static void
 net_windows_close (struct serial *scb)
 {
-  struct net_windows_state *state = scb->state;
+  struct net_windows_state *state = (struct net_windows_state *) scb->state;
 
   destroy_select_thread (&state->base);
   CloseHandle (state->sock_event);
@@ -1209,6 +1232,132 @@ net_windows_close (struct serial *scb)
 
   net_close (scb);
 }
+
+/* The serial port driver.  */
+
+static const struct serial_ops hardwire_ops =
+{
+  "hardwire",
+  ser_windows_open,
+  ser_windows_close,
+  NULL,
+  ser_base_readchar,
+  ser_base_write,
+  ser_windows_flush_output,
+  ser_windows_flush_input,
+  ser_windows_send_break,
+  ser_windows_raw,
+  /* These are only used for stdin; we do not need them for serial
+     ports, so supply the standard dummies.  */
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_windows_setbaudrate,
+  ser_windows_setstopbits,
+  ser_windows_setparity,
+  ser_windows_drain_output,
+  ser_base_async,
+  ser_windows_read_prim,
+  ser_windows_write_prim,
+  NULL,
+  ser_windows_wait_handle
+};
+
+/* The dummy serial driver used for terminals.  We only provide the
+   TTY-related methods.  */
+
+static const struct serial_ops tty_ops =
+{
+  "terminal",
+  NULL,
+  ser_console_close,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  ser_console_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  NULL,
+  NULL,
+  NULL,
+  ser_base_drain_output,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  ser_console_wait_handle,
+  ser_console_done_wait_handle
+};
+
+/* The pipe interface.  */
+
+static const struct serial_ops pipe_ops =
+{
+  "pipe",
+  pipe_windows_open,
+  pipe_windows_close,
+  pipe_windows_fdopen,
+  ser_base_readchar,
+  ser_base_write,
+  ser_base_flush_output,
+  ser_base_flush_input,
+  ser_base_send_break,
+  ser_base_raw,
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_base_setbaudrate,
+  ser_base_setstopbits,
+  ser_base_setparity,
+  ser_base_drain_output,
+  ser_base_async,
+  pipe_windows_read,
+  pipe_windows_write,
+  pipe_avail,
+  pipe_wait_handle,
+  pipe_done_wait_handle
+};
+
+/* The TCP/UDP socket driver.  */
+
+static const struct serial_ops tcp_ops =
+{
+  "tcp",
+  net_windows_open,
+  net_windows_close,
+  NULL,
+  ser_base_readchar,
+  ser_base_write,
+  ser_base_flush_output,
+  ser_base_flush_input,
+  ser_tcp_send_break,
+  ser_base_raw,
+  ser_base_get_tty_state,
+  ser_base_copy_tty_state,
+  ser_base_set_tty_state,
+  ser_base_print_tty_state,
+  ser_base_noflush_set_tty_state,
+  ser_base_setbaudrate,
+  ser_base_setstopbits,
+  ser_base_setparity,
+  ser_base_drain_output,
+  ser_base_async,
+  net_read_prim,
+  net_write_prim,
+  NULL,
+  net_windows_wait_handle,
+  net_windows_done_wait_handle
+};
 
 void
 _initialize_ser_windows (void)
@@ -1222,97 +1371,15 @@ _initialize_ser_windows (void)
   hm = LoadLibrary ("kernel32.dll");
   if (hm)
     {
-      CancelIo = (void *) GetProcAddress (hm, "CancelIo");
+      CancelIo = (CancelIo_ftype *) GetProcAddress (hm, "CancelIo");
       FreeLibrary (hm);
     }
   else
     CancelIo = NULL;
 
-  /* Now register the serial port driver.  */
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "hardwire";
-  ops->next = 0;
-  ops->open = ser_windows_open;
-  ops->close = ser_windows_close;
-
-  ops->flush_output = ser_windows_flush_output;
-  ops->flush_input = ser_windows_flush_input;
-  ops->send_break = ser_windows_send_break;
-
-  /* These are only used for stdin; we do not need them for serial
-     ports, so supply the standard dummies.  */
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-
-  ops->go_raw = ser_windows_raw;
-  ops->setbaudrate = ser_windows_setbaudrate;
-  ops->setstopbits = ser_windows_setstopbits;
-  ops->drain_output = ser_windows_drain_output;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->async = ser_base_async;
-  ops->read_prim = ser_windows_read_prim;
-  ops->write_prim = ser_windows_write_prim;
-  ops->wait_handle = ser_windows_wait_handle;
-
-  serial_add_interface (ops);
-
-  /* Next create the dummy serial driver used for terminals.  We only
-     provide the TTY-related methods.  */
-
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-
-  ops->name = "terminal";
-  ops->next = 0;
-
-  ops->close = ser_console_close;
-  ops->get_tty_state = ser_console_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->drain_output = ser_base_drain_output;
-  ops->wait_handle = ser_console_wait_handle;
-  ops->done_wait_handle = ser_console_done_wait_handle;
-
-  serial_add_interface (ops);
-
-  /* The pipe interface.  */
-
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "pipe";
-  ops->next = 0;
-  ops->open = pipe_windows_open;
-  ops->close = pipe_windows_close;
-  ops->fdopen = pipe_windows_fdopen;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->flush_output = ser_base_flush_output;
-  ops->flush_input = ser_base_flush_input;
-  ops->send_break = ser_base_send_break;
-  ops->go_raw = ser_base_raw;
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->setbaudrate = ser_base_setbaudrate;
-  ops->setstopbits = ser_base_setstopbits;
-  ops->drain_output = ser_base_drain_output;
-  ops->async = ser_base_async;
-  ops->read_prim = pipe_windows_read;
-  ops->write_prim = pipe_windows_write;
-  ops->wait_handle = pipe_wait_handle;
-  ops->done_wait_handle = pipe_done_wait_handle;
-  ops->avail = pipe_avail;
-
-  serial_add_interface (ops);
+  serial_add_interface (&hardwire_ops);
+  serial_add_interface (&tty_ops);
+  serial_add_interface (&pipe_ops);
 
   /* If WinSock works, register the TCP/UDP socket driver.  */
 
@@ -1320,30 +1387,5 @@ _initialize_ser_windows (void)
     /* WinSock is unavailable.  */
     return;
 
-  ops = XMALLOC (struct serial_ops);
-  memset (ops, 0, sizeof (struct serial_ops));
-  ops->name = "tcp";
-  ops->next = 0;
-  ops->open = net_windows_open;
-  ops->close = net_windows_close;
-  ops->readchar = ser_base_readchar;
-  ops->write = ser_base_write;
-  ops->flush_output = ser_base_flush_output;
-  ops->flush_input = ser_base_flush_input;
-  ops->send_break = ser_tcp_send_break;
-  ops->go_raw = ser_base_raw;
-  ops->get_tty_state = ser_base_get_tty_state;
-  ops->copy_tty_state = ser_base_copy_tty_state;
-  ops->set_tty_state = ser_base_set_tty_state;
-  ops->print_tty_state = ser_base_print_tty_state;
-  ops->noflush_set_tty_state = ser_base_noflush_set_tty_state;
-  ops->setbaudrate = ser_base_setbaudrate;
-  ops->setstopbits = ser_base_setstopbits;
-  ops->drain_output = ser_base_drain_output;
-  ops->async = ser_base_async;
-  ops->read_prim = net_read_prim;
-  ops->write_prim = net_write_prim;
-  ops->wait_handle = net_windows_wait_handle;
-  ops->done_wait_handle = net_windows_done_wait_handle;
-  serial_add_interface (ops);
+  serial_add_interface (&tcp_ops);
 }

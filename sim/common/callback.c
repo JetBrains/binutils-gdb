@@ -1,5 +1,5 @@
 /* Remote target callback routines.
-   Copyright 1995-2013 Free Software Foundation, Inc.
+   Copyright 1995-2016 Free Software Foundation, Inc.
    Contributed by Cygnus Solutions.
 
    This file is part of GDB.
@@ -21,9 +21,8 @@
    level.  */
 
 #ifdef HAVE_CONFIG_H
-#include "cconfig.h"
-#endif
 #include "config.h"
+#endif
 #include "ansidecl.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -62,50 +61,17 @@
 /* ??? sim_cb_printf should be cb_printf, but until the callback support is
    broken out of the simulator directory, these are here to not require
    sim-utils.h.  */
-void sim_cb_printf PARAMS ((host_callback *, const char *, ...));
-void sim_cb_eprintf PARAMS ((host_callback *, const char *, ...));
+void sim_cb_printf (host_callback *, const char *, ...);
+void sim_cb_eprintf (host_callback *, const char *, ...);
 
 extern CB_TARGET_DEFS_MAP cb_init_syscall_map[];
 extern CB_TARGET_DEFS_MAP cb_init_errno_map[];
 extern CB_TARGET_DEFS_MAP cb_init_open_map[];
 
-extern int system PARAMS ((const char *));
-
-static int os_init PARAMS ((host_callback *));
-static int os_shutdown PARAMS ((host_callback *));
-static int os_unlink PARAMS ((host_callback *, const char *));
-static long os_time PARAMS ((host_callback *, long *));
-static int os_system PARAMS ((host_callback *, const char *));
-static int os_rename PARAMS ((host_callback *, const char *, const char *));
-static int os_write_stdout PARAMS ((host_callback *, const char *, int));
-static void os_flush_stdout PARAMS ((host_callback *));
-static int os_write_stderr PARAMS ((host_callback *, const char *, int));
-static void os_flush_stderr PARAMS ((host_callback *));
-static int os_write PARAMS ((host_callback *, int, const char *, int));
-static int os_read_stdin PARAMS ((host_callback *, char *, int));
-static int os_read PARAMS ((host_callback *, int, char *, int));
-static int os_open PARAMS ((host_callback *, const char *, int));
-static int os_lseek PARAMS ((host_callback *, int, long, int));
-static int os_isatty PARAMS ((host_callback *, int));
-static int os_get_errno PARAMS ((host_callback *));
-static int os_close PARAMS ((host_callback *, int));
-static void os_vprintf_filtered PARAMS ((host_callback *, const char *, va_list));
-static void os_evprintf_filtered PARAMS ((host_callback *, const char *, va_list));
-static void os_error PARAMS ((host_callback *, const char *, ...))
-#ifdef __GNUC__
-  __attribute__ ((__noreturn__))
-#endif
-  ;
-static int fdmap PARAMS ((host_callback *, int));
-static int fdbad PARAMS ((host_callback *, int));
-static int wrap PARAMS ((host_callback *, int));
-
 /* Set the callback copy of errno from what we see now.  */
 
 static int
-wrap (p, val)
-     host_callback *p;
-     int val;
+wrap (host_callback *p, int val)
 {
   p->last_errno = errno;
   return val;
@@ -115,9 +81,7 @@ wrap (p, val)
    and set errno. */
 
 static int
-fdbad (p, fd)
-     host_callback *p;
-     int fd;
+fdbad (host_callback *p, int fd)
 {
   if (fd < 0 || fd > MAX_CALLBACK_FDS || p->fd_buddy[fd] < 0)
     {
@@ -128,17 +92,13 @@ fdbad (p, fd)
 }
 
 static int
-fdmap (p, fd)
-     host_callback *p;
-     int fd;
+fdmap (host_callback *p, int fd)
 {
   return p->fdmap[fd];
 }
 
 static int
-os_close (p, fd)
-     host_callback *p;
-     int fd;
+os_close (host_callback *p, int fd)
 {
   int result;
   int i, next;
@@ -206,8 +166,7 @@ os_close (p, fd)
 
 #if defined(__GO32__) || defined (_MSC_VER)
 static int
-os_poll_quit (p)
-     host_callback *p;
+os_poll_quit (host_callback *p)
 {
 #if defined(__GO32__)
   int kbhit ();
@@ -244,17 +203,14 @@ os_poll_quit (p)
 #endif /* defined(__GO32__) || defined(_MSC_VER) */
 
 static int
-os_get_errno (p)
-     host_callback *p;
+os_get_errno (host_callback *p)
 {
   return cb_host_to_target_errno (p, p->last_errno);
 }
 
 
 static int
-os_isatty (p, fd)
-     host_callback *p;
-     int fd;
+os_isatty (host_callback *p, int fd)
 {
   int result;
 
@@ -267,11 +223,7 @@ os_isatty (p, fd)
 }
 
 static int
-os_lseek (p, fd, off, way)
-     host_callback *p;
-     int fd;
-     long off;
-     int way;
+os_lseek (host_callback *p, int fd, long off, int way)
 {
   int result;
 
@@ -283,10 +235,7 @@ os_lseek (p, fd, off, way)
 }
 
 static int
-os_open (p, name, flags)
-     host_callback *p;
-     const char *name;
-     int flags;
+os_open (host_callback *p, const char *name, int flags)
 {
   int i;
   for (i = 0; i < MAX_CALLBACK_FDS; i++)
@@ -309,11 +258,7 @@ os_open (p, name, flags)
 }
 
 static int
-os_read (p, fd, buf, len)
-     host_callback *p;
-     int fd;
-     char *buf;
-     int len;
+os_read (host_callback *p, int fd, char *buf, int len)
 {
   int result;
 
@@ -366,20 +311,13 @@ os_read (p, fd, buf, len)
 }
 
 static int
-os_read_stdin (p, buf, len)
-     host_callback *p;
-     char *buf;
-     int len;
+os_read_stdin (host_callback *p, char *buf, int len)
 {
   return wrap (p, read (0, buf, len));
 }
 
 static int
-os_write (p, fd, buf, len)
-     host_callback *p;
-     int fd;
-     const char *buf;
-     int len;
+os_write (host_callback *p, int fd, const char *buf, int len)
 {
   int result;
   int real_fd;
@@ -447,77 +385,57 @@ os_write (p, fd, buf, len)
 }
 
 static int
-os_write_stdout (p, buf, len)
-     host_callback *p ATTRIBUTE_UNUSED;
-     const char *buf;
-     int len;
+os_write_stdout (host_callback *p ATTRIBUTE_UNUSED, const char *buf, int len)
 {
   return fwrite (buf, 1, len, stdout);
 }
 
 static void
-os_flush_stdout (p)
-     host_callback *p ATTRIBUTE_UNUSED;
+os_flush_stdout (host_callback *p ATTRIBUTE_UNUSED)
 {
   fflush (stdout);
 }
 
 static int
-os_write_stderr (p, buf, len)
-     host_callback *p ATTRIBUTE_UNUSED;
-     const char *buf;
-     int len;
+os_write_stderr (host_callback *p ATTRIBUTE_UNUSED, const char *buf, int len)
 {
   return fwrite (buf, 1, len, stderr);
 }
 
 static void
-os_flush_stderr (p)
-     host_callback *p ATTRIBUTE_UNUSED;
+os_flush_stderr (host_callback *p ATTRIBUTE_UNUSED)
 {
   fflush (stderr);
 }
 
 static int
-os_rename (p, f1, f2)
-     host_callback *p;
-     const char *f1;
-     const char *f2;
+os_rename (host_callback *p, const char *f1, const char *f2)
 {
   return wrap (p, rename (f1, f2));
 }
 
 
 static int
-os_system (p, s)
-     host_callback *p;
-     const char *s;
+os_system (host_callback *p, const char *s)
 {
   return wrap (p, system (s));
 }
 
 static long
-os_time (p, t)
-     host_callback *p;
-     long *t;
+os_time (host_callback *p, long *t)
 {
   return wrap (p, time (t));
 }
 
 
 static int
-os_unlink (p, f1)
-     host_callback *p;
-     const char *f1;
+os_unlink (host_callback *p, const char *f1)
 {
   return wrap (p, unlink (f1));
 }
 
 static int
-os_stat (p, file, buf)
-     host_callback *p;
-     const char *file;
-     struct stat *buf;
+os_stat (host_callback *p, const char *file, struct stat *buf)
 {
   /* ??? There is an issue of when to translate to the target layout.
      One could do that inside this function, or one could have the
@@ -527,10 +445,7 @@ os_stat (p, file, buf)
 }
 
 static int
-os_fstat (p, fd, buf)
-     host_callback *p;
-     int fd;
-     struct stat *buf;
+os_fstat (host_callback *p, int fd, struct stat *buf)
 {
   if (fdbad (p, fd))
     return -1;
@@ -574,10 +489,7 @@ os_fstat (p, fd, buf)
 }
 
 static int
-os_lstat (p, file, buf)
-     host_callback *p;
-     const char *file;
-     struct stat *buf;
+os_lstat (host_callback *p, const char *file, struct stat *buf)
 {
   /* NOTE: hpn/2004-12-12: Same issue here as with os_fstat.  */
 #ifdef HAVE_LSTAT
@@ -588,10 +500,7 @@ os_lstat (p, file, buf)
 }
 
 static int
-os_ftruncate (p, fd, len)
-     host_callback *p;
-     int fd;
-     long len;
+os_ftruncate (host_callback *p, int fd, long len)
 {
   int result;
 
@@ -613,10 +522,7 @@ os_ftruncate (p, fd, len)
 }
 
 static int
-os_truncate (p, file, len)
-     host_callback *p;
-     const char *file;
-     long len;
+os_truncate (host_callback *p, const char *file, long len)
 {
 #ifdef HAVE_TRUNCATE
   return wrap (p, truncate (file, len));
@@ -627,9 +533,7 @@ os_truncate (p, file, len)
 }
 
 static int
-os_pipe (p, filedes)
-     host_callback *p;
-     int *filedes;
+os_pipe (host_callback *p, int *filedes)
 {
   int i;
 
@@ -669,10 +573,7 @@ os_pipe (p, filedes)
    now empty (so the writer should leave its waiting state).  */
 
 static void
-os_pipe_empty (p, reader, writer)
-     host_callback *p;
-     int reader;
-     int writer;
+os_pipe_empty (host_callback *p, int reader, int writer)
 {
 }
 
@@ -680,16 +581,12 @@ os_pipe_empty (p, reader, writer)
    non-empty (so the writer should wait).  */
 
 static void
-os_pipe_nonempty (p, reader, writer)
-     host_callback *p;
-     int reader;
-     int writer;
+os_pipe_nonempty (host_callback *p, int reader, int writer)
 {
 }
 
 static int
-os_shutdown (p)
-     host_callback *p;
+os_shutdown (host_callback *p)
 {
   int i, next, j;
   for (i = 0; i < MAX_CALLBACK_FDS; i++)
@@ -729,8 +626,7 @@ os_shutdown (p)
 }
 
 static int
-os_init (p)
-     host_callback *p;
+os_init (host_callback *p)
 {
   int i;
 
@@ -778,6 +674,9 @@ os_evprintf_filtered (host_callback *p ATTRIBUTE_UNUSED, const char *format, va_
 }
 
 /* VARARGS */
+#ifdef __GNUC__
+__attribute__ ((__noreturn__))
+#endif
 static void
 os_error (host_callback *p ATTRIBUTE_UNUSED, const char *format, ...)
 {
@@ -861,9 +760,7 @@ host_callback default_callback =
    If an error occurs, the existing mapping is not changed.  */
 
 CB_RC
-cb_read_target_syscall_maps (cb, file)
-     host_callback *cb;
-     const char *file;
+cb_read_target_syscall_maps (host_callback *cb, const char *file)
 {
   CB_TARGET_DEFS_MAP *syscall_map, *errno_map, *open_map, *signal_map;
   const char *stat_map;
@@ -898,22 +795,43 @@ cb_read_target_syscall_maps (cb, file)
   return CB_RC_OK;
 }
 
+/* General utility functions to search a map for a value.  */
+
+static const CB_TARGET_DEFS_MAP *
+cb_target_map_entry (const CB_TARGET_DEFS_MAP map[], int target_val)
+{
+  const CB_TARGET_DEFS_MAP *m;
+
+  for (m = &map[0]; m->target_val != -1; ++m)
+    if (m->target_val == target_val)
+      return m;
+
+  return NULL;
+}
+
+static const CB_TARGET_DEFS_MAP *
+cb_host_map_entry (const CB_TARGET_DEFS_MAP map[], int host_val)
+{
+  const CB_TARGET_DEFS_MAP *m;
+
+  for (m = &map[0]; m->host_val != -1; ++m)
+    if (m->host_val == host_val)
+      return m;
+
+  return NULL;
+}
+
 /* Translate the target's version of a syscall number to the host's.
    This isn't actually the host's version, rather a canonical form.
    ??? Perhaps this should be renamed to ..._canon_syscall.  */
 
 int
-cb_target_to_host_syscall (cb, target_val)
-     host_callback *cb;
-     int target_val;
+cb_target_to_host_syscall (host_callback *cb, int target_val)
 {
-  CB_TARGET_DEFS_MAP *m;
+  const CB_TARGET_DEFS_MAP *m =
+    cb_target_map_entry (cb->syscall_map, target_val);
 
-  for (m = &cb->syscall_map[0]; m->target_val != -1; ++m)
-    if (m->target_val == target_val)
-      return m->host_val;
-
-  return -1;
+  return m ? m->host_val : -1;
 }
 
 /* FIXME: sort tables if large.
@@ -923,20 +841,14 @@ cb_target_to_host_syscall (cb, target_val)
 /* Translate the host's version of errno to the target's.  */
 
 int
-cb_host_to_target_errno (cb, host_val)
-     host_callback *cb;
-     int host_val;
+cb_host_to_target_errno (host_callback *cb, int host_val)
 {
-  CB_TARGET_DEFS_MAP *m;
-
-  for (m = &cb->errno_map[0]; m->host_val; ++m)
-    if (m->host_val == host_val)
-      return m->target_val;
+  const CB_TARGET_DEFS_MAP *m = cb_host_map_entry (cb->errno_map, host_val);
 
   /* ??? Which error to return in this case is up for grabs.
      Note that some missing values may have standard alternatives.
      For now return 0 and require caller to deal with it.  */
-  return 0;
+  return m ? m->target_val : 0;
 }
 
 /* Given a set of target bitmasks for the open system call,
@@ -945,9 +857,7 @@ cb_host_to_target_errno (cb, host_val)
    to machine generate this function.  */
 
 int
-cb_target_to_host_open (cb, target_val)
-     host_callback *cb;
-     int target_val;
+cb_target_to_host_open (host_callback *cb, int target_val)
 {
   int host_val = 0;
   CB_TARGET_DEFS_MAP *m;
@@ -981,14 +891,12 @@ cb_target_to_host_open (cb, target_val)
 }
 
 /* Utility for e.g. cb_host_to_target_stat to store values in the target's
-   stat struct.  */
+   stat struct.
+
+   ??? The "val" must be as big as target word size.  */
 
 void
-cb_store_target_endian (cb, p, size, val)
-     host_callback *cb;
-     char *p;
-     int size;
-     long val; /* ??? must be as big as target word size */
+cb_store_target_endian (host_callback *cb, char *p, int size, long val)
 {
   if (cb->target_endian == BFD_ENDIAN_BIG)
     {
@@ -1017,10 +925,7 @@ cb_store_target_endian (cb, p, size, val)
    or zero if an error occurred during the translation.  */
 
 int
-cb_host_to_target_stat (cb, hs, ts)
-     host_callback *cb;
-     const struct stat *hs;
-     PTR ts;
+cb_host_to_target_stat (host_callback *cb, const struct stat *hs, PTR ts)
 {
   const char *m = cb->stat_map;
   char *p;
@@ -1157,4 +1062,55 @@ int
 cb_is_stderr (host_callback *cb, int fd)
 {
   return fdbad (cb, fd) ? 0 : fdmap (cb, fd) == 2;
+}
+
+const char *
+cb_host_str_syscall (host_callback *cb, int host_val)
+{
+  const CB_TARGET_DEFS_MAP *m = cb_host_map_entry (cb->syscall_map, host_val);
+
+  return m ? m->name : NULL;
+}
+
+const char *
+cb_host_str_errno (host_callback *cb, int host_val)
+{
+  const CB_TARGET_DEFS_MAP *m = cb_host_map_entry (cb->errno_map, host_val);
+
+  return m ? m->name : NULL;
+}
+
+const char *
+cb_host_str_signal (host_callback *cb, int host_val)
+{
+  const CB_TARGET_DEFS_MAP *m = cb_host_map_entry (cb->signal_map, host_val);
+
+  return m ? m->name : NULL;
+}
+
+const char *
+cb_target_str_syscall (host_callback *cb, int target_val)
+{
+  const CB_TARGET_DEFS_MAP *m =
+    cb_target_map_entry (cb->syscall_map, target_val);
+
+  return m ? m->name : NULL;
+}
+
+const char *
+cb_target_str_errno (host_callback *cb, int target_val)
+{
+  const CB_TARGET_DEFS_MAP *m =
+    cb_target_map_entry (cb->errno_map, target_val);
+
+  return m ? m->name : NULL;
+}
+
+const char *
+cb_target_str_signal (host_callback *cb, int target_val)
+{
+  const CB_TARGET_DEFS_MAP *m =
+    cb_target_map_entry (cb->signal_map, target_val);
+
+  return m ? m->name : NULL;
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2013 Free Software Foundation, Inc.
+/* Copyright (C) 2013-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -66,7 +66,7 @@ DEF_VEC_P(lm_info_p);
 static struct lm_info *
 solib_aix_new_lm_info (struct lm_info *info)
 {
-  struct lm_info *result = xmalloc (sizeof (struct lm_info));
+  struct lm_info *result = XNEW (struct lm_info);
 
   memcpy (result, info, sizeof (struct lm_info));
   result->filename = xstrdup (info->filename);
@@ -112,10 +112,11 @@ get_solib_aix_inferior_data (struct inferior *inf)
 {
   struct solib_aix_inferior_data *data;
 
-  data = inferior_data (inf, solib_aix_inferior_data_handle);
+  data = ((struct solib_aix_inferior_data *)
+	  inferior_data (inf, solib_aix_inferior_data_handle));
   if (data == NULL)
     {
-      data = XZALLOC (struct solib_aix_inferior_data);
+      data = XCNEW (struct solib_aix_inferior_data);
       set_inferior_data (inf, solib_aix_inferior_data_handle, data);
     }
 
@@ -160,16 +161,16 @@ library_list_start_library (struct gdb_xml_parser *parser,
 			    void *user_data,
 			    VEC (gdb_xml_value_s) *attributes)
 {
-  VEC (lm_info_p) **list = user_data;
-  struct lm_info *item = XZALLOC (struct lm_info);
+  VEC (lm_info_p) **list = (VEC (lm_info_p) **) user_data;
+  struct lm_info *item = XCNEW (struct lm_info);
   struct gdb_xml_value *attr;
 
   attr = xml_find_attribute (attributes, "name");
-  item->filename = xstrdup (attr->value);
+  item->filename = xstrdup ((const char *) attr->value);
 
   attr = xml_find_attribute (attributes, "member");
   if (attr != NULL)
-    item->member_name = xstrdup (attr->value);
+    item->member_name = xstrdup ((const char *) attr->value);
 
   attr = xml_find_attribute (attributes, "text_addr");
   item->text_addr = * (ULONGEST *) attr->value;
@@ -193,7 +194,7 @@ library_list_start_list (struct gdb_xml_parser *parser,
                          const struct gdb_xml_element *element,
                          void *user_data, VEC (gdb_xml_value_s) *attributes)
 {
-  char *version = xml_find_attribute (attributes, "version")->value;
+  char *version = (char *) xml_find_attribute (attributes, "version")->value;
 
   if (strcmp (version, "1.0") != 0)
     gdb_xml_error (parser,
@@ -206,7 +207,7 @@ library_list_start_list (struct gdb_xml_parser *parser,
 static void
 solib_aix_free_library_list (void *p)
 {
-  VEC (lm_info_p) **result = p;
+  VEC (lm_info_p) **result = (VEC (lm_info_p) **) p;
   struct lm_info *info;
   int ix;
 
@@ -468,9 +469,8 @@ solib_aix_get_section_offsets (struct objfile *objfile,
 {
   struct section_offsets *offsets;
   bfd *abfd = objfile->obfd;
-  int i;
 
-  offsets = XCALLOC (objfile->num_sections, struct section_offsets);
+  offsets = XCNEWVEC (struct section_offsets, objfile->num_sections);
 
   /* .text */
 
@@ -575,7 +575,7 @@ solib_aix_current_sos (void)
      to the main executable, not a shared library.  */
   for (ix = 1; VEC_iterate (lm_info_p, library_list, ix, info); ix++)
     {
-      struct so_list *new_solib = XZALLOC (struct so_list);
+      struct so_list *new_solib = XCNEW (struct so_list);
       char *so_name;
 
       if (info->member_name == NULL)
@@ -723,6 +723,13 @@ solib_aix_bfd_open (char *pathname)
       do_cleanups (cleanup);
       return NULL;
     }
+
+  /* Override the returned bfd's name with our synthetic name in order
+     to allow commands listing all shared libraries to display that
+     synthetic name.  Otherwise, we would only be displaying the name
+     of the archive member object.  */
+  xfree (bfd_get_filename (object_bfd));
+  object_bfd->filename = xstrdup (pathname);
 
   gdb_bfd_unref (archive_bfd);
   do_cleanups (cleanup);

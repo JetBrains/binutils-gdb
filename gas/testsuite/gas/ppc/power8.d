@@ -27,9 +27,9 @@ Disassembly of section \.text:
   44:	(60 42 00 00|00 00 42 60) 	ori     r2,r2,0
   48:	(60 00 00 00|00 00 00 60) 	nop
   4c:	(60 42 00 00|00 00 42 60) 	ori     r2,r2,0
-  50:	(4c 00 01 24|24 01 00 4c) 	rfebb   
-  54:	(4c 00 01 24|24 01 00 4c) 	rfebb   
-  58:	(4c 00 09 24|24 09 00 4c) 	rfebb   1
+  50:	(4c 00 01 24|24 01 00 4c) 	rfebb   0
+  54:	(4c 00 09 24|24 09 00 4c) 	rfebb   
+  58:	(4c 00 09 24|24 09 00 4c) 	rfebb   
   5c:	(4d 95 04 60|60 04 95 4d) 	bctar-  12,4\*cr5\+gt
   60:	(4c 87 04 61|61 04 87 4c) 	bctarl- 4,4\*cr1\+so
   64:	(4d ac 04 60|60 04 ac 4d) 	bctar\+  12,4\*cr3\+lt
@@ -150,4 +150,14 @@ Disassembly of section \.text:
  230:	(f3 60 d5 2d|2d d5 60 f3) 	xscvspdpn vs59,vs26
  234:	(ff 0e 16 8c|8c 16 0e ff) 	fmrgow  f24,f14,f2
  238:	(fe c7 2f 8c|8c 2f c7 fe) 	fmrgew  f22,f7,f5
+ 23c:	(7c 00 71 9c|9c 71 00 7c) 	msgsnd  r14
+ 240:	(7c 00 b9 dc|dc b9 00 7c) 	msgclr  r23
+.*:	(7d 00 2e 99|99 2e 00 7d) 	lxvd2x  vs40,0,r5
+.*:	(7d 00 2e 99|99 2e 00 7d) 	lxvd2x  vs40,0,r5
+.*:	(7d 54 36 98|98 36 54 7d) 	lxvd2x  vs10,r20,r6
+.*:	(7d 54 36 98|98 36 54 7d) 	lxvd2x  vs10,r20,r6
+.*:	(7d 20 3f 99|99 3f 20 7d) 	stxvd2x vs41,0,r7
+.*:	(7d 20 3f 99|99 3f 20 7d) 	stxvd2x vs41,0,r7
+.*:	(7d 75 47 98|98 47 75 7d) 	stxvd2x vs11,r21,r8
+.*:	(7d 75 47 98|98 47 75 7d) 	stxvd2x vs11,r21,r8
 #pass

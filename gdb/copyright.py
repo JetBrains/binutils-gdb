@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-# Copyright (C) 2011-2013 Free Software Foundation, Inc.
+# Copyright (C) 2011-2016 Free Software Foundation, Inc.
 #
 # This file is part of GDB.
 #
@@ -171,7 +171,7 @@ def main ():
 #
 # Filenames are relative to the root directory.
 EXCLUDE_LIST = (
-    'gdb/common/glibc_thread_db.h',
+    'gdb/nat/glibc_thread_db.h',
     'gdb/CONTRIBUTE',
     'gdb/gnulib/import'
 )
@@ -222,9 +222,6 @@ NOT_FSF_LIST = (
     "sim/arm/arminit.c",
     "sim/common/cgen-fpu.c", "sim/common/cgen-fpu.h",
     "sim/common/cgen-accfp.c",
-    "sim/erc32/sis.h", "sim/erc32/erc32.c", "sim/erc32/func.c",
-    "sim/erc32/float.c", "sim/erc32/interf.c", "sim/erc32/sis.c",
-    "sim/erc32/exec.c",
     "sim/mips/m16run.c", "sim/mips/sim-main.c",
     "sim/moxie/moxie-gdb.dts",
     # Not a single file in sim/ppc/ appears to be copyright FSF :-(.

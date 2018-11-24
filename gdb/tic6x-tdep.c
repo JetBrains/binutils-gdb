@@ -1,6 +1,6 @@
 /* Target dependent code for GDB on TI C6x systems.
 
-   Copyright (C) 2010-2013 Free Software Foundation, Inc.
+   Copyright (C) 2010-2016 Free Software Foundation, Inc.
    Contributed by Andrew Jenner <andrew@codesourcery.com>
    Contributed by Yao Qi <yao@codesourcery.com>
 
@@ -44,7 +44,6 @@
 #include "linux-tdep.h"
 #include "solib.h"
 #include "objfiles.h"
-#include "gdb_assert.h"
 #include "osabi.h"
 #include "tic6x-tdep.h"
 #include "language.h"
@@ -152,7 +151,6 @@ tic6x_analyze_prologue (struct gdbarch *gdbarch, const CORE_ADDR start_pc,
 			struct tic6x_unwind_cache *cache,
 			struct frame_info *this_frame)
 {
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   unsigned long inst;
   unsigned int src_reg, base_reg, dst_reg;
   int i;
@@ -176,8 +174,6 @@ tic6x_analyze_prologue (struct gdbarch *gdbarch, const CORE_ADDR start_pc,
      2nd one is optional.  */
   while (pc < current_pc)
     {
-      int offset = 0;
-
       unsigned long inst = tic6x_fetch_instruction (gdbarch, pc);
 
       if ((inst & 0x1ffc) == 0x1dc0 || (inst & 0x1ffc) == 0x1bc0
@@ -406,7 +402,7 @@ tic6x_frame_unwind_cache (struct frame_info *this_frame,
   struct tic6x_unwind_cache *cache;
 
   if (*this_prologue_cache)
-    return *this_prologue_cache;
+    return (struct tic6x_unwind_cache *) *this_prologue_cache;
 
   cache = FRAME_OBSTACK_ZALLOC (struct tic6x_unwind_cache);
   (*this_prologue_cache) = cache;
@@ -517,7 +513,7 @@ tic6x_stub_this_id (struct frame_info *this_frame, void **this_cache,
 
   if (*this_cache == NULL)
     *this_cache = tic6x_make_stub_cache (this_frame);
-  cache = *this_cache;
+  cache = (struct tic6x_unwind_cache *) *this_cache;
 
   *this_id = frame_id_build (cache->cfa, get_frame_pc (this_frame));
 }
@@ -808,7 +804,7 @@ tic6x_return_value (struct gdbarch *gdbarch, struct value *function,
     {
       if (type != NULL)
 	{
-	  CHECK_TYPEDEF (type);
+	  type = check_typedef (type);
 	  if (language_pass_by_reference (type))
 	    return RETURN_VALUE_STRUCT_CONVENTION;
 	}
@@ -1123,10 +1119,10 @@ tic6x_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
   return sp;
 }
 
-/* This is the implementation of gdbarch method in_function_epilogue_p.  */
+/* This is the implementation of gdbarch method stack_frame_destroyed_p.  */
 
 static int
-tic6x_in_function_epilogue_p (struct gdbarch *gdbarch, CORE_ADDR pc)
+tic6x_stack_frame_destroyed_p (struct gdbarch *gdbarch, CORE_ADDR pc)
 {
   unsigned long inst = tic6x_fetch_instruction (gdbarch, pc);
   /* Normally, the epilogue is composed by instruction `b .S2 b3'.  */
@@ -1269,7 +1265,7 @@ tic6x_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 	return arches->gdbarch;
     }
 
-  tdep = xcalloc (1, sizeof (struct gdbarch_tdep));
+  tdep = XCNEW (struct gdbarch_tdep);
 
   tdep->has_gp = has_gp;
   gdbarch = gdbarch_alloc (&info, tdep);
@@ -1308,6 +1304,7 @@ tic6x_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   frame_unwind_append_unwinder (gdbarch, &tic6x_stub_unwind);
   frame_unwind_append_unwinder (gdbarch, &tic6x_frame_unwind);
+  frame_base_set_default (gdbarch, &tic6x_frame_base);
 
   dwarf2_frame_set_init_reg (gdbarch, tic6x_dwarf2_frame_init_reg);
 
@@ -1328,7 +1325,7 @@ tic6x_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   set_gdbarch_get_longjmp_target (gdbarch, tic6x_get_longjmp_target);
 
-  set_gdbarch_in_function_epilogue_p (gdbarch, tic6x_in_function_epilogue_p);
+  set_gdbarch_stack_frame_destroyed_p (gdbarch, tic6x_stack_frame_destroyed_p);
 
   set_gdbarch_return_in_first_hidden_param_p (gdbarch,
 					      tic6x_return_in_first_hidden_param_p);

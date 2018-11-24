@@ -1,5 +1,5 @@
 /* Support for printing Java types for GDB, the GNU debugger.
-   Copyright (C) 1997-2013 Free Software Foundation, Inc.
+   Copyright (C) 1997-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -24,12 +24,10 @@
 #include "demangle.h"
 #include "gdb-demangle.h"
 #include "jv-lang.h"
-#include <string.h>
 #include "typeprint.h"
 #include "c-lang.h"
 #include "cp-abi.h"
 #include "cp-support.h"
-#include "gdb_assert.h"
 
 /* Local functions */
 
@@ -112,7 +110,7 @@ java_type_print_base (struct type *type, struct ui_file *stream, int show,
       return;
     }
 
-  CHECK_TYPEDEF (type);
+  type = check_typedef (type);
 
   switch (TYPE_CODE (type))
     {
@@ -170,12 +168,12 @@ java_type_print_base (struct type *type, struct ui_file *stream, int show,
 	    {
 	      QUIT;
 	      /* Don't print out virtual function table.  */
-	      if (strncmp (TYPE_FIELD_NAME (type, i), "_vptr", 5) == 0
+	      if (startswith (TYPE_FIELD_NAME (type, i), "_vptr")
 		  && is_cplus_marker ((TYPE_FIELD_NAME (type, i))[5]))
 		continue;
 
 	      /* Don't print the dummy field "class".  */
-	      if (strncmp (TYPE_FIELD_NAME (type, i), "class", 5) == 0)
+	      if (startswith (TYPE_FIELD_NAME (type, i), "class"))
 		continue;
 
 	      print_spaces_filtered (level + 4, stream);
@@ -225,7 +223,8 @@ java_type_print_base (struct type *type, struct ui_file *stream, int show,
 	      for (j = 0; j < n_overloads; j++)
 		{
 		  const char *real_physname;
-		  char *physname, *p;
+		  const char *p;
+		  char *physname;
 		  int is_full_physname_constructor;
 
 		  real_physname = TYPE_FN_FIELD_PHYSNAME (f, j);
@@ -235,7 +234,7 @@ java_type_print_base (struct type *type, struct ui_file *stream, int show,
 		  p = strrchr (real_physname, ')');
 		  gdb_assert (p != NULL);
 		  ++p;   /* Keep the trailing ')'.  */
-		  physname = alloca (p - real_physname + 1);
+		  physname = (char *) alloca (p - real_physname + 1);
 		  memcpy (physname, real_physname, p - real_physname);
 		  physname[p - real_physname] = '\0';
 

@@ -1,6 +1,5 @@
 /* Motorola 68HC11/HC12-specific support for 32-bit ELF
-   Copyright 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008,
-   2009, 2010, 2011, 2012 Free Software Foundation, Inc.
+   Copyright (C) 1999-2016 Free Software Foundation, Inc.
    Contributed by Stephane Carrez (stcarrez@nerim.fr)
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -29,7 +28,7 @@
 #include "elf32-m68hc1x.h"
 #include "elf/m68hc11.h"
 #include "opcode/m68hc11.h"
-
+#include "libiberty.h"
 
 #define m68hc12_stub_hash_lookup(table, string, create, copy) \
   ((struct elf32_m68hc11_stub_hash_entry *) \
@@ -59,6 +58,19 @@ struct m68hc11_scan_param
 };
 
 
+/* Destroy a 68HC11/68HC12 ELF linker hash table.  */
+
+static void
+m68hc11_elf_bfd_link_hash_table_free (bfd *obfd)
+{
+  struct m68hc11_elf_link_hash_table *ret
+    = (struct m68hc11_elf_link_hash_table *) obfd->link.hash;
+
+  bfd_hash_table_free (ret->stub_hash_table);
+  free (ret->stub_hash_table);
+  _bfd_elf_link_hash_table_free (obfd);
+}
+
 /* Create a 68HC11/68HC12 ELF linker hash table.  */
 
 struct m68hc11_elf_link_hash_table*
@@ -85,27 +97,19 @@ m68hc11_elf_hash_table_create (bfd *abfd)
   ret->stub_hash_table = (struct bfd_hash_table*) bfd_malloc (amt);
   if (ret->stub_hash_table == NULL)
     {
-      free (ret);
+      _bfd_elf_link_hash_table_free (abfd);
       return NULL;
     }
   if (!bfd_hash_table_init (ret->stub_hash_table, stub_hash_newfunc,
 			    sizeof (struct elf32_m68hc11_stub_hash_entry)))
-    return NULL;
+    {
+      free (ret->stub_hash_table);
+      _bfd_elf_link_hash_table_free (abfd);
+      return NULL;
+    }
+  ret->root.root.hash_table_free = m68hc11_elf_bfd_link_hash_table_free;
 
   return ret;
-}
-
-/* Free the derived linker hash table.  */
-
-void
-m68hc11_elf_bfd_link_hash_table_free (struct bfd_link_hash_table *hash)
-{
-  struct m68hc11_elf_link_hash_table *ret
-    = (struct m68hc11_elf_link_hash_table *) hash;
-
-  bfd_hash_table_free (ret->stub_hash_table);
-  free (ret->stub_hash_table);
-  _bfd_elf_link_hash_table_free (hash);
 }
 
 /* Assorted hash table functions.  */
@@ -233,7 +237,7 @@ elf32_m68hc11_setup_section_lists (bfd *output_bfd, struct bfd_link_info *info)
 {
   bfd *input_bfd;
   unsigned int bfd_count;
-  int top_id, top_index;
+  unsigned int top_id, top_index;
   asection *section;
   asection **input_list, **list;
   bfd_size_type amt;
@@ -255,7 +259,7 @@ elf32_m68hc11_setup_section_lists (bfd *output_bfd, struct bfd_link_info *info)
   text_section = 0;
   for (input_bfd = info->input_bfds, bfd_count = 0, top_id = 0;
        input_bfd != NULL;
-       input_bfd = input_bfd->link_next)
+       input_bfd = input_bfd->link.next)
     {
       bfd_count += 1;
       for (section = input_bfd->sections;
@@ -343,7 +347,7 @@ elf32_m68hc11_size_stubs (bfd *output_bfd, bfd *stub_bfd,
   /* Count the number of input BFDs and find the top input section id.  */
   for (input_bfd = info->input_bfds, bfd_count = 0;
        input_bfd != NULL;
-       input_bfd = input_bfd->link_next)
+       input_bfd = input_bfd->link.next)
     bfd_count += 1;
 
   /* We want to read in symbol extension records only once.  To do this
@@ -357,7 +361,7 @@ elf32_m68hc11_size_stubs (bfd *output_bfd, bfd *stub_bfd,
   /* Walk over all the input BFDs, swapping in local symbols.  */
   for (input_bfd = info->input_bfds, bfd_indx = 0;
        input_bfd != NULL;
-       input_bfd = input_bfd->link_next, bfd_indx++)
+       input_bfd = input_bfd->link.next, bfd_indx++)
     {
       Elf_Internal_Shdr *symtab_hdr;
 
@@ -387,7 +391,7 @@ elf32_m68hc11_size_stubs (bfd *output_bfd, bfd *stub_bfd,
 
   for (input_bfd = info->input_bfds, bfd_indx = 0;
        input_bfd != NULL;
-       input_bfd = input_bfd->link_next, bfd_indx++)
+       input_bfd = input_bfd->link.next, bfd_indx++)
     {
       Elf_Internal_Shdr *symtab_hdr;
       struct elf_link_hash_entry ** sym_hashes;
@@ -588,13 +592,13 @@ m68hc11_elf_export_one_stub (struct bfd_hash_entry *gen_entry, void *in_arg)
   result = (* htab->build_one_stub) (gen_entry, in_arg);
 
   /* Make a printable name that does not conflict with the real function.  */
-  name = alloca (strlen (stub_entry->root.string) + 16);
-  sprintf (name, "tramp.%s", stub_entry->root.string);
+  name = concat ("tramp.", stub_entry->root.string, NULL);
 
   /* Export the symbol for debugging/disassembling.  */
   m68hc11_elf_set_symbol (htab->stub_bfd, info, name,
                           stub_entry->stub_offset,
                           stub_entry->stub_sec);
+  free (name);
   return result;
 }
 
@@ -849,7 +853,7 @@ elf32_m68hc11_check_relocs (bfd *abfd, struct bfd_link_info *info,
   const Elf_Internal_Rela *     rel;
   const Elf_Internal_Rela *     rel_end;
 
-  if (info->relocatable)
+  if (bfd_link_relocatable (info))
     return TRUE;
 
   symtab_hdr = & elf_tdata (abfd)->symtab_hdr;
@@ -952,6 +956,9 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
       bfd_boolean is_section_symbol = FALSE;
       struct elf_link_hash_entry *h;
       bfd_vma val;
+      const char * msg;
+      char * buf;
+      bfd_boolean res;
 
       r_symndx = ELF32_R_SYM (rel->r_info);
       r_type = ELF32_R_TYPE (rel->r_info);
@@ -994,7 +1001,7 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 	RELOC_AGAINST_DISCARDED_SECTION (info, input_bfd, input_section,
 					 rel, 1, relend, howto, 0, contents);
 
-      if (info->relocatable)
+      if (bfd_link_relocatable (info))
 	{
 	  /* This is a relocatable link.  We don't have to change
 	     anything, unless the reloc is against a section symbol,
@@ -1109,15 +1116,14 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
           /* Get virtual address of instruction having the relocation.  */
           if (is_far)
             {
-              const char* msg;
-              char* buf;
               msg = _("Reference to the far symbol `%s' using a wrong "
                       "relocation may result in incorrect execution");
-              buf = alloca (strlen (msg) + strlen (name) + 10);
+              buf = xmalloc (strlen (msg) + strlen (name) + 10);
               sprintf (buf, msg, name);
 
               (* info->callbacks->warning)
                 (info, buf, name, input_bfd, NULL, rel->r_offset);
+	      free (buf);
             }
 
           /* Get virtual address of instruction having the relocation.  */
@@ -1144,17 +1150,16 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 		}
 	      else
 		{
-		  const char * msg;
-		  char * buf;
-
 		  msg = _("XGATE address (%lx) is not within shared RAM"
 			  "(0xE000-0xFFFF), therefore you must manually offset "
 			  "the address, and possibly manage the page, in your "
 			  "code.");
-		  buf = alloca (strlen (msg) + 128);
+		  buf = xmalloc (strlen (msg) + 128);
 		  sprintf (buf, msg, phys_addr);
-		  if (!((*info->callbacks->warning) (info, buf, name, input_bfd,
-						     input_section, insn_addr)))
+		  res = (*info->callbacks->warning) (info, buf, name, input_bfd,
+						     input_section, insn_addr);
+		  free (buf);
+		  if (! res)
 		    return FALSE;
 		  break;
 		}
@@ -1164,37 +1169,31 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
               && m68hc11_addr_is_banked (pinfo, insn_addr)
               && phys_page != insn_page && !(e_flags & E_M68HC11_NO_BANK_WARNING))
             {
-              const char * msg;
-              char * buf;
-
               msg = _("banked address [%lx:%04lx] (%lx) is not in the same bank "
                       "as current banked address [%lx:%04lx] (%lx)");
-
-              buf = alloca (strlen (msg) + 128);
+              buf = xmalloc (strlen (msg) + 128);
               sprintf (buf, msg, phys_page, phys_addr,
                        (long) (relocation + rel->r_addend),
                        insn_page, m68hc11_phys_addr (pinfo, insn_addr),
                        (long) (insn_addr));
-              if (!((*info->callbacks->warning)
-                    (info, buf, name, input_bfd, input_section,
-                     rel->r_offset)))
+              res = (*info->callbacks->warning)
+		(info, buf, name, input_bfd, input_section, rel->r_offset);
+	      free (buf);
+	      if (! res)
                 return FALSE;
               break;
             }
 
           if (phys_page != 0 && insn_page == 0)
             {
-              const char * msg;
-              char * buf;
-
               msg = _("reference to a banked address [%lx:%04lx] in the "
                       "normal address space at %04lx");
-
-              buf = alloca (strlen (msg) + 128);
+              buf = xmalloc (strlen (msg) + 128);
               sprintf (buf, msg, phys_page, phys_addr, insn_addr);
-              if (!((*info->callbacks->warning)
-                    (info, buf, name, input_bfd, input_section,
-                     insn_addr)))
+              res = (*info->callbacks->warning)
+		(info, buf, name, input_bfd, input_section, insn_addr);
+	      free (buf);
+	      if (! res)
                 return FALSE;
 
               relocation = phys_addr;
@@ -1227,9 +1226,6 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
                 relocation += 0xC000;
               else
                 {
-                  const char * msg;
-                  char * buf;
-
                   /* Get virtual address of instruction having the relocation.  */
                   insn_addr = input_section->output_section->vma
                       + input_section->output_offset + rel->r_offset;
@@ -1237,10 +1233,12 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
                   msg = _("S12 address (%lx) is not within shared RAM"
                       "(0x2000-0x4000), therefore you must manually "
                       "offset the address in your code");
-                  buf = alloca (strlen (msg) + 128);
+                  buf = xmalloc (strlen (msg) + 128);
                   sprintf (buf, msg, phys_addr);
-                  if (!((*info->callbacks->warning) (info, buf, name, input_bfd,
-						     input_section, insn_addr)))
+                  res = (*info->callbacks->warning) (info, buf, name, input_bfd,
+						     input_section, insn_addr);
+		  free (buf);
+		  if (! res)
                     return FALSE;
                   break;
                 }
@@ -1261,8 +1259,6 @@ elf32_m68hc11_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 
       if (r != bfd_reloc_ok)
 	{
-	  const char * msg = (const char *) 0;
-
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:

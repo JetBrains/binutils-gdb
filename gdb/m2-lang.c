@@ -1,6 +1,6 @@
 /* Modula 2 language support routines for GDB, the GNU debugger.
 
-   Copyright (C) 1992-2013 Free Software Foundation, Inc.
+   Copyright (C) 1992-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -304,7 +304,7 @@ static const struct op_print m2_op_print_tab[] =
   {"MIN", UNOP_MIN, PREC_BUILTIN_FUNCTION, 0},
   {"ODD", UNOP_ODD, PREC_BUILTIN_FUNCTION, 0},
   {"TRUNC", UNOP_TRUNC, PREC_BUILTIN_FUNCTION, 0},
-  {NULL, 0, 0, 0}
+  {NULL, OP_NULL, PREC_BUILTIN_FUNCTION, 0}
 };
 
 /* The built-in types of Modula-2.  */
@@ -365,7 +365,7 @@ const struct language_defn m2_language_defn =
   macro_expansion_no,
   &exp_descriptor_modula2,
   m2_parse,			/* parser */
-  m2_error,			/* parser error function */
+  m2_yyerror,			/* parser error function */
   null_post_parser,
   m2_printchar,			/* Print character constant */
   m2_printstr,			/* function to print string constant */
@@ -394,6 +394,8 @@ const struct language_defn m2_language_defn =
   NULL,				/* la_get_symbol_name_cmp */
   iterate_over_symbols,
   &default_varobj_ops,
+  NULL,
+  NULL,
   LANG_MAGIC
 };
 
@@ -423,7 +425,7 @@ static struct gdbarch_data *m2_type_data;
 const struct builtin_m2_type *
 builtin_m2_type (struct gdbarch *gdbarch)
 {
-  return gdbarch_data (gdbarch, m2_type_data);
+  return (const struct builtin_m2_type *) gdbarch_data (gdbarch, m2_type_data);
 }
 
 

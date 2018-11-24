@@ -1,6 +1,5 @@
 /* Table of stab names for the BFD library.
-   Copyright 1990, 1991, 1992, 1994, 1995, 1996, 2000, 2005, 2007, 2012
-   Free Software Foundation, Inc.
+   Copyright (C) 1990-2016 Free Software Foundation, Inc.
    Written by Cygnus Support.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -46,8 +45,7 @@
   __define_name (N_WARNING, "WARNING")
 
 const char *
-bfd_get_stab_name (code)
-     int code;
+bfd_get_stab_name (int code)
 {
   switch (code)
     {

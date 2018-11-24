@@ -1,6 +1,6 @@
 /* Work with executable files, for GDB. 
 
-   Copyright (C) 1988-2013 Free Software Foundation, Inc.
+   Copyright (C) 1988-2016 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -34,15 +34,15 @@
 #include "gdbthread.h"
 #include "progspace.h"
 #include "gdb_bfd.h"
+#include "gcore.h"
 
 #include <fcntl.h>
 #include "readline/readline.h"
-#include <string.h>
-
 #include "gdbcore.h"
 
 #include <ctype.h>
 #include <sys/stat.h>
+#include "solist.h"
 
 void (*deprecated_file_changed_hook) (char *);
 
@@ -60,10 +60,7 @@ void _initialize_exec (void);
 
 /* The target vector for executable files.  */
 
-struct target_ops exec_ops;
-
-/* True if the exec target is pushed on the stack.  */
-static int using_exec_ops;
+static struct target_ops exec_ops;
 
 /* Whether to open exec and core files read-only or read-write.  */
 
@@ -78,7 +75,7 @@ show_write_files (struct ui_file *file, int from_tty,
 
 
 static void
-exec_open (char *args, int from_tty)
+exec_open (const char *args, int from_tty)
 {
   target_preopen (from_tty);
   exec_file_attach (args, from_tty);
@@ -112,29 +109,20 @@ exec_close (void)
    sections and closes all executable bfds from all program spaces.  */
 
 static void
-exec_close_1 (void)
+exec_close_1 (struct target_ops *self)
 {
-  using_exec_ops = 0;
+  struct program_space *ss;
+  struct cleanup *old_chain;
 
+  old_chain = save_current_program_space ();
+  ALL_PSPACES (ss)
   {
-    struct program_space *ss;
-    struct cleanup *old_chain;
-
-    old_chain = save_current_program_space ();
-    ALL_PSPACES (ss)
-    {
-      set_current_program_space (ss);
-
-      /* Delete all target sections.  */
-      resize_section_table
-	(current_target_sections,
-	 -resize_section_table (current_target_sections, 0));
-
-      exec_close ();
-    }
-
-    do_cleanups (old_chain);
+    set_current_program_space (ss);
+    clear_section_table (current_target_sections);
+    exec_close ();
   }
+
+  do_cleanups (old_chain);
 }
 
 void
@@ -145,6 +133,115 @@ exec_file_clear (int from_tty)
 
   if (from_tty)
     printf_unfiltered (_("No executable file now.\n"));
+}
+
+/* Returns non-zero if exceptions E1 and E2 are equal.  Returns zero
+   otherwise.  */
+
+static int
+exception_print_same (struct gdb_exception e1, struct gdb_exception e2)
+{
+  const char *msg1 = e1.message;
+  const char *msg2 = e2.message;
+
+  if (msg1 == NULL)
+    msg1 = "";
+  if (msg2 == NULL)
+    msg2 = "";
+
+  return (e1.reason == e2.reason
+	  && e1.error == e2.error
+	  && strcmp (e1.message, e2.message) == 0);
+}
+
+/* See gdbcore.h.  */
+
+void
+exec_file_locate_attach (int pid, int from_tty)
+{
+  char *exec_file, *full_exec_path = NULL;
+  struct cleanup *old_chain;
+  struct gdb_exception prev_err = exception_none;
+
+  /* Do nothing if we already have an executable filename.  */
+  exec_file = (char *) get_exec_file (0);
+  if (exec_file != NULL)
+    return;
+
+  /* Try to determine a filename from the process itself.  */
+  exec_file = target_pid_to_exec_file (pid);
+  if (exec_file == NULL)
+    {
+      warning (_("No executable has been specified and target does not "
+		 "support\n"
+		 "determining executable automatically.  "
+		 "Try using the \"file\" command."));
+      return;
+    }
+
+  /* If gdb_sysroot is not empty and the discovered filename
+     is absolute then prefix the filename with gdb_sysroot.  */
+  if (*gdb_sysroot != '\0' && IS_ABSOLUTE_PATH (exec_file))
+    {
+      full_exec_path = exec_file_find (exec_file, NULL);
+      if (full_exec_path == NULL)
+	return;
+    }
+  else
+    {
+      /* It's possible we don't have a full path, but rather just a
+	 filename.  Some targets, such as HP-UX, don't provide the
+	 full path, sigh.
+
+	 Attempt to qualify the filename against the source path.
+	 (If that fails, we'll just fall back on the original
+	 filename.  Not much more we can do...)  */
+      if (!source_full_path_of (exec_file, &full_exec_path))
+	full_exec_path = xstrdup (exec_file);
+    }
+
+  old_chain = make_cleanup (xfree, full_exec_path);
+  make_cleanup (free_current_contents, &prev_err.message);
+
+  /* exec_file_attach and symbol_file_add_main may throw an error if the file
+     cannot be opened either locally or remotely.
+
+     This happens for example, when the file is first found in the local
+     sysroot (above), and then disappears (a TOCTOU race), or when it doesn't
+     exist in the target filesystem, or when the file does exist, but
+     is not readable.
+
+     Even without a symbol file, the remote-based debugging session should
+     continue normally instead of ending abruptly.  Hence we catch thrown
+     errors/exceptions in the following code.  */
+  TRY
+    {
+      exec_file_attach (full_exec_path, from_tty);
+    }
+  CATCH (err, RETURN_MASK_ERROR)
+    {
+      if (err.message != NULL)
+	warning ("%s", err.message);
+
+      prev_err = err;
+
+      /* Save message so it doesn't get trashed by the catch below.  */
+      prev_err.message = xstrdup (err.message);
+    }
+  END_CATCH
+
+  TRY
+    {
+      symbol_file_add_main (full_exec_path, from_tty);
+    }
+  CATCH (err, RETURN_MASK_ERROR)
+    {
+      if (!exception_print_same (prev_err, err))
+	warning ("%s", err.message);
+    }
+  END_CATCH
+
+  do_cleanups (old_chain);
 }
 
 /* Set FILENAME as the new exec file.
@@ -165,8 +262,16 @@ exec_file_clear (int from_tty)
    we're supplying the exec pathname late for good reason.)  */
 
 void
-exec_file_attach (char *filename, int from_tty)
+exec_file_attach (const char *filename, int from_tty)
 {
+  struct cleanup *cleanups;
+
+  /* First, acquire a reference to the current exec_bfd.  We release
+     this at the end of the function; but acquiring it now lets the
+     BFD cache return it if this call refers to the same file.  */
+  gdb_bfd_ref (exec_bfd);
+  cleanups = make_cleanup_bfd_unref (exec_bfd);
+
   /* Remove any previous exec file.  */
   exec_close ();
 
@@ -181,37 +286,66 @@ exec_file_attach (char *filename, int from_tty)
     }
   else
     {
-      struct cleanup *cleanups;
+      int load_via_target = 0;
       char *scratch_pathname, *canonical_pathname;
       int scratch_chan;
       struct target_section *sections = NULL, *sections_end = NULL;
       char **matching;
 
-      scratch_chan = openp (getenv ("PATH"), OPF_TRY_CWD_FIRST, filename,
-		   write_files ? O_RDWR | O_BINARY : O_RDONLY | O_BINARY,
-			    &scratch_pathname);
-#if defined(__GO32__) || defined(_WIN32) || defined(__CYGWIN__)
-      if (scratch_chan < 0)
+      if (is_target_filename (filename))
 	{
-	  char *exename = alloca (strlen (filename) + 5);
-
-	  strcat (strcpy (exename, filename), ".exe");
-	  scratch_chan = openp (getenv ("PATH"), OPF_TRY_CWD_FIRST, exename,
-	     write_files ? O_RDWR | O_BINARY : O_RDONLY | O_BINARY,
-	     &scratch_pathname);
+	  if (target_filesystem_is_local ())
+	    filename += strlen (TARGET_SYSROOT_PREFIX);
+	  else
+	    load_via_target = 1;
 	}
+
+      if (load_via_target)
+	{
+	  /* gdb_bfd_fopen does not support "target:" filenames.  */
+	  if (write_files)
+	    warning (_("writing into executable files is "
+		       "not supported for %s sysroots"),
+		     TARGET_SYSROOT_PREFIX);
+
+	  scratch_pathname = xstrdup (filename);
+	  make_cleanup (xfree, scratch_pathname);
+
+	  scratch_chan = -1;
+
+	  canonical_pathname = scratch_pathname;
+	}
+      else
+	{
+	  scratch_chan = openp (getenv ("PATH"), OPF_TRY_CWD_FIRST,
+				filename, write_files ?
+				O_RDWR | O_BINARY : O_RDONLY | O_BINARY,
+				&scratch_pathname);
+#if defined(__GO32__) || defined(_WIN32) || defined(__CYGWIN__)
+	  if (scratch_chan < 0)
+	    {
+	      char *exename = (char *) alloca (strlen (filename) + 5);
+
+	      strcat (strcpy (exename, filename), ".exe");
+	      scratch_chan = openp (getenv ("PATH"), OPF_TRY_CWD_FIRST,
+				    exename, write_files ?
+				    O_RDWR | O_BINARY
+				    : O_RDONLY | O_BINARY,
+				    &scratch_pathname);
+	    }
 #endif
-      if (scratch_chan < 0)
-	perror_with_name (filename);
+	  if (scratch_chan < 0)
+	    perror_with_name (filename);
 
-      cleanups = make_cleanup (xfree, scratch_pathname);
+	  make_cleanup (xfree, scratch_pathname);
 
-      /* gdb_bfd_open (and its variants) prefers canonicalized pathname for
-	 better BFD caching.  */
-      canonical_pathname = gdb_realpath (scratch_pathname);
-      make_cleanup (xfree, canonical_pathname);
+	  /* gdb_bfd_open (and its variants) prefers canonicalized
+	     pathname for better BFD caching.  */
+	  canonical_pathname = gdb_realpath (scratch_pathname);
+	  make_cleanup (xfree, canonical_pathname);
+	}
 
-      if (write_files)
+      if (write_files && !load_via_target)
 	exec_bfd = gdb_bfd_fopen (canonical_pathname, gnutarget,
 				  FOPEN_RUB, scratch_chan);
       else
@@ -219,12 +353,17 @@ exec_file_attach (char *filename, int from_tty)
 
       if (!exec_bfd)
 	{
-	  error (_("\"%s\": could not open as an executable file: %s"),
+	  error (_("\"%s\": could not open as an executable file: %s."),
 		 scratch_pathname, bfd_errmsg (bfd_get_error ()));
 	}
 
+      /* gdb_realpath_keepfile resolves symlinks on the local
+	 filesystem and so cannot be used for "target:" files.  */
       gdb_assert (exec_filename == NULL);
-      exec_filename = gdb_realpath_keepfile (scratch_pathname);
+      if (load_via_target)
+	exec_filename = xstrdup (bfd_get_filename (exec_bfd));
+      else
+	exec_filename = gdb_realpath_keepfile (scratch_pathname);
 
       if (!bfd_check_format_matches (exec_bfd, bfd_object, &matching))
 	{
@@ -260,9 +399,10 @@ exec_file_attach (char *filename, int from_tty)
       /* Tell display code (if any) about the changed file name.  */
       if (deprecated_exec_file_display_hook)
 	(*deprecated_exec_file_display_hook) (filename);
-
-      do_cleanups (cleanups);
     }
+
+  do_cleanups (cleanups);
+
   bfd_cache_close_all ();
   observer_notify_executable_changed ();
 }
@@ -357,27 +497,38 @@ add_to_section_table (bfd *abfd, struct bfd_section *asect,
   (*table_pp)++;
 }
 
-int
-resize_section_table (struct target_section_table *table, int num_added)
+/* See exec.h.  */
+
+void
+clear_section_table (struct target_section_table *table)
+{
+  xfree (table->sections);
+  table->sections = table->sections_end = NULL;
+}
+
+/* Resize section table TABLE by ADJUSTMENT.
+   ADJUSTMENT may be negative, in which case the caller must have already
+   removed the sections being deleted.
+   Returns the old size.  */
+
+static int
+resize_section_table (struct target_section_table *table, int adjustment)
 {
   int old_count;
   int new_count;
 
   old_count = table->sections_end - table->sections;
 
-  new_count = num_added + old_count;
+  new_count = adjustment + old_count;
 
   if (new_count)
     {
-      table->sections = xrealloc (table->sections,
-				  sizeof (struct target_section) * new_count);
+      table->sections = XRESIZEVEC (struct target_section, table->sections,
+				    new_count);
       table->sections_end = table->sections + new_count;
     }
   else
-    {
-      xfree (table->sections);
-      table->sections = table->sections_end = NULL;
-    }
+    clear_section_table (table);
 
   return old_count;
 }
@@ -394,7 +545,7 @@ build_section_table (struct bfd *some_bfd, struct target_section **start,
   count = bfd_count_sections (some_bfd);
   if (*start)
     xfree (* start);
-  *start = (struct target_section *) xmalloc (count * sizeof (**start));
+  *start = XNEWVEC (struct target_section, count);
   *end = *start;
   bfd_map_over_sections (some_bfd, add_to_section_table, (char *) end);
   if (*end > *start + count)
@@ -430,11 +581,8 @@ add_target_sections (void *owner,
 
       /* If these are the first file sections we can provide memory
 	 from, push the file_stratum target.  */
-      if (!using_exec_ops)
-	{
-	  using_exec_ops = 1;
-	  push_target (&exec_ops);
-	}
+      if (!target_is_pushed (&exec_ops))
+	push_target (&exec_ops);
     }
 }
 
@@ -529,7 +677,59 @@ remove_target_sections (void *owner)
 
 
 
-VEC(mem_range_s) *
+enum target_xfer_status
+exec_read_partial_read_only (gdb_byte *readbuf, ULONGEST offset,
+			     ULONGEST len, ULONGEST *xfered_len)
+{
+  /* It's unduly pedantic to refuse to look at the executable for
+     read-only pieces; so do the equivalent of readonly regions aka
+     QTro packet.  */
+  if (exec_bfd != NULL)
+    {
+      asection *s;
+      bfd_size_type size;
+      bfd_vma vma;
+
+      for (s = exec_bfd->sections; s; s = s->next)
+	{
+	  if ((s->flags & SEC_LOAD) == 0
+	      || (s->flags & SEC_READONLY) == 0)
+	    continue;
+
+	  vma = s->vma;
+	  size = bfd_get_section_size (s);
+	  if (vma <= offset && offset < (vma + size))
+	    {
+	      ULONGEST amt;
+
+	      amt = (vma + size) - offset;
+	      if (amt > len)
+		amt = len;
+
+	      amt = bfd_get_section_contents (exec_bfd, s,
+					      readbuf, offset - vma, amt);
+
+	      if (amt == 0)
+		return TARGET_XFER_EOF;
+	      else
+		{
+		  *xfered_len = amt;
+		  return TARGET_XFER_OK;
+		}
+	    }
+	}
+    }
+
+  /* Indicate failure to find the requested memory block.  */
+  return TARGET_XFER_E_IO;
+}
+
+/* Appends all read-only memory ranges found in the target section
+   table defined by SECTIONS and SECTIONS_END, starting at (and
+   intersected with) MEMADDR for LEN bytes.  Returns the augmented
+   VEC.  */
+
+static VEC(mem_range_s) *
 section_table_available_memory (VEC(mem_range_s) *memory,
 				CORE_ADDR memaddr, ULONGEST len,
 				struct target_section *sections,
@@ -566,9 +766,64 @@ section_table_available_memory (VEC(mem_range_s) *memory,
   return memory;
 }
 
-int
+enum target_xfer_status
+section_table_read_available_memory (gdb_byte *readbuf, ULONGEST offset,
+				     ULONGEST len, ULONGEST *xfered_len)
+{
+  VEC(mem_range_s) *available_memory = NULL;
+  struct target_section_table *table;
+  struct cleanup *old_chain;
+  mem_range_s *r;
+  int i;
+
+  table = target_get_section_table (&exec_ops);
+  available_memory = section_table_available_memory (available_memory,
+						     offset, len,
+						     table->sections,
+						     table->sections_end);
+
+  old_chain = make_cleanup (VEC_cleanup(mem_range_s),
+			    &available_memory);
+
+  normalize_mem_ranges (available_memory);
+
+  for (i = 0;
+       VEC_iterate (mem_range_s, available_memory, i, r);
+       i++)
+    {
+      if (mem_ranges_overlap (r->start, r->length, offset, len))
+	{
+	  CORE_ADDR end;
+	  enum target_xfer_status status;
+
+	  /* Get the intersection window.  */
+	  end = min (offset + len, r->start + r->length);
+
+	  gdb_assert (end - offset <= len);
+
+	  if (offset >= r->start)
+	    status = exec_read_partial_read_only (readbuf, offset,
+						  end - offset,
+						  xfered_len);
+	  else
+	    {
+	      *xfered_len = r->start - offset;
+	      status = TARGET_XFER_UNAVAILABLE;
+	    }
+	  do_cleanups (old_chain);
+	  return status;
+	}
+    }
+  do_cleanups (old_chain);
+
+  *xfered_len = len;
+  return TARGET_XFER_UNAVAILABLE;
+}
+
+enum target_xfer_status
 section_table_xfer_memory_partial (gdb_byte *readbuf, const gdb_byte *writebuf,
-				   ULONGEST offset, LONGEST len,
+				   ULONGEST offset, ULONGEST len,
+				   ULONGEST *xfered_len,
 				   struct target_section *sections,
 				   struct target_section *sections_end,
 				   const char *section_name)
@@ -578,7 +833,7 @@ section_table_xfer_memory_partial (gdb_byte *readbuf, const gdb_byte *writebuf,
   ULONGEST memaddr = offset;
   ULONGEST memend = memaddr + len;
 
-  if (len <= 0)
+  if (len == 0)
     internal_error (__FILE__, __LINE__,
 		    _("failed internal consistency check"));
 
@@ -602,7 +857,14 @@ section_table_xfer_memory_partial (gdb_byte *readbuf, const gdb_byte *writebuf,
 		res = bfd_get_section_contents (abfd, asect,
 						readbuf, memaddr - p->addr,
 						len);
-	      return (res != 0) ? len : 0;
+
+	      if (res != 0)
+		{
+		  *xfered_len = len;
+		  return TARGET_XFER_OK;
+		}
+	      else
+		return TARGET_XFER_EOF;
 	    }
 	  else if (memaddr >= p->endaddr)
 	    {
@@ -621,12 +883,18 @@ section_table_xfer_memory_partial (gdb_byte *readbuf, const gdb_byte *writebuf,
 		res = bfd_get_section_contents (abfd, asect,
 						readbuf, memaddr - p->addr,
 						len);
-	      return (res != 0) ? len : 0;
+	      if (res != 0)
+		{
+		  *xfered_len = len;
+		  return TARGET_XFER_OK;
+		}
+	      else
+		return TARGET_XFER_EOF;
 	    }
         }
     }
 
-  return 0;			/* We can't help.  */
+  return TARGET_XFER_EOF;		/* We can't help.  */
 }
 
 static struct target_section_table *
@@ -635,22 +903,22 @@ exec_get_section_table (struct target_ops *ops)
   return current_target_sections;
 }
 
-static LONGEST
+static enum target_xfer_status
 exec_xfer_partial (struct target_ops *ops, enum target_object object,
 		   const char *annex, gdb_byte *readbuf,
 		   const gdb_byte *writebuf,
-		   ULONGEST offset, LONGEST len)
+		   ULONGEST offset, ULONGEST len, ULONGEST *xfered_len)
 {
   struct target_section_table *table = target_get_section_table (ops);
 
   if (object == TARGET_OBJECT_MEMORY)
     return section_table_xfer_memory_partial (readbuf, writebuf,
-					      offset, len,
+					      offset, len, xfered_len,
 					      table->sections,
 					      table->sections_end,
 					      NULL);
   else
-    return -1;
+    return TARGET_XFER_E_IO;
 }
 
 
@@ -801,7 +1069,8 @@ exec_set_section_address (const char *filename, int index, CORE_ADDR address)
    breakpoint_init_inferior).  */
 
 static int
-ignore (struct gdbarch *gdbarch, struct bp_target_info *bp_tgt)
+ignore (struct target_ops *ops, struct gdbarch *gdbarch,
+	struct bp_target_info *bp_tgt)
 {
   return 0;
 }
@@ -815,15 +1084,11 @@ exec_has_memory (struct target_ops *ops)
 	  != current_target_sections->sections_end);
 }
 
-/* Find mapped memory.  */
-
-extern void
-exec_set_find_memory_regions (int (*func) (find_memory_region_ftype, void *))
+static char *
+exec_make_note_section (struct target_ops *self, bfd *obfd, int *note_size)
 {
-  exec_ops.to_find_memory_regions = func;
+  error (_("Can't create a corefile"));
 }
-
-static char *exec_make_note_section (bfd *, int *);
 
 /* Fill in the exec file target vector.  Very few entries need to be
    defined.  */
@@ -837,16 +1102,15 @@ init_exec_ops (void)
 Specify the filename of the executable file.";
   exec_ops.to_open = exec_open;
   exec_ops.to_close = exec_close_1;
-  exec_ops.to_attach = find_default_attach;
   exec_ops.to_xfer_partial = exec_xfer_partial;
   exec_ops.to_get_section_table = exec_get_section_table;
   exec_ops.to_files_info = exec_files_info;
   exec_ops.to_insert_breakpoint = ignore;
   exec_ops.to_remove_breakpoint = ignore;
-  exec_ops.to_create_inferior = find_default_create_inferior;
   exec_ops.to_stratum = file_stratum;
   exec_ops.to_has_memory = exec_has_memory;
   exec_ops.to_make_corefile_notes = exec_make_note_section;
+  exec_ops.to_find_memory_regions = objfile_find_memory_regions;
   exec_ops.to_magic = OPS_MAGIC;
 }
 
@@ -891,10 +1155,4 @@ Show writing into executable and core files."), NULL,
 			   &setlist, &showlist);
 
   add_target_with_completer (&exec_ops, filename_completer);
-}
-
-static char *
-exec_make_note_section (bfd *obfd, int *note_size)
-{
-  error (_("Can't create a corefile"));
 }

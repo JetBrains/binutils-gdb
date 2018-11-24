@@ -1,7 +1,6 @@
 // layout.h -- lay out output file sections for gold  -*- C++ -*-
 
-// Copyright 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2016 Free Software Foundation, Inc.
 // Written by Ian Lance Taylor <iant@google.com>.
 
 // This file is part of gold.
@@ -66,6 +65,10 @@ struct Timespec;
 // Return TRUE if SECNAME is the name of a compressed debug section.
 extern bool
 is_compressed_debug_section(const char* secname);
+
+// Return the name of the corresponding uncompressed debug section.
+extern std::string
+corresponding_uncompressed_section_name(std::string secname);
 
 // Maintain a list of free space within a section, segment, or file.
 // Used for incremental update links.
@@ -636,6 +639,12 @@ class Layout
 		  unsigned int reloc_shndx, unsigned int reloc_type,
 		  off_t* offset);
 
+  // After processing all input files, we call this to make sure that
+  // the optimized .eh_frame sections have been added to the output
+  // section.
+  void
+  finalize_eh_frame_section();
+
   // Add .eh_frame information for a PLT.  The FDE must start with a
   // 4-byte PC-relative reference to the start of the PLT, followed by
   // a 4-byte size of PLT.
@@ -755,7 +764,8 @@ class Layout
 	    || strncmp(name, ".gnu.linkonce.wi.",
 		       sizeof(".gnu.linkonce.wi.") - 1) == 0
 	    || strncmp(name, ".line", sizeof(".line") - 1) == 0
-	    || strncmp(name, ".stab", sizeof(".stab") - 1) == 0);
+	    || strncmp(name, ".stab", sizeof(".stab") - 1) == 0
+	    || strncmp(name, ".pdr", sizeof(".pdr") - 1) == 0);
   }
 
   // Return true if RELOBJ is an input file whose base name matches
@@ -892,16 +902,13 @@ class Layout
 			  const Output_data_reloc_generic* dyn_rel,
 			  bool add_debug, bool dynrel_includes_plt);
 
-  // If a treehash is necessary to compute the build ID, then queue
-  // the necessary tasks and return a blocker that will unblock when
-  // they finish.  Otherwise return BUILD_ID_BLOCKER.
-  Task_token*
-  queue_build_id_tasks(Workqueue* workqueue, Task_token* build_id_blocker,
-		       Output_file* of);
+  // Add a target-specific dynamic tag with constant value.
+  void
+  add_target_specific_dynamic_tag(elfcpp::DT tag, unsigned int val);
 
   // Compute and write out the build ID if needed.
   void
-  write_build_id(Output_file*) const;
+  write_build_id(Output_file*, unsigned char*, size_t) const;
 
   // Rewrite output file in binary format.
   void
@@ -1375,12 +1382,6 @@ class Layout
   Gdb_index* gdb_index_data_;
   // The space for the build ID checksum if there is one.
   Output_section_data* build_id_note_;
-  // Temporary storage for tree hash of build ID.
-  unsigned char* array_of_hashes_;
-  // Size of array_of_hashes_ (in bytes).
-  size_t size_of_array_of_hashes_;
-  // Input view for computing tree hash of build ID.  Freed in write_build_id().
-  const unsigned char* input_view_;
   // The output section containing dwarf abbreviations
   Output_reduced_debug_abbrev_section* debug_abbrev_;
   // The output section containing the dwarf debug info tree
@@ -1455,9 +1456,11 @@ class Write_sections_task : public Task
  public:
   Write_sections_task(const Layout* layout, Output_file* of,
 		      Task_token* output_sections_blocker,
+		      Task_token* input_sections_blocker,
 		      Task_token* final_blocker)
     : layout_(layout), of_(of),
       output_sections_blocker_(output_sections_blocker),
+      input_sections_blocker_(input_sections_blocker),
       final_blocker_(final_blocker)
   { }
 
@@ -1482,6 +1485,7 @@ class Write_sections_task : public Task
   const Layout* layout_;
   Output_file* of_;
   Task_token* output_sections_blocker_;
+  Task_token* input_sections_blocker_;
   Task_token* final_blocker_;
 };
 
@@ -1594,13 +1598,17 @@ class Write_after_input_sections_task : public Task
   Task_token* final_blocker_;
 };
 
-// This task function handles closing the file.
+// This task function handles computation of the build id.
+// When using --build-id=tree, it schedules the tasks that
+// compute the hashes for each chunk of the file. This task
+// cannot run until we have finalized the size of the output
+// file, after the completion of Write_after_input_sections_task.
 
-class Close_task_runner : public Task_function_runner
+class Build_id_task_runner : public Task_function_runner
 {
  public:
-  Close_task_runner(const General_options* options, const Layout* layout,
-		    Output_file* of)
+  Build_id_task_runner(const General_options* options, const Layout* layout,
+		       Output_file* of)
     : options_(options), layout_(layout), of_(of)
   { }
 
@@ -1612,6 +1620,30 @@ class Close_task_runner : public Task_function_runner
   const General_options* options_;
   const Layout* layout_;
   Output_file* of_;
+};
+
+// This task function handles closing the file.
+
+class Close_task_runner : public Task_function_runner
+{
+ public:
+  Close_task_runner(const General_options* options, const Layout* layout,
+		    Output_file* of, unsigned char* array_of_hashes,
+		    size_t size_of_hashes)
+    : options_(options), layout_(layout), of_(of),
+      array_of_hashes_(array_of_hashes), size_of_hashes_(size_of_hashes)
+  { }
+
+  // Run the operation.
+  void
+  run(Workqueue*, const Task*);
+
+ private:
+  const General_options* options_;
+  const Layout* layout_;
+  Output_file* of_;
+  unsigned char* const array_of_hashes_;
+  const size_t size_of_hashes_;
 };
 
 // A small helper function to align an address.

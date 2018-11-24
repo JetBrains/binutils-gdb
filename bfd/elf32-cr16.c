@@ -1,5 +1,5 @@
 /* BFD back-end for National Semiconductor's CR16 ELF
-   Copyright 2007, 2008, 2009, 2010, 2012 Free Software Foundation, Inc.
+   Copyright (C) 2007-2016 Free Software Foundation, Inc.
    Written by M R Swami Reddy.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -115,8 +115,8 @@ static reloc_howto_type cr16_elf_howto_table[] =
 {
   HOWTO (R_CR16_NONE,              /* type */
          0,                        /* rightshift */
-         2,                        /* size */
-         32,                       /* bitsize */
+         3,                        /* size */
+         0,                        /* bitsize */
          FALSE,                    /* pc_relative */
          0,                        /* bitpos */
          complain_overflow_dont,   /* complain_on_overflow */
@@ -673,7 +673,13 @@ elf_cr16_info_to_howto (bfd *abfd ATTRIBUTE_UNUSED, arelent *cache_ptr,
 {
   unsigned int r_type = ELF32_R_TYPE (dst->r_info);
 
-  BFD_ASSERT (r_type < (unsigned int) R_CR16_MAX);
+  if (r_type >= R_CR16_MAX)
+    {
+      (*_bfd_error_handler) (_("%B: unrecognised CR16 reloc number: %d"),
+			     abfd, r_type);
+      bfd_set_error (bfd_error_bad_value);
+      r_type = R_CR16_NONE;
+    }
   cache_ptr->howto = cr16_elf_howto_table + r_type;
 }
 
@@ -699,7 +705,7 @@ cr16_elf_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
   srelgot = NULL;
   bfd_boolean result = FALSE;
 
-  if (info->relocatable)
+  if (bfd_link_relocatable (info))
     return TRUE;
 
   symtab_hdr = &elf_tdata (abfd)->symtab_hdr;
@@ -761,7 +767,7 @@ cr16_elf_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
             }
 
           if (srelgot == NULL
-              && (h != NULL || info->executable))
+              && (h != NULL || bfd_link_executable (info)))
             {
               srelgot = bfd_get_linker_section (dynobj, ".rela.got");
               if (srelgot == NULL)
@@ -822,7 +828,7 @@ cr16_elf_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
 
               local_got_offsets[r_symndx] = sgot->size;
 
-              if (info->executable)
+              if (bfd_link_executable (info))
                 /* If we are generating a shared object, we need to
                    output a R_CR16_RELATIVE reloc so that the dynamic
                    linker can adjust this GOT entry.  */
@@ -1437,7 +1443,7 @@ elf32_cr16_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	RELOC_AGAINST_DISCARDED_SECTION (info, input_bfd, input_section,
 					 rel, 1, relend, howto, 0, contents);
 
-      if (info->relocatable)
+      if (bfd_link_relocatable (info))
         continue;
 
       r = cr16_elf_final_link_relocate (howto, input_bfd, output_bfd,
@@ -1770,7 +1776,7 @@ elf32_cr16_relax_section (bfd *abfd, asection *sec,
   /* We don't have to do anything for a relocatable link, if
      this section does not have relocs, or if this is not a
      code section.  */
-  if (link_info->relocatable
+  if (bfd_link_relocatable (link_info)
       || (sec->flags & SEC_RELOC) == 0
       || sec->reloc_count == 0
       || (sec->flags & SEC_CODE) == 0)
@@ -2303,7 +2309,7 @@ _bfd_cr16_elf_create_dynamic_sections (bfd *abfd, struct bfd_link_info *info)
          be needed, we can discard it later.  We will never need this
          section when generating a shared object, since they do not use
          copy relocs.  */
-      if (! info->executable)
+      if (! bfd_link_executable (info))
         {
           s = bfd_make_section_anyway_with_flags (abfd,
 						  (bed->default_use_rela_p
@@ -2347,7 +2353,7 @@ _bfd_cr16_elf_adjust_dynamic_symbol (struct bfd_link_info * info,
   if (h->type == STT_FUNC
       || h->needs_plt)
     {
-      if (! info->executable
+      if (! bfd_link_executable (info)
           && !h->def_dynamic
           && !h->ref_dynamic)
         {
@@ -2402,7 +2408,7 @@ _bfd_cr16_elf_adjust_dynamic_symbol (struct bfd_link_info * info,
      only references to the symbol are via the global offset table.
      For such cases we need not do anything here; the relocations will
      be handled correctly by relocate_section.  */
-  if (info->executable)
+  if (bfd_link_executable (info))
     return TRUE;
 
   /* If there are no references to this symbol that do not use the
@@ -2437,7 +2443,7 @@ _bfd_cr16_elf_adjust_dynamic_symbol (struct bfd_link_info * info,
       h->needs_copy = 1;
     }
 
-  return _bfd_elf_adjust_dynamic_copy (h, s);
+  return _bfd_elf_adjust_dynamic_copy (info, h, s);
 }
 
 /* Set the sizes of the dynamic sections.  */
@@ -2458,7 +2464,7 @@ _bfd_cr16_elf_size_dynamic_sections (bfd * output_bfd,
   if (elf_hash_table (info)->dynamic_sections_created)
     {
       /* Set the contents of the .interp section to the interpreter.  */
-      if (info->executable)
+      if (bfd_link_executable (info) && !info->nointerp)
         {
 #if 0
           s = bfd_get_linker_section (dynobj, ".interp");
@@ -2575,7 +2581,7 @@ _bfd_cr16_elf_size_dynamic_sections (bfd * output_bfd,
          but we must add the entries now so that we get the correct
          size for the .dynamic section.  The DT_DEBUG entry is filled
          in by the dynamic linker and used by the debugger.  */
-      if (! info->executable)
+      if (! bfd_link_executable (info))
         {
           if (!_bfd_elf_add_dynamic_entry (info, DT_DEBUG, 0))
             return FALSE;
@@ -2643,7 +2649,7 @@ _bfd_cr16_elf_finish_dynamic_symbol (bfd * output_bfd,
          the symbol was forced to be local because of a version file.
          The entry in the global offset table will already have been
          initialized in the relocate_section function.  */
-      if (info->executable
+      if (bfd_link_executable (info)
           && (info->symbolic || h->dynindx == -1)
           && h->def_regular)
         {
@@ -2737,21 +2743,19 @@ _bfd_cr16_elf_finish_dynamic_sections (bfd * output_bfd,
               break;
 
             case DT_PLTGOT:
-              name = ".got";
+              name = ".got.plt";
               goto get_vma;
 
             case DT_JMPREL:
               name = ".rela.plt";
             get_vma:
-              s = bfd_get_section_by_name (output_bfd, name);
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              s = bfd_get_linker_section (dynobj, name);
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
 
             case DT_PLTRELSZ:
-              s = bfd_get_section_by_name (output_bfd, ".rela.plt");
-              BFD_ASSERT (s != NULL);
+              s = bfd_get_linker_section (dynobj, ".rela.plt");
               dyn.d_un.d_val = s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
@@ -2766,7 +2770,7 @@ _bfd_cr16_elf_finish_dynamic_sections (bfd * output_bfd,
                  the linker script arranges for .rela.plt to follow all
                  other relocation sections, we don't have to worry
                  about changing the DT_RELA entry.  */
-              s = bfd_get_section_by_name (output_bfd, ".rela.plt");
+              s = bfd_get_linker_section (dynobj, ".rela.plt");
               if (s != NULL)
                 dyn.d_un.d_val -= s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
@@ -2813,7 +2817,7 @@ bfd_cr16_elf32_create_embedded_relocs (bfd *abfd,
   bfd_byte *p;
   bfd_size_type amt;
 
-  BFD_ASSERT (! info->relocatable);
+  BFD_ASSERT (! bfd_link_relocatable (info));
 
   *errmsg = NULL;
 
@@ -2935,7 +2939,7 @@ _bfd_cr16_elf_reloc_type_class (const struct bfd_link_info *info ATTRIBUTE_UNUSE
 }
 
 /* Definitions for setting CR16 target vector.  */
-#define TARGET_LITTLE_SYM                 bfd_elf32_cr16_vec
+#define TARGET_LITTLE_SYM                 cr16_elf32_vec
 #define TARGET_LITTLE_NAME                "elf32-cr16"
 #define ELF_ARCH                          bfd_arch_cr16
 #define ELF_MACHINE_CODE                  EM_CR16

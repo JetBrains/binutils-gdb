@@ -1,6 +1,6 @@
 /* Target-dependent code for Motorola 68HC11 & 68HC12
 
-   Copyright (C) 1999-2013 Free Software Foundation, Inc.
+   Copyright (C) 1999-2016 Free Software Foundation, Inc.
 
    Contributed by Stephane Carrez, stcarrez@nerim.fr
 
@@ -30,7 +30,6 @@
 #include "gdbtypes.h"
 #include "gdbcmd.h"
 #include "gdbcore.h"
-#include <string.h>
 #include "value.h"
 #include "inferior.h"
 #include "dis-asm.h"  
@@ -199,12 +198,12 @@ static int soft_reg_initialized = 0;
 static void
 m68hc11_get_register_info (struct m68hc11_soft_reg *reg, const char *name)
 {
-  struct minimal_symbol *msymbol;
+  struct bound_minimal_symbol msymbol;
 
   msymbol = lookup_minimal_symbol (name, NULL, NULL);
-  if (msymbol)
+  if (msymbol.minsym)
     {
-      reg->addr = SYMBOL_VALUE_ADDRESS (msymbol);
+      reg->addr = BMSYMBOL_VALUE_ADDRESS (msymbol);
       reg->name = xstrdup (name);
 
       /* Keep track of the address range for soft registers.  */
@@ -338,7 +337,7 @@ m68hc11_pseudo_register_write (struct gdbarch *gdbarch,
   if (regno == M68HC12_HARD_PC_REGNUM)
     {
       const int regsize = 4;
-      gdb_byte *tmp = alloca (regsize);
+      gdb_byte *tmp = (gdb_byte *) alloca (regsize);
       CORE_ADDR pc;
 
       memcpy (tmp, buf, regsize);
@@ -363,7 +362,7 @@ m68hc11_pseudo_register_write (struct gdbarch *gdbarch,
   if (soft_regs[regno].name)
     {
       const int regsize = 2;
-      gdb_byte *tmp = alloca (regsize);
+      gdb_byte *tmp = (gdb_byte *) alloca (regsize);
       memcpy (tmp, buf, regsize);
       target_write_memory (soft_regs[regno].addr, tmp, regsize);
     }
@@ -793,7 +792,7 @@ m68hc11_frame_unwind_cache (struct frame_info *this_frame,
   int i;
 
   if ((*this_prologue_cache))
-    return (*this_prologue_cache);
+    return (struct m68hc11_unwind_cache *) (*this_prologue_cache);
 
   info = FRAME_OBSTACK_ZALLOC (struct m68hc11_unwind_cache);
   (*this_prologue_cache) = info;
@@ -1452,7 +1451,7 @@ m68hc11_gdbarch_init (struct gdbarch_info info,
     }
 
   /* Need a new architecture.  Fill in a target specific vector.  */
-  tdep = (struct gdbarch_tdep *) xmalloc (sizeof (struct gdbarch_tdep));
+  tdep = XNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
   tdep->elf_flags = elf_flags;
 

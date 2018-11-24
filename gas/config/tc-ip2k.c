@@ -1,6 +1,5 @@
 /* tc-ip2k.c -- Assembler for the Scenix IP2xxx.
-   Copyright (C) 2000, 2002, 2003, 2005, 2006, 2007, 2009
-   Free Software Foundation. Inc.
+   Copyright (C) 2000-2016 Free Software Foundation, Inc.
 
    This file is part of GAS, the GNU Assembler.
 
@@ -20,7 +19,7 @@
    Boston, MA 02110-1301, USA.  */
 
 #include "as.h"
-#include "subsegs.h"     
+#include "subsegs.h"
 #include "symcat.h"
 #include "opcodes/ip2k-desc.h"
 #include "opcodes/ip2k-opc.h"
@@ -53,7 +52,7 @@ ip2k_insn;
 
 const char comment_chars[]        = ";";
 const char line_comment_chars[]   = "#";
-const char line_separator_chars[] = ""; 
+const char line_separator_chars[] = "";
 const char EXP_CHARS[]            = "eE";
 const char FLT_CHARS[]            = "dD";
 
@@ -73,35 +72,18 @@ ip2k_elf_section_rtn (int i)
 
   if (force_code_align)
     {
-      /* The s_align_ptwo function expects that we are just after a .align
-	 directive and it will either try and read the align value or stop
-	 if end of line so we must fake it out so it thinks we are at the
-	 end of the line.  */
-      char *old_input_line_pointer = input_line_pointer;
-      input_line_pointer = "\n";
-      s_align_ptwo (1);
+      do_align (1, NULL, 0, 0);
       force_code_align = 0;
-      /* Restore.  */
-      input_line_pointer = old_input_line_pointer;
     }
 }
 
 static void
 ip2k_elf_section_text (int i)
 {
-  char *old_input_line_pointer;
   obj_elf_text(i);
 
-  /* the s_align_ptwo function expects that we are just after a .align
-     directive and it will either try and read the align value or stop if
-     end of line so we must fake it out so it thinks we are at the end of
-     the line.  */
-  old_input_line_pointer = input_line_pointer;
-  input_line_pointer = "\n";
-  s_align_ptwo (1);
+  do_align (1, NULL, 0, 0);
   force_code_align = 0;
-  /* Restore.  */
-  input_line_pointer = old_input_line_pointer;
 }
 
 /* The target specific pseudo-ops which we support.  */
@@ -120,7 +102,7 @@ enum options
   OPTION_CPU_IP2022EXT
 };
 
-struct option md_longopts[] = 
+struct option md_longopts[] =
 {
   { "mip2022",     no_argument, NULL, OPTION_CPU_IP2022 },
   { "mip2022ext",  no_argument, NULL, OPTION_CPU_IP2022EXT },
@@ -131,7 +113,7 @@ size_t md_longopts_size = sizeof (md_longopts);
 const char * md_shortopts = "";
 
 int
-md_parse_option (int c ATTRIBUTE_UNUSED, char * arg ATTRIBUTE_UNUSED)
+md_parse_option (int c ATTRIBUTE_UNUSED, const char * arg ATTRIBUTE_UNUSED)
 {
   switch (c)
     {
@@ -165,7 +147,7 @@ void
 md_begin (void)
 {
   /* Initialize the `cgen' interface.  */
-  
+
   /* Set the machine number and endian.  */
   gas_cgen_cpu_desc = ip2k_cgen_cpu_open (CGEN_CPU_OPEN_MACHS,
 					  ip2k_mach_bitmask,
@@ -232,7 +214,7 @@ md_section_align (segT segment, valueT size)
 {
   int align = bfd_get_section_alignment (stdoutput, segment);
 
-  return ((size + (1 << align) - 1) & (-1 << align));
+  return ((size + (1 << align) - 1) & -(1 << align));
 }
 
 
@@ -248,7 +230,7 @@ md_estimate_size_before_relax (fragS * fragP ATTRIBUTE_UNUSED,
 {
   as_fatal (_("relaxation not supported\n"));
   return 1;
-} 
+}
 
 
 /* *fragP has been relaxed to its final size, and now needs to have
@@ -329,7 +311,7 @@ md_number_to_chars (char * buf, valueT val, int n)
   number_to_chars_bigendian (buf, val, n);
 }
 
-char *
+const char *
 md_atof (int type, char * litP, int *  sizeP)
 {
   return ieee_md_atof (type, litP, sizeP, TRUE);
@@ -421,7 +403,7 @@ ip2k_elf_section_flags (flagword flags,
      word alignment should be forced.  */
   if (flags & SEC_CODE)
     force_code_align = 1;
- 
+
   return flags;
 }
 
