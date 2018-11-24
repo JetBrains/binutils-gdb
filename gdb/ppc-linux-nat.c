@@ -1,6 +1,6 @@
 /* PPC GNU/Linux native support.
 
-   Copyright (C) 1988-2013 Free Software Foundation, Inc.
+   Copyright (C) 1988-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,14 +18,12 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include <string.h>
 #include "observer.h"
 #include "frame.h"
 #include "inferior.h"
 #include "gdbthread.h"
 #include "gdbcore.h"
 #include "regcache.h"
-#include "gdb_assert.h"
 #include "target.h"
 #include "linux-nat.h"
 
@@ -48,57 +46,7 @@
 #include "elf/common.h"
 #include "auxv.h"
 
-/* This sometimes isn't defined.  */
-#ifndef PT_ORIG_R3
-#define PT_ORIG_R3 34
-#endif
-#ifndef PT_TRAP
-#define PT_TRAP 40
-#endif
-
-/* The PPC_FEATURE_* defines should be provided by <asm/cputable.h>.
-   If they aren't, we can provide them ourselves (their values are fixed
-   because they are part of the kernel ABI).  They are used in the AT_HWCAP
-   entry of the AUXV.  */
-#ifndef PPC_FEATURE_CELL
-#define PPC_FEATURE_CELL 0x00010000
-#endif
-#ifndef PPC_FEATURE_BOOKE
-#define PPC_FEATURE_BOOKE 0x00008000
-#endif
-#ifndef PPC_FEATURE_HAS_DFP
-#define PPC_FEATURE_HAS_DFP	0x00000400  /* Decimal Floating Point.  */
-#endif
-
-/* Glibc's headers don't define PTRACE_GETVRREGS so we cannot use a
-   configure time check.  Some older glibc's (for instance 2.2.1)
-   don't have a specific powerpc version of ptrace.h, and fall back on
-   a generic one.  In such cases, sys/ptrace.h defines
-   PTRACE_GETFPXREGS and PTRACE_SETFPXREGS to the same numbers that
-   ppc kernel's asm/ptrace.h defines PTRACE_GETVRREGS and
-   PTRACE_SETVRREGS to be.  This also makes a configury check pretty
-   much useless.  */
-
-/* These definitions should really come from the glibc header files,
-   but Glibc doesn't know about the vrregs yet.  */
-#ifndef PTRACE_GETVRREGS
-#define PTRACE_GETVRREGS 18
-#define PTRACE_SETVRREGS 19
-#endif
-
-/* PTRACE requests for POWER7 VSX registers.  */
-#ifndef PTRACE_GETVSXREGS
-#define PTRACE_GETVSXREGS 27
-#define PTRACE_SETVSXREGS 28
-#endif
-
-/* Similarly for the ptrace requests for getting / setting the SPE
-   registers (ev0 -- ev31, acc, and spefscr).  See the description of
-   gdb_evrregset_t for details.  */
-#ifndef PTRACE_GETEVRREGS
-#define PTRACE_GETEVRREGS 20
-#define PTRACE_SETEVRREGS 21
-#endif
+#include "nat/ppc-linux.h"
 
 /* Similarly for the hardware watchpoint support.  These requests are used
    when the PowerPC HWDEBUG ptrace interface is not available.  */
@@ -1444,7 +1392,8 @@ have_ptrace_hwdebug_interface (void)
 }
 
 static int
-ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
+ppc_linux_can_use_hw_breakpoint (struct target_ops *self,
+				 int type, int cnt, int ot)
 {
   int total_hw_wp, total_hw_bp;
 
@@ -1472,6 +1421,11 @@ ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
     }
   else if (type == bp_hardware_breakpoint)
     {
+      if (total_hw_bp == 0)
+	{
+	  /* No hardware breakpoint support. */
+	  return 0;
+	}
       if (cnt > total_hw_bp)
 	return -1;
     }
@@ -1496,7 +1450,8 @@ ppc_linux_can_use_hw_breakpoint (int type, int cnt, int ot)
 }
 
 static int
-ppc_linux_region_ok_for_hw_watchpoint (CORE_ADDR addr, int len)
+ppc_linux_region_ok_for_hw_watchpoint (struct target_ops *self,
+				       CORE_ADDR addr, int len)
 {
   /* Handle sub-8-byte quantities.  */
   if (len <= 0)
@@ -1672,7 +1627,8 @@ ppc_linux_ranged_break_num_registers (struct target_ops *target)
    success, 1 if hardware breakpoints are not supported or -1 for failure.  */
 
 static int
-ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
+ppc_linux_insert_hw_breakpoint (struct target_ops *self,
+				struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
   struct lwp_info *lp;
@@ -1684,7 +1640,7 @@ ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
   p.version = PPC_DEBUG_CURRENT_VERSION;
   p.trigger_type = PPC_BREAKPOINT_TRIGGER_EXECUTE;
   p.condition_mode = PPC_BREAKPOINT_CONDITION_NONE;
-  p.addr = (uint64_t) bp_tgt->placed_address;
+  p.addr = (uint64_t) (bp_tgt->placed_address = bp_tgt->reqstd_address);
   p.condition_value = 0;
 
   if (bp_tgt->length)
@@ -1708,7 +1664,8 @@ ppc_linux_insert_hw_breakpoint (struct gdbarch *gdbarch,
 }
 
 static int
-ppc_linux_remove_hw_breakpoint (struct gdbarch *gdbarch,
+ppc_linux_remove_hw_breakpoint (struct target_ops *self,
+				struct gdbarch *gdbarch,
 				  struct bp_target_info *bp_tgt)
 {
   struct lwp_info *lp;
@@ -2011,7 +1968,8 @@ check_condition (CORE_ADDR watch_addr, struct expression *cond,
    the condition expression, thus only triggering the watchpoint when it is
    true.  */
 static int
-ppc_linux_can_accel_watchpoint_condition (CORE_ADDR addr, int len, int rw,
+ppc_linux_can_accel_watchpoint_condition (struct target_ops *self,
+					  CORE_ADDR addr, int len, int rw,
 					  struct expression *cond)
 {
   CORE_ADDR data_value;
@@ -2073,7 +2031,8 @@ create_watchpoint_request (struct ppc_hw_breakpoint *p, CORE_ADDR addr,
 }
 
 static int
-ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
+ppc_linux_insert_watchpoint (struct target_ops *self,
+			     CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
@@ -2141,7 +2100,8 @@ ppc_linux_insert_watchpoint (CORE_ADDR addr, int len, int rw,
 }
 
 static int
-ppc_linux_remove_watchpoint (CORE_ADDR addr, int len, int rw,
+ppc_linux_remove_watchpoint (struct target_ops *self,
+			     CORE_ADDR addr, int len, int rw,
 			     struct expression *cond)
 {
   struct lwp_info *lp;
@@ -2283,10 +2243,10 @@ ppc_linux_stopped_data_address (struct target_ops *target, CORE_ADDR *addr_p)
 }
 
 static int
-ppc_linux_stopped_by_watchpoint (void)
+ppc_linux_stopped_by_watchpoint (struct target_ops *ops)
 {
   CORE_ADDR addr;
-  return ppc_linux_stopped_data_address (&current_target, &addr);
+  return ppc_linux_stopped_data_address (ops, &addr);
 }
 
 static int
@@ -2407,7 +2367,7 @@ ppc_linux_target_wordsize (void)
 
   errno = 0;
   msr = (long) ptrace (PTRACE_PEEKUSER, tid, PT_MSR * 8, 0);
-  if (errno == 0 && msr < 0)
+  if (errno == 0 && ppc64_64bit_inferior_p (msr))
     wordsize = 8;
 #endif
 

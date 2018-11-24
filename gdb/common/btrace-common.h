@@ -1,6 +1,6 @@
 /* Branch trace support for GDB, the GNU debugger.
 
-   Copyright (C) 2013 Free Software Foundation, Inc.
+   Copyright (C) 2013-2015 Free Software Foundation, Inc.
 
    Contributed by Intel Corp. <markus.t.metzger@intel.com>.
 
@@ -26,12 +26,6 @@
    inferior.  For presentation purposes, the branch trace is represented as a
    list of sequential control-flow blocks, one such list per thread.  */
 
-#ifdef GDBSERVER
-#  include "server.h"
-#else
-#  include "defs.h"
-#endif
-
 #include "vec.h"
 
 /* A branch trace block.
@@ -42,19 +36,102 @@
    asynchronous, e.g. interrupts.  */
 struct btrace_block
 {
-  /* The address of the first byte of the first instruction in the block.  */
+  /* The address of the first byte of the first instruction in the block.
+     The address may be zero if we do not know the beginning of this block,
+     such as for the first block in a delta trace.  */
   CORE_ADDR begin;
 
   /* The address of the first byte of the last instruction in the block.  */
   CORE_ADDR end;
 };
 
-/* Branch trace is represented as a vector of branch trace blocks starting with
-   the most recent block.  */
-typedef struct btrace_block btrace_block_s;
-
 /* Define functions operating on a vector of branch trace blocks.  */
+typedef struct btrace_block btrace_block_s;
 DEF_VEC_O (btrace_block_s);
+
+/* Enumeration of btrace formats.  */
+
+enum btrace_format
+{
+  /* No branch trace format.  */
+  BTRACE_FORMAT_NONE,
+
+  /* Branch trace is in Branch Trace Store (BTS) format.
+     Actually, the format is a sequence of blocks derived from BTS.  */
+  BTRACE_FORMAT_BTS
+};
+
+/* An enumeration of cpu vendors.  */
+
+enum btrace_cpu_vendor
+{
+  /* We do not know this vendor.  */
+  CV_UNKNOWN,
+
+  /* Intel.  */
+  CV_INTEL
+};
+
+/* A cpu identifier.  */
+
+struct btrace_cpu
+{
+  /* The processor vendor.  */
+  enum btrace_cpu_vendor vendor;
+
+  /* The cpu family.  */
+  unsigned short family;
+
+  /* The cpu model.  */
+  unsigned char model;
+
+  /* The cpu stepping.  */
+  unsigned char stepping;
+};
+
+/* A BTS configuration.  */
+
+struct btrace_config_bts
+{
+  /* The size of the branch trace buffer in bytes.  */
+  unsigned int size;
+};
+
+/* A branch tracing configuration.
+
+   This describes the requested configuration as well as the actually
+   obtained configuration.
+   We describe the configuration for all different formats so we can
+   easily switch between formats.  */
+
+struct btrace_config
+{
+  /* The branch tracing format.  */
+  enum btrace_format format;
+
+  /* The BTS format configuration.  */
+  struct btrace_config_bts bts;
+};
+
+/* Branch trace in BTS format.  */
+struct btrace_data_bts
+{
+  /* Branch trace is represented as a vector of branch trace blocks starting
+     with the most recent block.  */
+  VEC (btrace_block_s) *blocks;
+};
+
+/* The branch trace data.  */
+struct btrace_data
+{
+  enum btrace_format format;
+
+  union
+  {
+    /* Format == BTRACE_FORMAT_BTS.  */
+    struct btrace_data_bts bts;
+  } variant;
+};
 
 /* Target specific branch trace information.  */
 struct btrace_target_info;
@@ -64,10 +141,43 @@ struct btrace_target_info;
 enum btrace_read_type
 {
   /* Send all available trace.  */
-  btrace_read_all,
+  BTRACE_READ_ALL,
 
   /* Send all available trace, if it changed.  */
-  btrace_read_new
+  BTRACE_READ_NEW,
+
+  /* Send the trace since the last request.  This will fail if the trace
+     buffer overflowed.  */
+  BTRACE_READ_DELTA
 };
+
+/* Enumeration of btrace errors.  */
+
+enum btrace_error
+{
+  /* No error.  Everything is OK.  */
+  BTRACE_ERR_NONE,
+
+  /* An unknown error.  */
+  BTRACE_ERR_UNKNOWN,
+
+  /* Branch tracing is not supported on this system.  */
+  BTRACE_ERR_NOT_SUPPORTED,
+
+  /* The branch trace buffer overflowed; no delta read possible.  */
+  BTRACE_ERR_OVERFLOW
+};
+
+/* Return a string representation of FORMAT.  */
+extern const char *btrace_format_string (enum btrace_format format);
+
+/* Initialize DATA.  */
+extern void btrace_data_init (struct btrace_data *data);
+
+/* Cleanup DATA.  */
+extern void btrace_data_fini (struct btrace_data *data);
+
+/* Return non-zero if DATA is empty; zero otherwise.  */
+extern int btrace_data_empty (struct btrace_data *data);
 
 #endif /* BTRACE_COMMON_H */

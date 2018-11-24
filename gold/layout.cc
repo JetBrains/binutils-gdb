@@ -1,7 +1,6 @@
 // layout.cc -- lay out output file sections for gold
 
-// Copyright 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2015 Free Software Foundation, Inc.
 // Written by Ian Lance Taylor <iant@google.com>.
 
 // This file is part of gold.
@@ -525,6 +524,7 @@ static const char* gdb_sections[] =
   "addr",         // Fission extension
   // "aranges",   // not used by gdb as of 7.4
   "frame",
+  "gdb_scripts",
   "info",
   "types",
   "line",
@@ -533,8 +533,11 @@ static const char* gdb_sections[] =
   "macro",
   // "pubnames",  // not used by gdb as of 7.4
   // "pubtypes",  // not used by gdb as of 7.4
+  // "gnu_pubnames",  // Fission extension
+  // "gnu_pubtypes",  // Fission extension
   "ranges",
   "str",
+  "str_offsets",
 };
 
 // This is the minimum set of sections needed for line numbers.
@@ -545,6 +548,7 @@ static const char* lines_only_debug_sections[] =
   // "addr",      // Fission extension
   // "aranges",   // not used by gdb as of 7.4
   // "frame",
+  // "gdb_scripts",
   "info",
   // "types",
   "line",
@@ -553,8 +557,11 @@ static const char* lines_only_debug_sections[] =
   // "macro",
   // "pubnames",  // not used by gdb as of 7.4
   // "pubtypes",  // not used by gdb as of 7.4
+  // "gnu_pubnames",  // Fission extension
+  // "gnu_pubtypes",  // Fission extension
   // "ranges",
   "str",
+  "str_offsets",  // Fission extension
 };
 
 // These sections are the DWARF fast-lookup tables, and are not needed
@@ -564,7 +571,9 @@ static const char* gdb_fast_lookup_sections[] =
 {
   "aranges",
   "pubnames",
+  "gnu_pubnames",
   "pubtypes",
+  "gnu_pubtypes",
 };
 
 // Returns whether the given debug section is in the list of
@@ -645,7 +654,13 @@ Layout::include_section(Sized_relobj_file<size, big_endian>*, const char* name,
       && (shdr.get_sh_flags() & elfcpp::SHF_EXCLUDE))
     return false;
 
-  switch (shdr.get_sh_type())
+  elfcpp::Elf_Word sh_type = shdr.get_sh_type();
+
+  if ((sh_type >= elfcpp::SHT_LOOS && sh_type <= elfcpp::SHT_HIOS)
+      || (sh_type >= elfcpp::SHT_LOPROC && sh_type <= elfcpp::SHT_HIPROC))
+    return parameters->target().should_include_section(sh_type);
+
+  switch (sh_type)
     {
     case elfcpp::SHT_NULL:
     case elfcpp::SHT_SYMTAB:
@@ -2086,8 +2101,7 @@ Layout::layout_gnu_stack(bool seen_gnu_stack, uint64_t gnu_stack_flags,
       if ((gnu_stack_flags & elfcpp::SHF_EXECINSTR) != 0)
 	{
 	  this->input_requires_executable_stack_ = true;
-	  if (parameters->options().warn_execstack()
-	      || parameters->options().is_stack_executable())
+	  if (parameters->options().warn_execstack())
 	    gold_warning(_("%s: requires executable stack"),
 			 obj->name().c_str());
 	}
@@ -2744,12 +2758,14 @@ Layout::finalize(const Input_objects* input_objects, Symbol_table* symtab,
   // If there is a load segment that contains the file and program headers,
   // provide a symbol __ehdr_start pointing there.
   // A program can use this to examine itself robustly.
-  if (load_seg != NULL)
-    symtab->define_in_output_segment("__ehdr_start", NULL,
-				     Symbol_table::PREDEFINED, load_seg, 0, 0,
-				     elfcpp::STT_NOTYPE, elfcpp::STB_GLOBAL,
-				     elfcpp::STV_HIDDEN, 0,
-				     Symbol::SEGMENT_START, true);
+  Symbol *ehdr_start = symtab->lookup("__ehdr_start");
+  if (ehdr_start != NULL && ehdr_start->is_predefined())
+    {
+      if (load_seg != NULL)
+	ehdr_start->set_output_segment(load_seg, Symbol::SEGMENT_START);
+      else
+        ehdr_start->set_undefined();
+    }
 
   // Set the file offsets of all the non-data sections we've seen so
   // far which don't have to wait for the input sections.  We need
@@ -2958,7 +2974,14 @@ Layout::create_executable_stack_info()
 {
   bool is_stack_executable;
   if (parameters->options().is_execstack_set())
-    is_stack_executable = parameters->options().is_stack_executable();
+    {
+      is_stack_executable = parameters->options().is_stack_executable();
+      if (!is_stack_executable
+          && this->input_requires_executable_stack_
+          && parameters->options().warn_execstack())
+	gold_warning(_("one or more inputs require executable stack, "
+	               "but -z noexecstack was given"));
+    }
   else if (!this->input_with_gnu_stack_note_)
     return;
   else
@@ -3501,7 +3524,9 @@ Layout::set_segment_offsets(const Target* target, Output_segment* load_seg,
 	      // put them on different pages in memory. We will revisit this
 	      // decision once we know the size of the segment.
 
-	      addr = align_address(addr, (*p)->maximum_alignment());
+	      uint64_t max_align = (*p)->maximum_alignment();
+	      if (max_align > abi_pagesize)
+		addr = align_address(addr, max_align);
 	      aligned_addr = addr;
 
 	      if (load_seg == *p)
@@ -4299,38 +4324,9 @@ Layout::create_dynamic_symtab(const Input_objects* input_objects,
 	}
     }
 
-  // Create the hash tables.
-
-  if (strcmp(parameters->options().hash_style(), "sysv") == 0
-      || strcmp(parameters->options().hash_style(), "both") == 0)
-    {
-      unsigned char* phash;
-      unsigned int hashlen;
-      Dynobj::create_elf_hash_table(*pdynamic_symbols, local_symcount,
-				    &phash, &hashlen);
-
-      Output_section* hashsec =
-	this->choose_output_section(NULL, ".hash", elfcpp::SHT_HASH,
-				    elfcpp::SHF_ALLOC, false,
-				    ORDER_DYNAMIC_LINKER, false);
-
-      Output_section_data* hashdata = new Output_data_const_buffer(phash,
-								   hashlen,
-								   align,
-								   "** hash");
-      if (hashsec != NULL && hashdata != NULL)
-	hashsec->add_output_section_data(hashdata);
-
-      if (hashsec != NULL)
-	{
-	  if (dynsym != NULL)
-	    hashsec->set_link_section(dynsym);
-	  hashsec->set_entsize(4);
-	}
-
-      if (odyn != NULL)
-	odyn->add_section_address(elfcpp::DT_HASH, hashsec);
-    }
+  // Create the hash tables.  The Gnu-style hash table must be
+  // built first, because it changes the order of the symbols
+  // in the dynamic symbol table.
 
   if (strcmp(parameters->options().hash_style(), "gnu") == 0
       || strcmp(parameters->options().hash_style(), "both") == 0)
@@ -4366,6 +4362,37 @@ Layout::create_dynamic_symtab(const Input_objects* input_objects,
 	  if (odyn != NULL)
 	    odyn->add_section_address(elfcpp::DT_GNU_HASH, hashsec);
 	}
+    }
+
+  if (strcmp(parameters->options().hash_style(), "sysv") == 0
+      || strcmp(parameters->options().hash_style(), "both") == 0)
+    {
+      unsigned char* phash;
+      unsigned int hashlen;
+      Dynobj::create_elf_hash_table(*pdynamic_symbols, local_symcount,
+				    &phash, &hashlen);
+
+      Output_section* hashsec =
+	this->choose_output_section(NULL, ".hash", elfcpp::SHT_HASH,
+				    elfcpp::SHF_ALLOC, false,
+				    ORDER_DYNAMIC_LINKER, false);
+
+      Output_section_data* hashdata = new Output_data_const_buffer(phash,
+								   hashlen,
+								   align,
+								   "** hash");
+      if (hashsec != NULL && hashdata != NULL)
+	hashsec->add_output_section_data(hashdata);
+
+      if (hashsec != NULL)
+	{
+	  if (dynsym != NULL)
+	    hashsec->set_link_section(dynsym);
+	  hashsec->set_entsize(4);
+	}
+
+      if (odyn != NULL)
+	odyn->add_section_address(elfcpp::DT_HASH, hashsec);
     }
 }
 
@@ -4858,6 +4885,8 @@ Layout::finish_dynamic_section(const Input_objects* input_objects,
     odyn->add_constant(elfcpp::DT_FLAGS, flags);
 
   flags = 0;
+  if (parameters->options().global())
+    flags |= elfcpp::DF_1_GLOBAL;
   if (parameters->options().initfirst())
     flags |= elfcpp::DF_1_INITFIRST;
   if (parameters->options().interpose())
@@ -5485,6 +5514,10 @@ Layout::print_to_mapfile(Mapfile* mapfile) const
        p != this->segment_list_.end();
        ++p)
     (*p)->print_sections_to_mapfile(mapfile);
+  for (Section_list::const_iterator p = this->unattached_section_list_.begin();
+       p != this->unattached_section_list_.end();
+       ++p)
+    (*p)->print_to_mapfile(mapfile);
 }
 
 // Print statistical information to stderr.  This is used for --stats.
@@ -5519,6 +5552,8 @@ void
 Write_sections_task::locks(Task_locker* tl)
 {
   tl->add(this, this->output_sections_blocker_);
+  if (this->input_sections_blocker_ != NULL)
+    tl->add(this, this->input_sections_blocker_);
   tl->add(this, this->final_blocker_);
 }
 

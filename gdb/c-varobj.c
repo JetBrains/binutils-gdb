@@ -1,6 +1,6 @@
 /* varobj support for C and C++.
 
-   Copyright (C) 1999-2013 Free Software Foundation, Inc.
+   Copyright (C) 1999-2015 Free Software Foundation, Inc.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ static void cplus_class_num_children (struct type *type, int children[3]);
    thing to do is to compare the child's name with ANONYMOUS_*_NAME.  */
 
 int
-varobj_is_anonymous_child (struct varobj *child)
+varobj_is_anonymous_child (const struct varobj *child)
 {
   return (strcmp (child->name, ANONYMOUS_STRUCT_NAME) == 0
 	  || strcmp (child->name, ANONYMOUS_UNION_NAME) == 0);
@@ -126,10 +126,60 @@ adjust_value_for_child_access (struct value **value,
     }
 }
 
+/* Is VAR a path expression parent, i.e., can it be used to construct
+   a valid path expression?  */
+
+static int
+c_is_path_expr_parent (const struct varobj *var)
+{
+  struct type *type;
+
+  /* "Fake" children are not path_expr parents.  */
+  if (CPLUS_FAKE_CHILD (var))
+    return 0;
+
+  type = varobj_get_gdb_type (var);
+
+  /* Anonymous unions and structs are also not path_expr parents.  */
+  if ((TYPE_CODE (type) == TYPE_CODE_STRUCT
+       || TYPE_CODE (type) == TYPE_CODE_UNION)
+      && TYPE_NAME (type) == NULL
+      && TYPE_TAG_NAME (type) == NULL)
+    {
+      const struct varobj *parent = var->parent;
+
+      while (parent != NULL && CPLUS_FAKE_CHILD (parent))
+	parent = parent->parent;
+
+      if (parent != NULL)
+	{
+	  struct type *parent_type;
+	  int was_ptr;
+
+	  parent_type = varobj_get_value_type (parent);
+	  adjust_value_for_child_access (NULL, &parent_type, &was_ptr, 0);
+
+	  if (TYPE_CODE (parent_type) == TYPE_CODE_STRUCT
+	      || TYPE_CODE (parent_type) == TYPE_CODE_UNION)
+	    {
+	      const char *field_name;
+
+	      gdb_assert (var->index < TYPE_NFIELDS (parent_type));
+	      field_name = TYPE_FIELD_NAME (parent_type, var->index);
+	      return !(field_name == NULL || *field_name == '\0');
+	    }
+	}
+
+      return 0;
+    }
+
+  return 1;
+}
+
 /* C */
 
 static int
-c_number_of_children (struct varobj *var)
+c_number_of_children (const struct varobj *var)
 {
   struct type *type = varobj_get_value_type (var);
   int children = 0;
@@ -180,7 +230,7 @@ c_number_of_children (struct varobj *var)
 }
 
 static char *
-c_name_of_variable (struct varobj *parent)
+c_name_of_variable (const struct varobj *parent)
 {
   return xstrdup (parent->name);
 }
@@ -232,7 +282,7 @@ value_struct_element_index (struct value *value, int type_index)
    to NULL.  */
 
 static void 
-c_describe_child (struct varobj *parent, int index,
+c_describe_child (const struct varobj *parent, int index,
 		  char **cname, struct value **cvalue, struct type **ctype,
 		  char **cfull_expression)
 {
@@ -372,7 +422,7 @@ c_describe_child (struct varobj *parent, int index,
 }
 
 static char *
-c_name_of_child (struct varobj *parent, int index)
+c_name_of_child (const struct varobj *parent, int index)
 {
   char *name;
 
@@ -381,15 +431,17 @@ c_name_of_child (struct varobj *parent, int index)
 }
 
 static char *
-c_path_expr_of_child (struct varobj *child)
+c_path_expr_of_child (const struct varobj *child)
 {
+  char *path_expr;
+
   c_describe_child (child->parent, child->index, NULL, NULL, NULL, 
-		    &child->path_expr);
-  return child->path_expr;
+		    &path_expr);
+  return path_expr;
 }
 
 static struct value *
-c_value_of_child (struct varobj *parent, int index)
+c_value_of_child (const struct varobj *parent, int index)
 {
   struct value *value = NULL;
 
@@ -398,7 +450,7 @@ c_value_of_child (struct varobj *parent, int index)
 }
 
 static struct type *
-c_type_of_child (struct varobj *parent, int index)
+c_type_of_child (const struct varobj *parent, int index)
 {
   struct type *type = NULL;
 
@@ -410,7 +462,7 @@ c_type_of_child (struct varobj *parent, int index)
    to return the real type of the variable.  */
 
 static struct type *
-get_type (struct varobj *var)
+get_type (const struct varobj *var)
 {
   struct type *type;
 
@@ -422,7 +474,8 @@ get_type (struct varobj *var)
 }
 
 static char *
-c_value_of_variable (struct varobj *var, enum varobj_display_formats format)
+c_value_of_variable (const struct varobj *var,
+		     enum varobj_display_formats format)
 {
   /* BOGUS: if val_print sees a struct/class, or a reference to one,
      it will print out its children instead of "{...}".  So we need to
@@ -493,7 +546,8 @@ const struct lang_varobj_ops c_varobj_ops =
    c_type_of_child,
    c_value_of_variable,
    varobj_default_value_is_changeable_p,
-   NULL /* value_has_mutated */
+   NULL, /* value_has_mutated */
+   c_is_path_expr_parent  /* is_path_expr_parent */
 };
 
 /* A little convenience enum for dealing with C++/Java.  */
@@ -505,7 +559,7 @@ enum vsections
 /* C++ */
 
 static int
-cplus_number_of_children (struct varobj *var)
+cplus_number_of_children (const struct varobj *var)
 {
   struct value *value = NULL;
   struct type *type;
@@ -560,7 +614,7 @@ cplus_number_of_children (struct varobj *var)
       /* It is necessary to access a real type (via RTTI).  */
       if (opts.objectprint)
         {
-	  struct varobj *parent = var->parent;
+	  const struct varobj *parent = var->parent;
 
 	  value = parent->value;
 	  lookup_actual_type = (TYPE_CODE (parent->type) == TYPE_CODE_REF
@@ -618,7 +672,7 @@ cplus_class_num_children (struct type *type, int children[3])
 }
 
 static char *
-cplus_name_of_variable (struct varobj *parent)
+cplus_name_of_variable (const struct varobj *parent)
 {
   return c_name_of_variable (parent);
 }
@@ -643,7 +697,7 @@ match_accessibility (struct type *type, int index, enum accessibility acc)
 }
 
 static void
-cplus_describe_child (struct varobj *parent, int index,
+cplus_describe_child (const struct varobj *parent, int index,
 		      char **cname, struct value **cvalue, struct type **ctype,
 		      char **cfull_expression)
 {
@@ -652,7 +706,7 @@ cplus_describe_child (struct varobj *parent, int index,
   int was_ptr;
   int lookup_actual_type = 0;
   char *parent_expression = NULL;
-  struct varobj *var;
+  const struct varobj *var;
   struct value_print_options opts;
 
   if (cname)
@@ -844,7 +898,7 @@ cplus_describe_child (struct varobj *parent, int index,
 }
 
 static char *
-cplus_name_of_child (struct varobj *parent, int index)
+cplus_name_of_child (const struct varobj *parent, int index)
 {
   char *name = NULL;
 
@@ -853,15 +907,17 @@ cplus_name_of_child (struct varobj *parent, int index)
 }
 
 static char *
-cplus_path_expr_of_child (struct varobj *child)
+cplus_path_expr_of_child (const struct varobj *child)
 {
+  char *path_expr;
+
   cplus_describe_child (child->parent, child->index, NULL, NULL, NULL, 
-			&child->path_expr);
-  return child->path_expr;
+			&path_expr);
+  return path_expr;
 }
 
 static struct value *
-cplus_value_of_child (struct varobj *parent, int index)
+cplus_value_of_child (const struct varobj *parent, int index)
 {
   struct value *value = NULL;
 
@@ -870,7 +926,7 @@ cplus_value_of_child (struct varobj *parent, int index)
 }
 
 static struct type *
-cplus_type_of_child (struct varobj *parent, int index)
+cplus_type_of_child (const struct varobj *parent, int index)
 {
   struct type *type = NULL;
 
@@ -879,7 +935,7 @@ cplus_type_of_child (struct varobj *parent, int index)
 }
 
 static char *
-cplus_value_of_variable (struct varobj *var, 
+cplus_value_of_variable (const struct varobj *var,
 			 enum varobj_display_formats format)
 {
 
@@ -904,7 +960,8 @@ const struct lang_varobj_ops cplus_varobj_ops =
    cplus_type_of_child,
    cplus_value_of_variable,
    varobj_default_value_is_changeable_p,
-   NULL /* value_has_mutated */
+   NULL, /* value_has_mutated */
+   c_is_path_expr_parent  /* is_path_expr_parent */
 };
 
 

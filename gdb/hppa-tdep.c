@@ -1,6 +1,6 @@
 /* Target-dependent code for the HP PA-RISC architecture.
 
-   Copyright (C) 1986-2013 Free Software Foundation, Inc.
+   Copyright (C) 1986-2015 Free Software Foundation, Inc.
 
    Contributed by the Center for Software Science at the
    University of Utah (pa-gdb-bugs@cs.utah.edu).
@@ -26,7 +26,6 @@
 #include "regcache.h"
 #include "completer.h"
 #include "osabi.h"
-#include "gdb_assert.h"
 #include "arch-utils.h"
 /* For argument passing to the inferior.  */
 #include "symtab.h"
@@ -162,11 +161,11 @@ hppa_extract_17 (unsigned word)
 CORE_ADDR 
 hppa_symbol_address(const char *sym)
 {
-  struct minimal_symbol *minsym;
+  struct bound_minimal_symbol minsym;
 
   minsym = lookup_minimal_symbol (sym, NULL, NULL);
-  if (minsym)
-    return SYMBOL_VALUE_ADDRESS (minsym);
+  if (minsym.minsym)
+    return BMSYMBOL_VALUE_ADDRESS (minsym);
   else
     return (CORE_ADDR)-1;
 }
@@ -221,7 +220,7 @@ record_text_segment_lowaddr (bfd *abfd, asection *section, void *data)
 static void
 internalize_unwinds (struct objfile *objfile, struct unwind_table_entry *table,
 		     asection *section, unsigned int entries,
-		     unsigned int size, CORE_ADDR text_offset)
+		     size_t size, CORE_ADDR text_offset)
 {
   /* We will read the unwind entries into temporary memory, then
      fill in the actual unwind table.  */
@@ -320,7 +319,7 @@ static void
 read_unwind_info (struct objfile *objfile)
 {
   asection *unwind_sec, *stub_unwind_sec;
-  unsigned unwind_size, stub_unwind_size, total_size;
+  size_t unwind_size, stub_unwind_size, total_size;
   unsigned index, unwind_entries;
   unsigned stub_entries, total_entries;
   CORE_ADDR text_offset;
@@ -1377,37 +1376,106 @@ is_branch (unsigned long inst)
 }
 
 /* Return the register number for a GR which is saved by INST or
-   zero it INST does not save a GR.  */
+   zero if INST does not save a GR.
+
+   Referenced from:
+
+     parisc 1.1:
+     https://parisc.wiki.kernel.org/images-parisc/6/68/Pa11_acd.pdf
+
+     parisc 2.0:
+     https://parisc.wiki.kernel.org/images-parisc/7/73/Parisc2.0.pdf
+
+     According to Table 6-5 of Chapter 6 (Memory Reference Instructions)
+     on page 106 in parisc 2.0, all instructions for storing values from
+     the general registers are:
+
+       Store:          stb, sth, stw, std (according to Chapter 7, they
+                       are only in both "inst >> 26" and "inst >> 6".
+       Store Absolute: stwa, stda (according to Chapter 7, they are only
+                       in "inst >> 6".
+       Store Bytes:    stby, stdby (according to Chapter 7, they are
+                       only in "inst >> 6").
+
+   For (inst >> 26), according to Chapter 7:
+
+     The effective memory reference address is formed by the addition
+     of an immediate displacement to a base value.
+
+    - stb: 0x18, store a byte from a general register.
+
+    - sth: 0x19, store a halfword from a general register.
+
+    - stw: 0x1a, store a word from a general register.
+
+    - stwm: 0x1b, store a word from a general register and perform base
+      register modification (2.0 will still treate it as stw).
+
+    - std: 0x1c, store a doubleword from a general register (2.0 only).
+
+    - stw: 0x1f, store a word from a general register (2.0 only).
+
+   For (inst >> 6) when ((inst >> 26) == 0x03), according to Chapter 7:
+
+     The effective memory reference address is formed by the addition
+     of an index value to a base value specified in the instruction.
+
+    - stb: 0x08, store a byte from a general register (1.1 calls stbs).
+
+    - sth: 0x09, store a halfword from a general register (1.1 calls
+      sths).
+
+    - stw: 0x0a, store a word from a general register (1.1 calls stws).
+
+    - std: 0x0b: store a doubleword from a general register (2.0 only)
+
+     Implement fast byte moves (stores) to unaligned word or doubleword
+     destination.
+
+    - stby: 0x0c, for unaligned word (1.1 calls stbys).
+
+    - stdby: 0x0d for unaligned doubleword (2.0 only).
+
+     Store a word or doubleword using an absolute memory address formed
+     using short or long displacement or indexed
+
+    - stwa: 0x0e, store a word from a general register to an absolute
+      address (1.0 calls stwas).
+
+    - stda: 0x0f, store a doubleword from a general register to an
+      absolute address (2.0 only).  */
 
 static int
 inst_saves_gr (unsigned long inst)
 {
-  /* Does it look like a stw?  */
-  if ((inst >> 26) == 0x1a || (inst >> 26) == 0x1b
-      || (inst >> 26) == 0x1f
-      || ((inst >> 26) == 0x1f
-	  && ((inst >> 6) == 0xa)))
-    return hppa_extract_5R_store (inst);
-
-  /* Does it look like a std?  */
-  if ((inst >> 26) == 0x1c
-      || ((inst >> 26) == 0x03
-	  && ((inst >> 6) & 0xf) == 0xb))
-    return hppa_extract_5R_store (inst);
-
-  /* Does it look like a stwm?  GCC & HPC may use this in prologues.  */
-  if ((inst >> 26) == 0x1b)
-    return hppa_extract_5R_store (inst);
-
-  /* Does it look like sth or stb?  HPC versions 9.0 and later use these
-     too.  */
-  if ((inst >> 26) == 0x19 || (inst >> 26) == 0x18
-      || ((inst >> 26) == 0x3
-	  && (((inst >> 6) & 0xf) == 0x8
-	      || (inst >> 6) & 0xf) == 0x9))
-    return hppa_extract_5R_store (inst);
-
-  return 0;
+  switch ((inst >> 26) & 0x0f)
+    {
+      case 0x03:
+	switch ((inst >> 6) & 0x0f)
+	  {
+	    case 0x08:
+	    case 0x09:
+	    case 0x0a:
+	    case 0x0b:
+	    case 0x0c:
+	    case 0x0d:
+	    case 0x0e:
+	    case 0x0f:
+	      return hppa_extract_5R_store (inst);
+	    default:
+	      return 0;
+	  }
+      case 0x18:
+      case 0x19:
+      case 0x1a:
+      case 0x1b:
+      case 0x1c:
+      /* no 0x1d or 0x1e -- according to parisc 2.0 document */
+      case 0x1f:
+	return hppa_extract_5R_store (inst);
+      default:
+	return 0;
+    }
 }
 
 /* Return the register number for a FR which is saved by INST or
@@ -2463,26 +2531,31 @@ hppa_unwind_pc (struct gdbarch *gdbarch, struct frame_info *next_frame)
 /* Return the minimal symbol whose name is NAME and stub type is STUB_TYPE.
    Return NULL if no such symbol was found.  */
 
-struct minimal_symbol *
+struct bound_minimal_symbol
 hppa_lookup_stub_minimal_symbol (const char *name,
                                  enum unwind_stub_types stub_type)
 {
   struct objfile *objfile;
   struct minimal_symbol *msym;
+  struct bound_minimal_symbol result = { NULL, NULL };
 
   ALL_MSYMBOLS (objfile, msym)
     {
-      if (strcmp (SYMBOL_LINKAGE_NAME (msym), name) == 0)
+      if (strcmp (MSYMBOL_LINKAGE_NAME (msym), name) == 0)
         {
           struct unwind_table_entry *u;
 
-          u = find_unwind_entry (SYMBOL_VALUE (msym));
+          u = find_unwind_entry (MSYMBOL_VALUE (msym));
           if (u != NULL && u->stub_unwind.stub_type == stub_type)
-            return msym;
+	    {
+	      result.objfile = objfile;
+	      result.minsym = msym;
+	      return result;
+	    }
         }
     }
 
-  return NULL;
+  return result;
 }
 
 static void
@@ -2775,18 +2848,6 @@ static struct insn_pattern hppa_plt_stub[] = {
   { 0, 0 }
 };
 
-static struct insn_pattern hppa_sigtramp[] = {
-  /* ldi 0, %r25 or ldi 1, %r25 */
-  { 0x34190000, 0xfffffffd },
-  /* ldi __NR_rt_sigreturn, %r20 */
-  { 0x3414015a, 0xffffffff },
-  /* be,l 0x100(%sr2, %r0), %sr0, %r31 */
-  { 0xe4008200, 0xffffffff },
-  /* nop */
-  { 0x08000240, 0xffffffff },
-  { 0, 0 }
-};
-
 /* Maximum number of instructions on the patterns above.  */
 #define HPPA_MAX_INSN_PATTERN_LEN	4
 
@@ -2997,7 +3058,7 @@ hppa_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
     return (arches->gdbarch);
 
   /* If none found, then allocate and initialize one.  */
-  tdep = XZALLOC (struct gdbarch_tdep);
+  tdep = XCNEW (struct gdbarch_tdep);
   gdbarch = gdbarch_alloc (&info, tdep);
 
   /* Determine from the bfd_arch_info structure if we are dealing with

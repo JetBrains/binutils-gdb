@@ -1,4 +1,4 @@
-/* Copyright (C) 1992-2013 Free Software Foundation, Inc.
+/* Copyright (C) 1992-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -89,11 +89,11 @@ target_dcache_get_or_init (void)
 }
 
 /* The option sets this.  */
-static int stack_cache_enabled_p_1 = 1;
-/* And set_stack_cache_enabled_p updates this.
+static int stack_cache_enabled_1 = 1;
+/* And set_stack_cache updates this.
    The reason for the separation is so that we don't flush the cache for
    on->on transitions.  */
-static int stack_cache_enabled_p = 1;
+static int stack_cache_enabled = 1;
 
 /* This is called *after* the stack-cache has been set.
    Flush the cache for off->on and on->off transitions.
@@ -101,18 +101,17 @@ static int stack_cache_enabled_p = 1;
    except cleanliness.  */
 
 static void
-set_stack_cache_enabled_p (char *args, int from_tty,
-			   struct cmd_list_element *c)
+set_stack_cache (char *args, int from_tty, struct cmd_list_element *c)
 {
-  if (stack_cache_enabled_p != stack_cache_enabled_p_1)
+  if (stack_cache_enabled != stack_cache_enabled_1)
     target_dcache_invalidate ();
 
-  stack_cache_enabled_p = stack_cache_enabled_p_1;
+  stack_cache_enabled = stack_cache_enabled_1;
 }
 
 static void
-show_stack_cache_enabled_p (struct ui_file *file, int from_tty,
-			    struct cmd_list_element *c, const char *value)
+show_stack_cache (struct ui_file *file, int from_tty,
+		  struct cmd_list_element *c, const char *value)
 {
   fprintf_filtered (file, _("Cache use for stack accesses is %s.\n"), value);
 }
@@ -120,9 +119,49 @@ show_stack_cache_enabled_p (struct ui_file *file, int from_tty,
 /* Return true if "stack cache" is enabled, otherwise, return false.  */
 
 int
-stack_cache_enabled (void)
+stack_cache_enabled_p (void)
 {
-  return stack_cache_enabled_p;
+  return stack_cache_enabled;
+}
+
+/* The option sets this.  */
+
+static int code_cache_enabled_1 = 1;
+
+/* And set_code_cache updates this.
+   The reason for the separation is so that we don't flush the cache for
+   on->on transitions.  */
+static int code_cache_enabled = 1;
+
+/* This is called *after* the code-cache has been set.
+   Flush the cache for off->on and on->off transitions.
+   There's no real need to flush the cache for on->off transitions,
+   except cleanliness.  */
+
+static void
+set_code_cache (char *args, int from_tty, struct cmd_list_element *c)
+{
+  if (code_cache_enabled != code_cache_enabled_1)
+    target_dcache_invalidate ();
+
+  code_cache_enabled = code_cache_enabled_1;
+}
+
+/* Show option "code-cache".  */
+
+static void
+show_code_cache (struct ui_file *file, int from_tty,
+		 struct cmd_list_element *c, const char *value)
+{
+  fprintf_filtered (file, _("Cache use for code accesses is %s.\n"), value);
+}
+
+/* Return true if "code cache" is enabled, otherwise, return false.  */
+
+int
+code_cache_enabled_p (void)
+{
+  return code_cache_enabled;
 }
 
 /* -Wmissing-prototypes */
@@ -132,14 +171,26 @@ void
 _initialize_target_dcache (void)
 {
   add_setshow_boolean_cmd ("stack-cache", class_support,
-			   &stack_cache_enabled_p_1, _("\
+			   &stack_cache_enabled_1, _("\
 Set cache use for stack access."), _("\
 Show cache use for stack access."), _("\
-When on, use the data cache for all stack access, regardless of any\n\
+When on, use the target memory cache for all stack access, regardless of any\n\
 configured memory regions.  This improves remote performance significantly.\n\
 By default, caching for stack access is on."),
-			   set_stack_cache_enabled_p,
-			   show_stack_cache_enabled_p,
+			   set_stack_cache,
+			   show_stack_cache,
+			   &setlist, &showlist);
+
+  add_setshow_boolean_cmd ("code-cache", class_support,
+			   &code_cache_enabled_1, _("\
+Set cache use for code segment access."), _("\
+Show cache use for code segment access."), _("\
+When on, use the target memory cache for all code segment accesses,\n\
+regardless of any configured memory regions.  This improves remote\n\
+performance significantly.  By default, caching for code segment\n\
+access is on."),
+			   set_code_cache,
+			   show_code_cache,
 			   &setlist, &showlist);
 
   target_dcache_aspace_key

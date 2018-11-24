@@ -1,5 +1,5 @@
 # Pretty-printer utilities.
-# Copyright (C) 2010-2013 Free Software Foundation, Inc.
+# Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -200,6 +200,8 @@ class RegexpCollectionPrettyPrinter(PrettyPrinter):
         # Get the type name.
         typename = gdb.types.get_basic_type(val.type).tag
         if not typename:
+            typename = val.type.name
+        if not typename:
             return None
 
         # Iterate over table of type regexps to determine
@@ -261,3 +263,17 @@ class FlagEnumerationPrinter(PrettyPrinter):
             return _EnumInstance(self.enumerators, val)
         else:
             return None
+
+
+# Builtin pretty-printers.
+# The set is defined as empty, and files in printing/*.py add their printers
+# to this with add_builtin_pretty_printer.
+
+_builtin_pretty_printers = RegexpCollectionPrettyPrinter("builtin")
+
+register_pretty_printer(None, _builtin_pretty_printers)
+
+# Add a builtin pretty-printer.
+
+def add_builtin_pretty_printer(name, regexp, printer):
+    _builtin_pretty_printers.add_printer(name, regexp, printer)

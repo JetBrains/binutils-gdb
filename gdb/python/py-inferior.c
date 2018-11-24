@@ -1,6 +1,6 @@
 /* Python interface to inferiors.
 
-   Copyright (C) 2009-2013 Free Software Foundation, Inc.
+   Copyright (C) 2009-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -18,7 +18,6 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include "exceptions.h"
 #include "gdbcore.h"
 #include "gdbthread.h"
 #include "inferior.h"
@@ -51,7 +50,7 @@ typedef struct
   int nthreads;
 } inferior_object;
 
-static PyTypeObject inferior_object_type
+extern PyTypeObject inferior_object_type
     CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("inferior_object");
 
 static const struct inferior_data *infpy_inf_data_key;
@@ -65,7 +64,7 @@ typedef struct {
   CORE_ADDR length;
 } membuf_object;
 
-static PyTypeObject membuf_object_type
+extern PyTypeObject membuf_object_type
     CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("membuf_object");
 
 /* Require that INFERIOR be a valid inferior ID.  */
@@ -117,6 +116,72 @@ python_on_resume (ptid_t ptid)
   do_cleanups (cleanup);
 }
 
+/* Callback, registered as an observer, that notifies Python listeners
+   when an inferior function call is about to be made. */
+
+static void
+python_on_inferior_call_pre (ptid_t thread, CORE_ADDR address)
+{
+  struct cleanup *cleanup;
+
+  cleanup = ensure_python_env (target_gdbarch (), current_language);
+
+  if (emit_inferior_call_event (INFERIOR_CALL_PRE, thread, address) < 0)
+    gdbpy_print_stack ();
+
+  do_cleanups (cleanup);
+}
+
+/* Callback, registered as an observer, that notifies Python listeners
+   when an inferior function call has completed. */
+
+static void
+python_on_inferior_call_post (ptid_t thread, CORE_ADDR address)
+{
+  struct cleanup *cleanup;
+
+  cleanup = ensure_python_env (target_gdbarch (), current_language);
+
+  if (emit_inferior_call_event (INFERIOR_CALL_POST, thread, address) < 0)
+    gdbpy_print_stack ();
+
+  do_cleanups (cleanup);
+}
+
+/* Callback, registered as an observer, that notifies Python listeners
+   when a part of memory has been modified by user action (eg via a
+   'set' command). */
+
+static void
+python_on_memory_change (struct inferior *inferior, CORE_ADDR addr, ssize_t len, const bfd_byte *data)
+{
+  struct cleanup *cleanup;
+
+  cleanup = ensure_python_env (target_gdbarch (), current_language);
+
+  if (emit_memory_changed_event (addr, len) < 0)
+    gdbpy_print_stack ();
+
+  do_cleanups (cleanup);
+}
+
+/* Callback, registered as an observer, that notifies Python listeners
+   when a register has been modified by user action (eg via a 'set'
+   command). */
+
+static void
+python_on_register_change (struct frame_info *frame, int regnum)
+{
+  struct cleanup *cleanup;
+
+  cleanup = ensure_python_env (target_gdbarch (), current_language);
+
+  if (emit_register_changed_event (frame, regnum) < 0)
+    gdbpy_print_stack ();
+
+  do_cleanups (cleanup);
+}
+
 static void
 python_inferior_exit (struct inferior *inf)
 {
@@ -138,23 +203,32 @@ python_inferior_exit (struct inferior *inf)
 }
 
 /* Callback used to notify Python listeners about new objfiles loaded in the
-   inferior.  */
+   inferior.  OBJFILE may be NULL which means that the objfile list has been
+   cleared (emptied).  */
 
 static void
 python_new_objfile (struct objfile *objfile)
 {
   struct cleanup *cleanup;
 
-  if (objfile == NULL)
-    return;
-
   if (!gdb_python_initialized)
     return;
 
-  cleanup = ensure_python_env (get_objfile_arch (objfile), current_language);
+  cleanup = ensure_python_env (objfile != NULL
+			       ? get_objfile_arch (objfile)
+			       : target_gdbarch (),
+			       current_language);
 
-  if (emit_new_objfile_event (objfile) < 0)
-    gdbpy_print_stack ();
+  if (objfile == NULL)
+    {
+      if (emit_clear_objfiles_event () < 0)
+	gdbpy_print_stack ();
+    }
+  else
+    {
+      if (emit_new_objfile_event (objfile) < 0)
+	gdbpy_print_stack ();
+    }
 
   do_cleanups (cleanup);
 }
@@ -274,7 +348,7 @@ delete_thread_object (struct thread_info *tp, int ignore)
   struct cleanup *cleanup;
   inferior_object *inf_obj;
   struct threadlist_entry **entry, *tmp;
-  
+
   if (!gdb_python_initialized)
     return;
 
@@ -559,9 +633,9 @@ get_buffer (PyObject *self, Py_buffer *buf, int flags)
 {
   membuf_object *membuf_obj = (membuf_object *) self;
   int ret;
-  
+
   ret = PyBuffer_FillInfo (buf, self, membuf_obj->buffer,
-			   membuf_obj->length, 0, 
+			   membuf_obj->length, 0,
 			   PyBUF_CONTIG);
   buf->format = "c";
 
@@ -647,7 +721,7 @@ infpy_search_memory (PyObject *self, PyObject *args, PyObject *kw)
   pattern_size = pybuf.len;
 #else
   PyObject *pattern;
-  
+
   if (! PyArg_ParseTupleAndKeywords (args, kw, "OOO", keywords,
  				     &start_addr_obj, &length_obj,
 				     &pattern))
@@ -667,7 +741,7 @@ infpy_search_memory (PyObject *self, PyObject *args, PyObject *kw)
 
   if (get_addr_from_python (start_addr_obj, &start_addr) < 0)
     goto fail;
- 
+
   if (get_addr_from_python (length_obj, &length) < 0)
     goto fail;
 
@@ -794,6 +868,10 @@ gdbpy_initialize_inferior (void)
   observer_attach_thread_exit (delete_thread_object);
   observer_attach_normal_stop (python_on_normal_stop);
   observer_attach_target_resumed (python_on_resume);
+  observer_attach_inferior_call_pre (python_on_inferior_call_pre);
+  observer_attach_inferior_call_post (python_on_inferior_call_post);
+  observer_attach_memory_changed (python_on_memory_change);
+  observer_attach_register_changed (python_on_register_change);
   observer_attach_inferior_exit (python_inferior_exit);
   observer_attach_new_objfile (python_new_objfile);
 
@@ -837,7 +915,7 @@ Return a long with the address of a match, or None." },
   { NULL }
 };
 
-static PyTypeObject inferior_object_type =
+PyTypeObject inferior_object_type =
 {
   PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.Inferior",		  /* tp_name */
@@ -904,7 +982,7 @@ static PyBufferProcs buffer_procs = {
 };
 #endif	/* IS_PY3K */
 
-static PyTypeObject membuf_object_type = {
+PyTypeObject membuf_object_type = {
   PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.Membuf",			  /*tp_name*/
   sizeof (membuf_object),	  /*tp_basicsize*/

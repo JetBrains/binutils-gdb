@@ -1,6 +1,6 @@
 /* Native-dependent code for Motorola 68000 BSD's.
 
-   Copyright (C) 2004-2013 Free Software Foundation, Inc.
+   Copyright (C) 2004-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -22,7 +22,6 @@
 #include "inferior.h"
 #include "regcache.h"
 
-#include "gdb_assert.h"
 #include <sys/types.h>
 #include <sys/ptrace.h>
 #include <machine/reg.h>
@@ -176,7 +175,6 @@ m68kbsd_store_inferior_registers (struct target_ops *ops,
 
 /* Support for debugging kernel virtual memory images.  */
 
-#include <sys/types.h>
 #include <machine/pcb.h>
 
 #include "bsd-kvm.h"

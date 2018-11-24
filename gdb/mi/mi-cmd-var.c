@@ -1,5 +1,5 @@
 /* MI Command Set - varobj commands.
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -27,7 +27,6 @@
 #include "language.h"
 #include "value.h"
 #include <ctype.h>
-#include <string.h>
 #include "mi-getopt.h"
 #include "gdbthread.h"
 #include "mi-parse.h"
@@ -56,7 +55,12 @@ print_varobj (struct varobj *var, enum print_values print_values,
 
   ui_out_field_string (uiout, "name", varobj_get_objname (var));
   if (print_expression)
-    ui_out_field_string (uiout, "exp", varobj_get_expression (var));
+    {
+      char *exp = varobj_get_expression (var);
+
+      ui_out_field_string (uiout, "exp", exp);
+      xfree (exp);
+    }
   ui_out_field_int (uiout, "numchild", varobj_get_num_children (var));
   
   if (mi_print_value_p (var, print_values))
@@ -88,7 +92,7 @@ print_varobj (struct varobj *var, enum print_values print_values,
       xfree (display_hint);
     }
 
-  if (varobj_pretty_printed_p (var))
+  if (varobj_is_dynamic_p (var))
     ui_out_field_int (uiout, "dynamic", 1);
 }
 
@@ -352,7 +356,7 @@ mi_print_value_p (struct varobj *var, enum print_values print_values)
   if (print_values == PRINT_ALL_VALUES)
     return 1;
 
-  if (varobj_pretty_printed_p (var))
+  if (varobj_is_dynamic_p (var))
     return 1;
 
   type = varobj_get_gdb_type (var);
@@ -448,14 +452,18 @@ mi_cmd_var_info_type (char *command, char **argv, int argc)
 {
   struct ui_out *uiout = current_uiout;
   struct varobj *var;
+  char *type_name;
 
   if (argc != 1)
     error (_("-var-info-type: Usage: NAME."));
 
   /* Get varobj handle, if a valid var obj name was specified.  */
   var = varobj_get_handle (argv[0]);
+  type_name = varobj_get_type (var);
 
-  ui_out_field_string (uiout, "type", varobj_get_type (var));
+  ui_out_field_string (uiout, "type", type_name);
+
+  xfree (type_name);
 }
 
 void
@@ -482,6 +490,7 @@ mi_cmd_var_info_expression (char *command, char **argv, int argc)
   struct ui_out *uiout = current_uiout;
   const struct language_defn *lang;
   struct varobj *var;
+  char *exp;
 
   if (argc != 1)
     error (_("-var-info-expression: Usage: NAME."));
@@ -492,7 +501,10 @@ mi_cmd_var_info_expression (char *command, char **argv, int argc)
   lang = varobj_get_language (var);
 
   ui_out_field_string (uiout, "lang", lang->la_natural_name);
-  ui_out_field_string (uiout, "exp", varobj_get_expression (var));
+
+  exp = varobj_get_expression (var);
+  ui_out_field_string (uiout, "exp", exp);
+  xfree (exp);
 }
 
 void
@@ -642,7 +654,9 @@ mi_cmd_var_update_iter (struct varobj *var, void *data_pointer)
 
   thread_id = varobj_get_thread_id (var);
 
-  if (thread_id == -1 && is_stopped (inferior_ptid))
+  if (thread_id == -1
+      && (ptid_equal (inferior_ptid, null_ptid)
+	  || is_stopped (inferior_ptid)))
     thread_stopped = 1;
   else
     {
@@ -764,7 +778,12 @@ varobj_update_one (struct varobj *var, enum print_values print_values,
 	}
 
       if (r->type_changed)
-	ui_out_field_string (uiout, "new_type", varobj_get_type (r->varobj));
+	{
+	  char *type_name = varobj_get_type (r->varobj);
+
+	  ui_out_field_string (uiout, "new_type", type_name);
+	  xfree (type_name);
+	}
 
       if (r->type_changed || r->children_changed)
 	ui_out_field_int (uiout, "new_num_children", 
@@ -777,7 +796,7 @@ varobj_update_one (struct varobj *var, enum print_values print_values,
 	  xfree (display_hint);
 	}
 
-      if (varobj_pretty_printed_p (r->varobj))
+      if (varobj_is_dynamic_p (r->varobj))
 	ui_out_field_int (uiout, "dynamic", 1);
 
       varobj_get_child_range (r->varobj, &from, &to);

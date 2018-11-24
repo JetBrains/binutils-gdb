@@ -1,6 +1,6 @@
 /* Handle shared libraries for GDB, the GNU Debugger.
 
-   Copyright (C) 1990-2013 Free Software Foundation, Inc.
+   Copyright (C) 1990-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,12 +21,10 @@
 
 #include <sys/types.h>
 #include <fcntl.h>
-#include <string.h>
 #include "symtab.h"
 #include "bfd.h"
 #include "symfile.h"
 #include "objfiles.h"
-#include "exceptions.h"
 #include "gdbcore.h"
 #include "command.h"
 #include "target.h"
@@ -486,6 +484,16 @@ solib_map_sections (struct so_list *so)
   /* Leave bfd open, core_xfer_memory and "info files" need it.  */
   so->abfd = abfd;
 
+  /* Copy the full path name into so_name, allowing symbol_file_add
+     to find it later.  This also affects the =library-loaded GDB/MI
+     event, and in particular the part of that notification providing
+     the library's host-side path.  If we let the target dictate
+     that objfile's path, and the target is different from the host,
+     GDB/MI will not provide the correct host-side path.  */
+  if (strlen (bfd_get_filename (abfd)) >= SO_NAME_MAX_PATH_SIZE)
+    error (_("Shared library file name is too long."));
+  strcpy (so->so_name, bfd_get_filename (abfd));
+
   if (build_section_table (abfd, &so->sections, &so->sections_end))
     {
       error (_("Can't find the file sections in `%s': %s"),
@@ -594,8 +602,6 @@ master_so_list (void)
 int
 solib_read_symbols (struct so_list *so, int flags)
 {
-  const int from_tty = flags & SYMFILE_VERBOSE;
-
   if (so->symbols_loaded)
     {
       /* If needed, we've already warned in our caller.  */
@@ -639,11 +645,7 @@ solib_read_symbols (struct so_list *so, int flags)
 					    " library symbols for %s:\n"),
 			   so->so_name);
       else
-	{
-	  if (from_tty || info_verbose)
-	    printf_unfiltered (_("Loaded symbols for %s\n"), so->so_name);
-	  so->symbols_loaded = 1;
-	}
+	so->symbols_loaded = 1;
       return 1;
     }
 
@@ -890,10 +892,21 @@ libpthread_solib_p (struct so_list *so)
    FROM_TTY and TARGET are as described for update_solib_list, above.  */
 
 void
-solib_add (char *pattern, int from_tty,
+solib_add (const char *pattern, int from_tty,
 	   struct target_ops *target, int readsyms)
 {
   struct so_list *gdb;
+
+  if (print_symbol_loading_p (from_tty, 0, 0))
+    {
+      if (pattern != NULL)
+	{
+	  printf_unfiltered (_("Loading symbols for shared libraries: %s\n"),
+			     pattern);
+	}
+      else
+	printf_unfiltered (_("Loading symbols for shared libraries.\n"));
+    }
 
   current_program_space->solib_add_generation++;
 
@@ -1267,6 +1280,9 @@ reload_shared_libraries_1 (int from_tty)
   struct so_list *so;
   struct cleanup *old_chain = make_cleanup (null_cleanup, NULL);
 
+  if (print_symbol_loading_p (from_tty, 0, 0))
+    printf_unfiltered (_("Loading symbols for shared libraries.\n"));
+
   for (so = so_list_head; so != NULL; so = so->next)
     {
       char *filename, *found_pathname = NULL;
@@ -1388,11 +1404,11 @@ show_auto_solib_add (struct ui_file *file, int from_tty,
    the library-specific handler if it is installed for the current target.  */
 
 struct symbol *
-solib_global_lookup (const struct objfile *objfile,
+solib_global_lookup (struct objfile *objfile,
 		     const char *name,
 		     const domain_enum domain)
 {
-  const struct target_so_ops *ops = solib_ops (target_gdbarch ());
+  const struct target_so_ops *ops = solib_ops (get_objfile_arch (objfile));
 
   if (ops->lookup_lib_global_symbol != NULL)
     return ops->lookup_lib_global_symbol (objfile, name, domain);
@@ -1427,8 +1443,28 @@ gdb_bfd_lookup_symbol_from_symtab (bfd *abfd,
 
 	  if (match_sym (sym, data))
 	    {
+	      struct gdbarch *gdbarch = target_gdbarch ();
+	      symaddr = sym->value;
+
+	      /* Some ELF targets fiddle with addresses of symbols they
+	         consider special.  They use minimal symbols to do that
+	         and this is needed for correct breakpoint placement,
+	         but we do not have full data here to build a complete
+	         minimal symbol, so just set the address and let the
+	         targets cope with that.  */
+	      if (bfd_get_flavour (abfd) == bfd_target_elf_flavour
+		  && gdbarch_elf_make_msymbol_special_p (gdbarch))
+		{
+		  struct minimal_symbol msym;
+
+		  memset (&msym, 0, sizeof (msym));
+		  SET_MSYMBOL_VALUE_ADDRESS (&msym, symaddr);
+		  gdbarch_elf_make_msymbol_special (gdbarch, sym, &msym);
+		  symaddr = MSYMBOL_VALUE_RAW_ADDRESS (&msym);
+		}
+
 	      /* BFD symbols are section relative.  */
-	      symaddr = sym->value + sym->section->vma;
+	      symaddr += sym->section->vma;
 	      break;
 	    }
 	}

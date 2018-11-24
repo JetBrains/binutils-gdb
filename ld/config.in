@@ -1,4 +1,4 @@
-/* config.in.  Generated from configure.in by autoheader.  */
+/* config.in.  Generated from configure.ac by autoheader.  */
 
 /* Check that config.h is #included before system headers
    (this works only for glibc, but that should be enough).  */
@@ -16,6 +16,9 @@
 
 /* Define to choose default GOT handling scheme */
 #undef GOT_HANDLING_DEFAULT
+
+/* Define to 1 if you have the `atexit' function. */
+#undef HAVE_ATEXIT
 
 /* Define to 1 if you have the `close' function. */
 #undef HAVE_CLOSE
@@ -47,23 +50,17 @@
    */
 #undef HAVE_DIRENT_H
 
-/* Define to 1 if you have the `dlclose' function. */
-#undef HAVE_DLCLOSE
-
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
-
-/* Define to 1 if you have the `dlopen' function. */
-#undef HAVE_DLOPEN
-
-/* Define to 1 if you have the `dlsym' function. */
-#undef HAVE_DLSYM
 
 /* Define to 1 if you have the <elf-hints.h> header file. */
 #undef HAVE_ELF_HINTS_H
 
 /* Define to 1 if you have the <fcntl.h> header file. */
 #undef HAVE_FCNTL_H
+
+/* Define to 1 if you have the `getpagesize' function. */
+#undef HAVE_GETPAGESIZE
 
 /* Define to 1 if you have the `glob' function. */
 #undef HAVE_GLOB
@@ -91,6 +88,9 @@
 
 /* Define to 1 if you have the `mkstemp' function. */
 #undef HAVE_MKSTEMP
+
+/* Define to 1 if you have a working `mmap' system call. */
+#undef HAVE_MMAP
 
 /* Define to 1 if you have the <ndir.h> header file, and it defines `DIR'. */
 #undef HAVE_NDIR_H

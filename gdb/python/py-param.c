@@ -1,6 +1,6 @@
 /* GDB parameters implemented in Python
 
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,7 +20,6 @@
 
 #include "defs.h"
 #include "value.h"
-#include "exceptions.h"
 #include "python-internal.h"
 #include "charset.h"
 #include "gdbcmd.h"
@@ -89,7 +88,7 @@ struct parmpy_object
 
 typedef struct parmpy_object parmpy_object;
 
-static PyTypeObject parmpy_object_type
+extern PyTypeObject parmpy_object_type
     CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("parmpy_object");
 
 /* Some handy string constants.  */
@@ -134,7 +133,7 @@ set_parameter_value (parmpy_object *self, PyObject *value)
 	  && (self->type == var_filename
 	      || value != Py_None))
 	{
-	  PyErr_SetString (PyExc_RuntimeError, 
+	  PyErr_SetString (PyExc_RuntimeError,
 			   _("String required for filename."));
 
 	  return -1;
@@ -167,7 +166,7 @@ set_parameter_value (parmpy_object *self, PyObject *value)
 
 	if (! gdbpy_is_string (value))
 	  {
-	    PyErr_SetString (PyExc_RuntimeError, 
+	    PyErr_SetString (PyExc_RuntimeError,
 			     _("ENUM arguments must be a string."));
 	    return -1;
 	  }
@@ -192,12 +191,12 @@ set_parameter_value (parmpy_object *self, PyObject *value)
     case var_boolean:
       if (! PyBool_Check (value))
 	{
-	  PyErr_SetString (PyExc_RuntimeError, 
+	  PyErr_SetString (PyExc_RuntimeError,
 			   _("A boolean argument is required."));
 	  return -1;
 	}
       cmp = PyObject_IsTrue (value);
-      if (cmp < 0) 
+      if (cmp < 0)
 	  return -1;
       self->value.intval = cmp;
       break;
@@ -216,10 +215,10 @@ set_parameter_value (parmpy_object *self, PyObject *value)
 	{
 	  cmp = PyObject_IsTrue (value);
 	  if (cmp < 0 )
-	    return -1;	  
+	    return -1;	
 	  if (cmp == 1)
 	    self->value.autoboolval = AUTO_BOOLEAN_TRUE;
-	  else 
+	  else
 	    self->value.autoboolval = AUTO_BOOLEAN_FALSE;
 	}
       break;
@@ -233,7 +232,7 @@ set_parameter_value (parmpy_object *self, PyObject *value)
 
 	if (! PyInt_Check (value))
 	  {
-	    PyErr_SetString (PyExc_RuntimeError, 
+	    PyErr_SetString (PyExc_RuntimeError,
 			     _("The value must be integer."));
 	    return -1;
 	  }
@@ -258,7 +257,7 @@ set_parameter_value (parmpy_object *self, PyObject *value)
 
 	if (! ok)
 	  {
-	    PyErr_SetString (PyExc_RuntimeError, 
+	    PyErr_SetString (PyExc_RuntimeError,
 			     _("Range exceeded."));
 	    return -1;
 	  }
@@ -268,7 +267,7 @@ set_parameter_value (parmpy_object *self, PyObject *value)
       }
 
     default:
-      PyErr_SetString (PyExc_RuntimeError, 
+      PyErr_SetString (PyExc_RuntimeError,
 		       _("Unhandled type in parameter value."));
       return -1;
     }
@@ -580,7 +579,7 @@ compute_enum_values (parmpy_object *self, PyObject *enum_values)
 
   if (! PySequence_Check (enum_values))
     {
-      PyErr_SetString (PyExc_RuntimeError, 
+      PyErr_SetString (PyExc_RuntimeError,
 		       _("The enumeration is not a sequence."));
       return 0;
     }
@@ -590,7 +589,7 @@ compute_enum_values (parmpy_object *self, PyObject *enum_values)
     return 0;
   if (size == 0)
     {
-      PyErr_SetString (PyExc_RuntimeError, 
+      PyErr_SetString (PyExc_RuntimeError,
 		       _("The enumeration is empty."));
       return 0;
     }
@@ -612,7 +611,7 @@ compute_enum_values (parmpy_object *self, PyObject *enum_values)
 	{
 	  Py_DECREF (item);
 	  do_cleanups (back_to);
-	  PyErr_SetString (PyExc_RuntimeError, 
+	  PyErr_SetString (PyExc_RuntimeError,
 			   _("The enumeration item not a string."));
 	  return 0;
 	}
@@ -780,7 +779,7 @@ gdbpy_initialize_parameters (void)
 
 
 
-static PyTypeObject parmpy_object_type =
+PyTypeObject parmpy_object_type =
 {
   PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.Parameter",		  /*tp_name*/

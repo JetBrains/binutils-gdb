@@ -1,4 +1,4 @@
-/* Copyright (C) 1992-2013 Free Software Foundation, Inc.
+/* Copyright (C) 1992-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -28,6 +28,8 @@ extern DCACHE *target_dcache_get_or_init (void);
 
 extern int target_dcache_init_p (void);
 
-extern int stack_cache_enabled (void);
+extern int stack_cache_enabled_p (void);
+
+extern int code_cache_enabled_p (void);
 
 #endif /* TARGET_DCACHE_H */

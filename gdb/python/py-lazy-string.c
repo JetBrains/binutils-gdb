@@ -1,6 +1,6 @@
 /* Python interface to lazy strings.
 
-   Copyright (C) 2010-2013 Free Software Foundation, Inc.
+   Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,10 +21,8 @@
 #include "python-internal.h"
 #include "charset.h"
 #include "value.h"
-#include "exceptions.h"
 #include "valprint.h"
 #include "language.h"
-#include "gdb_assert.h"
 
 typedef struct {
   PyObject_HEAD
@@ -47,7 +45,7 @@ typedef struct {
   struct type *type;
 } lazy_string_object;
 
-static PyTypeObject lazy_string_object_type
+extern PyTypeObject lazy_string_object_type
     CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("lazy_string_object");
 
 static PyObject *
@@ -217,7 +215,7 @@ static PyGetSetDef lazy_string_object_getset[] = {
   { NULL }  /* Sentinel */
 };
 
-static PyTypeObject lazy_string_object_type = {
+PyTypeObject lazy_string_object_type = {
   PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.LazyString",	          /*tp_name*/
   sizeof (lazy_string_object),	  /*tp_basicsize*/

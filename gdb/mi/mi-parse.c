@@ -1,6 +1,6 @@
 /* MI Command Set - MI parser.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -25,7 +25,6 @@
 #include "charset.h"
 
 #include <ctype.h>
-#include <string.h>
 #include "cli/cli-utils.h"
 #include "language.h"
 
@@ -237,7 +236,7 @@ struct mi_parse *
 mi_parse (const char *cmd, char **token)
 {
   const char *chp;
-  struct mi_parse *parse = XMALLOC (struct mi_parse);
+  struct mi_parse *parse = XNEW (struct mi_parse);
   struct cleanup *cleanup;
 
   memset (parse, 0, sizeof (*parse));
@@ -285,7 +284,8 @@ mi_parse (const char *cmd, char **token)
   /* Find the command in the MI table.  */
   parse->cmd = mi_lookup (parse->command);
   if (parse->cmd == NULL)
-    error (_("Undefined MI command: %s"), parse->command);
+    throw_error (UNDEFINED_COMMAND_ERROR,
+		 _("Undefined MI command: %s"), parse->command);
 
   /* Skip white space following the command.  */
   chp = skip_spaces_const (chp);

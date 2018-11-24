@@ -1,5 +1,5 @@
 /* MI Command Set - information commands.
-   Copyright (C) 2011-2013 Free Software Foundation, Inc.
+   Copyright (C) 2011-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -68,6 +68,35 @@ mi_cmd_info_ada_exceptions (char *command, char **argv, int argc)
       do_cleanups (sub_chain);
     }
 
+  do_cleanups (old_chain);
+}
+
+/* Implement the "-info-gdb-mi-command" GDB/MI command.  */
+
+void
+mi_cmd_info_gdb_mi_command (char *command, char **argv, int argc)
+{
+  const char *cmd_name;
+  struct mi_cmd *cmd;
+  struct ui_out *uiout = current_uiout;
+  struct cleanup *old_chain;
+
+  /* This command takes exactly one argument.  */
+  if (argc != 1)
+    error (_("Usage: -info-gdb-mi-command MI_COMMAND_NAME"));
+  cmd_name = argv[0];
+
+  /* Normally, the command name (aka the "operation" in the GDB/MI
+     grammar), does not include the leading '-' (dash).  But for
+     the user's convenience, allow the user to specify the command
+     name to be with or without that leading dash.  */
+  if (cmd_name[0] == '-')
+    cmd_name++;
+
+  cmd = mi_lookup (cmd_name);
+
+  old_chain = make_cleanup_ui_out_tuple_begin_end (uiout, "command");
+  ui_out_field_string (uiout, "exists", cmd != NULL ? "true" : "false");
   do_cleanups (old_chain);
 }
 

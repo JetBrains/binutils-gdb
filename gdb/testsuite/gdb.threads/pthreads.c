@@ -1,5 +1,5 @@
 /* Pthreads test program.
-   Copyright 1996-2013 Free Software Foundation, Inc.
+   Copyright 1996-2015 Free Software Foundation, Inc.
 
    Written by Fred Fish of Cygnus Support
    Contributed by Cygnus Support
@@ -22,12 +22,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <unistd.h>
 
-/* Under OSF 2.0 & 3.0 and HPUX 10, the second arg of pthread_create
+/* Under HPUX 10, the second arg of pthread_create
    is prototyped to be just a "pthread_attr_t", while under Solaris it
    is a "pthread_attr_t *".  Arg! */
 
-#if defined (__osf__) || defined (__hpux__)
+#if defined (__hpux__)
 #define PTHREAD_CREATE_ARG2(arg) arg
 #define PTHREAD_CREATE_NULL_ARG2 null_attr
 static pthread_attr_t null_attr;
@@ -110,6 +111,7 @@ foo (a, b, c)
   if (verbose) printf("a=%d\n", a);
 }
 
+int
 main(argc, argv)
      int argc;
      char **argv;
@@ -124,13 +126,11 @@ main(argc, argv)
 
   foo (1, 2, 3);
 
-#ifndef __osf__
   if (pthread_attr_init (&attr))
     {
       perror ("pthread_attr_init 1");
       exit (1);
     }
-#endif
 
 #ifdef PTHREAD_SCOPE_SYSTEM
   if (pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM))

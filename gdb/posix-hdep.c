@@ -1,6 +1,6 @@
 /* Host support routines for MinGW, for GDB, the GNU debugger.
 
-   Copyright (C) 2006-2013 Free Software Foundation, Inc.
+   Copyright (C) 2006-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -20,29 +20,7 @@
 #include "defs.h"
 #include "event-loop.h"
 
-#include <string.h>
-
 #include "gdb_select.h"
-
-/* The strerror() function can return NULL for errno values that are
-   out of range.  Provide a "safe" version that always returns a
-   printable string.  */
-
-char *
-safe_strerror (int errnum)
-{
-  char *msg;
-
-  msg = strerror (errnum);
-  if (msg == NULL)
-    {
-      static char buf[32];
-
-      xsnprintf (buf, sizeof buf, "(undocumented errno %d)", errnum);
-      msg = buf;
-    }
-  return (msg);
-}
 
 /* Wrapper for select.  Nothing special needed on POSIX platforms.  */
 

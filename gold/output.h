@@ -1,7 +1,6 @@
 // output.h -- manage the output file for gold   -*- C++ -*-
 
-// Copyright 2006, 2007, 2008, 2009, 2010, 2011, 2013
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2015 Free Software Foundation, Inc.
 // Written by Ian Lance Taylor <iant@google.com>.
 
 // This file is part of gold.
@@ -1715,6 +1714,17 @@ class Output_data_reloc<elfcpp::SHT_REL, dynamic, size, big_endian>
 				    address, true, true, false, false));
   }
 
+  void
+  add_local_relative(Sized_relobj<size, big_endian>* relobj,
+		     unsigned int local_sym_index, unsigned int type,
+		     Output_data* od, unsigned int shndx, Address address,
+		     bool use_plt_offset)
+  {
+    this->add(od, Output_reloc_type(relobj, local_sym_index, type, shndx,
+				    address, true, true, false,
+				    use_plt_offset));
+  }
+
   // Add a local relocation which does not use a symbol for the relocation,
   // but which gets its addend from a symbol.
 
@@ -2578,6 +2588,11 @@ class Output_data_dynamic : public Output_section_data
   add_string(elfcpp::DT tag, const std::string& str)
   { this->add_string(tag, str.c_str()); }
 
+  // Add a new dynamic entry with custom value.
+  void
+  add_custom(elfcpp::DT tag)
+  { this->add_entry(Dynamic_entry(tag)); }
+
  protected:
   // Adjust the output section to set the entry size.
   void
@@ -2642,6 +2657,11 @@ class Output_data_dynamic : public Output_section_data
       : tag_(tag), offset_(DYNAMIC_STRING)
     { this->u_.str = str; }
 
+    // Create an entry with a custom value.
+    Dynamic_entry(elfcpp::DT tag)
+      : tag_(tag), offset_(DYNAMIC_CUSTOM)
+    { }
+
     // Return the tag of this entry.
     elfcpp::DT
     tag() const
@@ -2665,7 +2685,9 @@ class Output_data_dynamic : public Output_section_data
       // Symbol adress.
       DYNAMIC_SYMBOL = -3U,
       // String.
-      DYNAMIC_STRING = -4U
+      DYNAMIC_STRING = -4U,
+      // Custom value.
+      DYNAMIC_CUSTOM = -5U
       // Any other value indicates a section address plus OFFSET.
     };
 

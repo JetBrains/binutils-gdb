@@ -1,6 +1,5 @@
 /* dw2gencfi.c - Support for generating Dwarf2 CFI information.
-   Copyright 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
-   Free Software Foundation, Inc.
+   Copyright (C) 2003-2015 Free Software Foundation, Inc.
    Contributed by Michal Ludvig <mludvig@suse.cz>
 
    This file is part of GAS, the GNU Assembler.
@@ -188,8 +187,8 @@ make_debug_seg (segT cseg, char *name, int sflags)
   else
     flags = bfd_get_section_flags (stdoutput, cseg)
       & (SEC_LINK_ONCE | SEC_LINK_DUPLICATES_DISCARD
-         | SEC_LINK_DUPLICATES_ONE_ONLY | SEC_LINK_DUPLICATES_SAME_SIZE
-         | SEC_LINK_DUPLICATES_SAME_CONTENTS);
+	 | SEC_LINK_DUPLICATES_ONE_ONLY | SEC_LINK_DUPLICATES_SAME_SIZE
+	 | SEC_LINK_DUPLICATES_SAME_CONTENTS);
 
   /* Add standard section flags.  */
   flags |= sflags;
@@ -441,6 +440,19 @@ cfi_add_advance_loc (symbolS *label)
   frchain_now->frch_cfi_data->last_address = label;
 }
 
+/* Add a CFI insn to label the current position in the CFI segment.  */
+
+void
+cfi_add_label (const char *name)
+{
+  unsigned int len = strlen (name) + 1;
+  struct cfi_insn_data *insn = alloc_cfi_insn_data ();
+
+  insn->insn = CFI_label;
+  obstack_grow (&notes, name, len);
+  insn->u.sym_name = (char *) obstack_finish (&notes);
+}
+
 /* Add a DW_CFA_offset record to the CFI data.  */
 
 void
@@ -551,6 +563,7 @@ static void dot_cfi_endproc (int);
 static void dot_cfi_personality (int);
 static void dot_cfi_lsda (int);
 static void dot_cfi_val_encoded_addr (int);
+static void dot_cfi_label (int);
 
 const pseudo_typeS cfi_pseudo_table[] =
   {
@@ -576,6 +589,7 @@ const pseudo_typeS cfi_pseudo_table[] =
     { "cfi_personality", dot_cfi_personality, 0 },
     { "cfi_lsda", dot_cfi_lsda, 0 },
     { "cfi_val_encoded_addr", dot_cfi_val_encoded_addr, 0 },
+    { "cfi_label", dot_cfi_label, 0 },
     { NULL, NULL, 0 }
   };
 
@@ -1000,7 +1014,7 @@ dot_cfi_val_encoded_addr (int ignored ATTRIBUTE_UNUSED)
       break;
     case O_constant:
       if ((encoding & 0x70) != DW_EH_PE_pcrel)
-        break;
+	break;
     default:
       encoding = DW_EH_PE_omit;
       break;
@@ -1013,6 +1027,25 @@ dot_cfi_val_encoded_addr (int ignored ATTRIBUTE_UNUSED)
       ignore_rest_of_line ();
       return;
     }
+
+  demand_empty_rest_of_line ();
+}
+
+static void
+dot_cfi_label (int ignored ATTRIBUTE_UNUSED)
+{
+  char *name = read_symbol_name ();
+
+  if (name == NULL)
+    return;
+
+  /* If the last address was not at the current PC, advance to current.  */
+  if (symbol_get_frag (frchain_now->frch_cfi_data->last_address) != frag_now
+      || S_GET_VALUE (frchain_now->frch_cfi_data->last_address)
+	 != frag_now_fix ())
+    cfi_add_advance_loc (symbol_temp_new_now ());
+
+  cfi_add_label (name);
 
   demand_empty_rest_of_line ();
 }
@@ -1331,15 +1364,15 @@ output_cfi_insn (struct cfi_insn_data *insn)
 
     case CFI_val_encoded_addr:
       {
-        unsigned encoding = insn->u.ea.encoding;
-        offsetT encoding_size;
+	unsigned encoding = insn->u.ea.encoding;
+	offsetT encoding_size;
 
 	if (encoding == DW_EH_PE_omit)
 	  break;
 	out_one (DW_CFA_val_expression);
 	out_uleb128 (insn->u.ea.reg);
 
-        switch (encoding & 0x7)
+	switch (encoding & 0x7)
 	  {
 	  case DW_EH_PE_absptr:
 	    encoding_size = DWARF2_ADDR_SIZE (stdoutput);
@@ -1385,6 +1418,10 @@ output_cfi_insn (struct cfi_insn_data *insn)
 	  }
 	emit_expr (&insn->u.ea.exp, encoding_size);
       }
+      break;
+
+    case CFI_label:
+      colon (insn->u.sym_name);
       break;
 
     default:
@@ -1522,7 +1559,7 @@ output_cie (struct cie_entry *cie, bfd_boolean eh_frame, int align)
   if (cie->first)
     {
       for (i = cie->first; i != cie->last; i = i->next)
-        {
+	{
 	  if (CUR_SEG (i) != CUR_SEG (cie))
 	    continue;
 	  output_cfi_insn (i);
@@ -1722,6 +1759,7 @@ select_cie_for_fde (struct fde_entry *fde, bfd_boolean eh_frame,
 
 	    case CFI_escape:
 	    case CFI_val_encoded_addr:
+	    case CFI_label:
 	      /* Don't bother matching these for now.  */
 	      goto fail;
 
@@ -1738,7 +1776,8 @@ select_cie_for_fde (struct fde_entry *fde, bfd_boolean eh_frame,
 	      || j->insn == DW_CFA_advance_loc
 	      || j->insn == DW_CFA_remember_state
 	      || j->insn == CFI_escape
-	      || j->insn == CFI_val_encoded_addr))
+	      || j->insn == CFI_val_encoded_addr
+	      || j->insn == CFI_label))
 	{
 	  *pfirst = j;
 	  return cie;
@@ -1762,7 +1801,8 @@ select_cie_for_fde (struct fde_entry *fde, bfd_boolean eh_frame,
     if (i->insn == DW_CFA_advance_loc
 	|| i->insn == DW_CFA_remember_state
 	|| i->insn == CFI_escape
-	|| i->insn == CFI_val_encoded_addr)
+	|| i->insn == CFI_val_encoded_addr
+	|| i->insn == CFI_label)
       break;
 
   cie->last = i;
@@ -1780,7 +1820,7 @@ cfi_change_reg_numbers (struct cfi_insn_data *insn, segT ccseg)
   for (; insn; insn = insn->next)
     {
       if (CUR_SEG (insn) != ccseg)
-        continue;
+	continue;
       switch (insn->insn)
 	{
 	case DW_CFA_advance_loc:
@@ -1789,6 +1829,7 @@ cfi_change_reg_numbers (struct cfi_insn_data *insn, segT ccseg)
 	case DW_CFA_restore_state:
 	case DW_CFA_GNU_window_save:
 	case CFI_escape:
+	case CFI_label:
 	  break;
 
 	case DW_CFA_def_cfa:
@@ -1875,7 +1916,7 @@ cfi_finish (void)
 	}
 
       do
-        {
+	{
 	  ccseg = NULL;
 	  seek_next_seg = 0;
 
@@ -1945,7 +1986,7 @@ cfi_finish (void)
 		     alignment);
 
       do
-        {
+	{
 	  ccseg = NULL;
 	  seek_next_seg = 0;
 
@@ -2034,6 +2075,7 @@ const pseudo_typeS cfi_pseudo_table[] =
     { "cfi_personality", dot_cfi_dummy, 0 },
     { "cfi_lsda", dot_cfi_dummy, 0 },
     { "cfi_val_encoded_addr", dot_cfi_dummy, 0 },
+    { "cfi_label", dot_cfi_dummy, 0 },
     { NULL, NULL, 0 }
   };
 

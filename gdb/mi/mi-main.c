@@ -1,6 +1,6 @@
 /* MI Command Set.
 
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    Contributed by Cygnus Solutions (a Red Hat company).
 
@@ -23,8 +23,7 @@
 #include "arch-utils.h"
 #include "target.h"
 #include "inferior.h"
-#include <string.h>
-#include "exceptions.h"
+#include "infrun.h"
 #include "top.h"
 #include "gdbthread.h"
 #include "mi-cmds.h"
@@ -52,9 +51,8 @@
 #include "ctf.h"
 #include "ada-lang.h"
 #include "linespec.h"
-#ifdef HAVE_PYTHON
-#include "python/python-internal.h"
-#endif
+#include "extension.h"
+#include "gdbcmd.h"
 
 #include <ctype.h>
 #include <sys/time.h>
@@ -99,12 +97,51 @@ static void mi_cmd_execute (struct mi_parse *parse);
 
 static void mi_execute_cli_command (const char *cmd, int args_p,
 				    const char *args);
-static void mi_execute_async_cli_command (char *cli_command, 
+static void mi_execute_async_cli_command (char *cli_command,
 					  char **argv, int argc);
 static int register_changed_p (int regnum, struct regcache *,
 			       struct regcache *);
 static void output_register (struct frame_info *, int regnum, int format,
 			     int skip_unavailable);
+
+/* Controls whether the frontend wants MI in async mode.  */
+static int mi_async = 0;
+
+/* The set command writes to this variable.  If the inferior is
+   executing, mi_async is *not* updated.  */
+static int mi_async_1 = 0;
+
+static void
+set_mi_async_command (char *args, int from_tty,
+		      struct cmd_list_element *c)
+{
+  if (have_live_inferiors ())
+    {
+      mi_async_1 = mi_async;
+      error (_("Cannot change this setting while the inferior is running."));
+    }
+
+  mi_async = mi_async_1;
+}
+
+static void
+show_mi_async_command (struct ui_file *file, int from_tty,
+		       struct cmd_list_element *c,
+		       const char *value)
+{
+  fprintf_filtered (file,
+		    _("Whether MI is in asynchronous mode is %s.\n"),
+		    value);
+}
+
+/* A wrapper for target_can_async_p that takes the MI setting into
+   account.  */
+
+int
+mi_async_p (void)
+{
+  return mi_async && target_can_async_p ();
+}
 
 /* Command implementations.  FIXME: Is this libgdb?  No.  This is the MI
    layer that calls libgdb.  Any operation used in the below should be
@@ -203,7 +240,7 @@ mi_cmd_exec_jump (char *args, char **argv, int argc)
   /* FIXME: Should call a libgdb function, not a cli wrapper.  */
   mi_execute_async_cli_command ("jump", argv, argc);
 }
- 
+
 static void
 proceed_thread (struct thread_info *thread, int pid)
 {
@@ -214,7 +251,7 @@ proceed_thread (struct thread_info *thread, int pid)
     return;
 
   switch_to_thread (thread->ptid);
-  clear_proceed_status ();
+  clear_proceed_status (0);
   proceed ((CORE_ADDR) -1, GDB_SIGNAL_DEFAULT, 0);
 }
 
@@ -230,6 +267,8 @@ proceed_thread_callback (struct thread_info *thread, void *arg)
 static void
 exec_continue (char **argv, int argc)
 {
+  prepare_execution_command (&current_target, mi_async_p ());
+
   if (non_stop)
     {
       /* In non-stop mode, 'resume' always resumes a single thread.
@@ -396,8 +435,8 @@ run_one_inferior (struct inferior *inf, void *arg)
       switch_to_thread (null_ptid);
       set_current_program_space (inf->pspace);
     }
-  mi_execute_cli_command (run_cmd, target_can_async_p (),
-			  target_can_async_p () ? "&" : NULL);
+  mi_execute_cli_command (run_cmd, mi_async_p (),
+			  mi_async_p () ? "&" : NULL);
   return 0;
 }
 
@@ -451,8 +490,8 @@ mi_cmd_exec_run (char *command, char **argv, int argc)
     {
       const char *run_cmd = start_p ? "start" : "run";
 
-      mi_execute_cli_command (run_cmd, target_can_async_p (),
-			      target_can_async_p () ? "&" : NULL);
+      mi_execute_cli_command (run_cmd, mi_async_p (),
+			      mi_async_p () ? "&" : NULL);
     }
 }
 
@@ -618,6 +657,9 @@ print_one_inferior (struct inferior *inferior, void *xdata)
 
       ui_out_field_fmt (uiout, "id", "i%d", inferior->num);
       ui_out_field_string (uiout, "type", "process");
+      if (inferior->has_exit_code)
+	ui_out_field_string (uiout, "exit-code",
+			     int_string (inferior->exit_code, 8, 0, 0, 1));
       if (inferior->pid != 0)
 	ui_out_field_int (uiout, "pid", inferior->pid);
 
@@ -925,7 +967,7 @@ mi_cmd_list_thread_groups (char *command, char **argv, int argc)
 
       if (!inf)
 	error (_("Non-existent thread group id '%d'"), id);
-      
+
       print_thread_info (uiout, NULL, inf->pid);
     }
   else
@@ -1241,7 +1283,7 @@ output_register (struct frame_info *frame, int regnum, int format,
 }
 
 /* Write given values into registers. The registers and values are
-   given as pairs.  The corresponding MI command is 
+   given as pairs.  The corresponding MI command is
    -data-write-register-values <format>
                                [<regnum1> <value1>...<regnumN> <valueN>] */
 void
@@ -1337,7 +1379,7 @@ mi_cmd_data_evaluate_expression (char *command, char **argv, int argc)
 /* This is the -data-read-memory command.
 
    ADDR: start address of data to be dumped.
-   WORD-FORMAT: a char indicating format for the ``word''.  See 
+   WORD-FORMAT: a char indicating format for the ``word''.  See
    the ``x'' command.
    WORD-SIZE: size of each ``word''; 1,2,4, or 8 bytes.
    NR_ROW: Number of rows.
@@ -1350,7 +1392,7 @@ mi_cmd_data_evaluate_expression (char *command, char **argv, int argc)
 
    {addr="...",rowN={wordN="..." ,... [,ascii="..."]}, ...}
 
-   Returns: 
+   Returns:
    The number of bytes read is SIZE*ROW*COL.  */
 
 void
@@ -1631,7 +1673,7 @@ mi_cmd_data_read_memory_bytes (char *command, char **argv, int argc)
    ADDR: start address of the row in the memory grid where the memory
    cell is, if OFFSET_COLUMN is specified.  Otherwise, the address of
    the location to write to.
-   FORMAT: a char indicating format for the ``word''.  See 
+   FORMAT: a char indicating format for the ``word''.  See
    the ``x'' command.
    WORD_SIZE: size of each ``word''; 1,2,4, or 8 bytes
    VALUE: value to be written into the memory address.
@@ -1752,11 +1794,11 @@ mi_cmd_data_write_memory_bytes (char *command, char **argv, int argc)
 
   if (len < count)
     {
-      /* Pattern is made of less bytes than count: 
+      /* Pattern is made of less bytes than count:
          repeat pattern to fill memory.  */
       data = xmalloc (count);
       make_cleanup (xfree, data);
-    
+
       steps = count / len;
       remainder = count % len;
       for (j = 0; j < steps; j++)
@@ -1765,10 +1807,10 @@ mi_cmd_data_write_memory_bytes (char *command, char **argv, int argc)
       if (remainder > 0)
         memcpy (data + steps * len, databuf, remainder);
     }
-  else 
+  else
     {
-      /* Pattern is longer than or equal to count: 
-         just copy len bytes.  */
+      /* Pattern is longer than or equal to count:
+         just copy count bytes.  */
       data = databuf;
     }
 
@@ -1793,7 +1835,7 @@ mi_cmd_enable_timings (char *command, char **argv, int argc)
     }
   else
     goto usage_error;
-    
+
   return;
 
  usage_error:
@@ -1808,21 +1850,21 @@ mi_cmd_list_features (char *command, char **argv, int argc)
       struct cleanup *cleanup = NULL;
       struct ui_out *uiout = current_uiout;
 
-      cleanup = make_cleanup_ui_out_list_begin_end (uiout, "features");      
+      cleanup = make_cleanup_ui_out_list_begin_end (uiout, "features");
       ui_out_field_string (uiout, NULL, "frozen-varobjs");
       ui_out_field_string (uiout, NULL, "pending-breakpoints");
       ui_out_field_string (uiout, NULL, "thread-info");
       ui_out_field_string (uiout, NULL, "data-read-memory-bytes");
       ui_out_field_string (uiout, NULL, "breakpoint-notifications");
       ui_out_field_string (uiout, NULL, "ada-task-info");
-      ui_out_field_string (uiout, NULL, "ada-exceptions");
       ui_out_field_string (uiout, NULL, "language-option");
-      
-#if HAVE_PYTHON
-      if (gdb_python_initialized)
+      ui_out_field_string (uiout, NULL, "info-gdb-mi-command");
+      ui_out_field_string (uiout, NULL, "undefined-command-error-code");
+      ui_out_field_string (uiout, NULL, "exec-run-start-option");
+
+      if (ext_lang_initialized_p (get_ext_lang_defn (EXT_LANG_PYTHON)))
 	ui_out_field_string (uiout, NULL, "python");
-#endif
-      
+
       do_cleanups (cleanup);
       return;
     }
@@ -1838,12 +1880,11 @@ mi_cmd_list_target_features (char *command, char **argv, int argc)
       struct cleanup *cleanup = NULL;
       struct ui_out *uiout = current_uiout;
 
-      cleanup = make_cleanup_ui_out_list_begin_end (uiout, "features");      
-      if (target_can_async_p ())
+      cleanup = make_cleanup_ui_out_list_begin_end (uiout, "features");
+      if (mi_async_p ())
 	ui_out_field_string (uiout, NULL, "async");
       if (target_can_execute_reverse)
 	ui_out_field_string (uiout, NULL, "reverse");
-      
       do_cleanups (cleanup);
       return;
     }
@@ -1866,7 +1907,7 @@ mi_cmd_add_inferior (char *command, char **argv, int argc)
 
 /* Callback used to find the first inferior other than the current
    one.  */
-   
+
 static int
 get_other_inferior (struct inferior *inf, void *arg)
 {
@@ -1898,7 +1939,7 @@ mi_cmd_remove_inferior (char *command, char **argv, int argc)
   if (inf == current_inferior ())
     {
       struct thread_info *tp = 0;
-      struct inferior *new_inferior 
+      struct inferior *new_inferior
 	= iterate_over_inferiors (get_other_inferior, NULL);
 
       if (new_inferior == NULL)
@@ -1999,7 +2040,7 @@ captured_mi_execute_command (struct ui_out *uiout, struct mi_parse *context)
 		mi_out_put (uiout, raw_stdout);
 		mi_out_rewind (uiout);
 		mi_print_timing_maybe ();
-		fputs_unfiltered ("\n", raw_stdout);		
+		fputs_unfiltered ("\n", raw_stdout);
 	      }
 	    else
 	      mi_out_rewind (uiout);
@@ -2022,7 +2063,16 @@ mi_print_exception (const char *token, struct gdb_exception exception)
     fputs_unfiltered ("unknown error", raw_stdout);
   else
     fputstr_unfiltered (exception.message, '"', raw_stdout);
-  fputs_unfiltered ("\"\n", raw_stdout);
+  fputs_unfiltered ("\"", raw_stdout);
+
+  switch (exception.error)
+    {
+      case UNDEFINED_COMMAND_ERROR:
+	fputs_unfiltered (",code=\"undefined-command\"", raw_stdout);
+	break;
+    }
+
+  fputs_unfiltered ("\n", raw_stdout);
 }
 
 void
@@ -2077,9 +2127,9 @@ mi_execute_command (const char *cmd, int from_tty)
       bpstat_do_actions ();
 
       if (/* The notifications are only output when the top-level
-	     interpreter (specified on the command line) is MI.  */      
+	     interpreter (specified on the command line) is MI.  */
 	  ui_out_is_mi_like_p (interp_ui_out (top_level_interpreter ()))
-	  /* Don't try report anything if there are no threads -- 
+	  /* Don't try report anything if there are no threads --
 	     the program is dead.  */
 	  && thread_count () != 0
 	  /* -thread-select explicitly changes thread. If frontend uses that
@@ -2104,11 +2154,11 @@ mi_execute_command (const char *cmd, int from_tty)
 	    }
 
 	  if (report_change)
-	    {     
+	    {
 	      struct thread_info *ti = inferior_thread ();
 
 	      target_terminal_ours ();
-	      fprintf_unfiltered (mi->event_channel, 
+	      fprintf_unfiltered (mi->event_channel,
 				  "thread-selected,id=\"%d\"",
 				  ti->num);
 	      gdb_flush (mi->event_channel);
@@ -2261,11 +2311,11 @@ mi_execute_async_cli_command (char *cli_command, char **argv, int argc)
   struct cleanup *old_cleanups;
   char *run;
 
-  if (target_can_async_p ())
+  if (mi_async_p ())
     run = xstrprintf ("%s %s&", cli_command, argc ? *argv : "");
   else
     run = xstrprintf ("%s %s", cli_command, argc ? *argv : "");
-  old_cleanups = make_cleanup (xfree, run);  
+  old_cleanups = make_cleanup (xfree, run);
 
   execute_command (run, 0 /* from_tty */ );
 
@@ -2366,7 +2416,7 @@ mi_load_progress (const char *section_name,
   current_uiout = saved_uiout;
 }
 
-static void 
+static void
 timestamp (struct mi_timestamp *tv)
 {
   gettimeofday (&tv->wallclock, NULL);
@@ -2388,7 +2438,7 @@ timestamp (struct mi_timestamp *tv)
 #endif
 }
 
-static void 
+static void
 print_diff_now (struct mi_timestamp *start)
 {
   struct mi_timestamp now;
@@ -2406,21 +2456,21 @@ mi_print_timing_maybe (void)
     print_diff_now (current_command_ts);
 }
 
-static long 
+static long
 timeval_diff (struct timeval start, struct timeval end)
 {
   return ((end.tv_sec - start.tv_sec) * 1000000L)
     + (end.tv_usec - start.tv_usec);
 }
 
-static void 
+static void
 print_diff (struct mi_timestamp *start, struct mi_timestamp *end)
 {
   fprintf_unfiltered
     (raw_stdout,
-     ",time={wallclock=\"%0.5f\",user=\"%0.5f\",system=\"%0.5f\"}", 
-     timeval_diff (start->wallclock, end->wallclock) / 1000000.0, 
-     timeval_diff (start->utime, end->utime) / 1000000.0, 
+     ",time={wallclock=\"%0.5f\",user=\"%0.5f\",system=\"%0.5f\"}",
+     timeval_diff (start->wallclock, end->wallclock) / 1000000.0,
+     timeval_diff (start->utime, end->utime) / 1000000.0,
      timeval_diff (start->stime, end->stime) / 1000000.0);
 }
 
@@ -2476,8 +2526,7 @@ mi_cmd_trace_find (char *command, char **argv, int argc)
       return;
     }
 
-  if (current_trace_status ()->running)
-    error (_("May not look at trace frames while trace is running."));
+  check_trace_running (current_trace_status ());
 
   if (strcmp (mode, "frame-number") == 0)
     {
@@ -2912,4 +2961,26 @@ mi_cmd_trace_frame_collected (char *command, char **argv, int argc)
   }
 
   do_cleanups (old_chain);
+}
+
+void
+_initialize_mi_main (void)
+{
+  struct cmd_list_element *c;
+
+  add_setshow_boolean_cmd ("mi-async", class_run,
+			   &mi_async_1, _("\
+Set whether MI asynchronous mode is enabled."), _("\
+Show whether MI asynchronous mode is enabled."), _("\
+Tells GDB whether MI should be in asynchronous mode."),
+			   set_mi_async_command,
+			   show_mi_async_command,
+			   &setlist,
+			   &showlist);
+
+  /* Alias old "target-async" to "mi-async".  */
+  c = add_alias_cmd ("target-async", "mi-async", class_run, 0, &setlist);
+  deprecate_cmd (c, "set mi-async");
+  c = add_alias_cmd ("target-async", "mi-async", class_run, 0, &showlist);
+  deprecate_cmd (c, "show mi-async");
 }

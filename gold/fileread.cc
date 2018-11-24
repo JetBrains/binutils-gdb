@@ -1,7 +1,6 @@
 // fileread.cc -- read files for gold
 
-// Copyright 2006, 2007, 2008, 2009, 2010, 2011, 2012
-// Free Software Foundation, Inc.
+// Copyright (C) 2006-2015 Free Software Foundation, Inc.
 // Written by Ian Lance Taylor <iant@google.com>.
 
 // This file is part of gold.
@@ -294,6 +293,7 @@ void
 File_read::lock(const Task* task)
 {
   gold_assert(this->released_);
+  gold_debug(DEBUG_FILES, "Locking file \"%s\"", this->name_.c_str());
   this->token_.add_writer(task);
   this->released_ = false;
 }
@@ -303,6 +303,7 @@ File_read::lock(const Task* task)
 void
 File_read::unlock(const Task* task)
 {
+  gold_debug(DEBUG_FILES, "Unlocking file \"%s\"", this->name_.c_str());
   this->release();
   this->token_.remove_writer(task);
 }

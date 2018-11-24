@@ -8,20 +8,20 @@
 Disassembly of section \.text:
 
 0+100000c0 <.*\.plt_branch\.f2>:
-.*:	(ff ff 62 3d|3d 62 ff ff) 	addis   r11,r2,-1
-.*:	(f0 7f 8b e9|e9 8b 7f f0) 	ld      r12,32752\(r11\)
+.*:	(ff ff 82 3d|3d 82 ff ff) 	addis   r12,r2,-1
+.*:	(f0 7f 8c e9|e9 8c 7f f0) 	ld      r12,32752\(r12\)
 .*:	(a6 03 89 7d|7d 89 03 a6) 	mtctr   r12
 .*:	(20 04 80 4e|4e 80 04 20) 	bctr
 
 0+100000d0 <.*\.plt_branch\.f4>:
-.*:	(ff ff 62 3d|3d 62 ff ff) 	addis   r11,r2,-1
-.*:	(f8 7f 8b e9|e9 8b 7f f8) 	ld      r12,32760\(r11\)
+.*:	(ff ff 82 3d|3d 82 ff ff) 	addis   r12,r2,-1
+.*:	(f8 7f 8c e9|e9 8c 7f f8) 	ld      r12,32760\(r12\)
 .*:	(a6 03 89 7d|7d 89 03 a6) 	mtctr   r12
 .*:	(20 04 80 4e|4e 80 04 20) 	bctr
 
 0+100000e0 <_start>:
 .*:	(02 10 40 3c|3c 40 10 02) 	lis     r2,4098
-.*:	(40 81 42 38|38 42 81 40) 	addi    r2,r2,-32448
+.*:	(38 81 42 38|38 42 81 38) 	addi    r2,r2,-32456
 .*:	(a6 02 08 7c|7c 08 02 a6) 	mflr    r0
 .*:	(e1 ff 21 f8|f8 21 ff e1) 	stdu    r1,-32\(r1\)
 .*:	(30 00 01 f8|f8 01 00 30) 	std     r0,48\(r1\)

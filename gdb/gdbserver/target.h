@@ -1,5 +1,5 @@
 /* Target operations for the remote server for GDB.
-   Copyright (C) 2002-2013 Free Software Foundation, Inc.
+   Copyright (C) 2002-2015 Free Software Foundation, Inc.
 
    Contributed by MontaVista Software.
 
@@ -21,12 +21,14 @@
 #ifndef TARGET_H
 #define TARGET_H
 
+#include "target/target.h"
 #include "target/resume.h"
 #include "target/wait.h"
 #include "target/waitstatus.h"
+#include "mem-break.h"
+#include "btrace-common.h"
 
 struct emit_ops;
-struct btrace_target_info;
 struct buffer;
 struct process_info;
 
@@ -136,8 +138,8 @@ struct target_ops
      inferior such that it is possible to access memory.
 
      This should generally only be called from client facing routines,
-     such as gdb_read_memory/gdb_write_memory, or the insert_point
-     callbacks.
+     such as gdb_read_memory/gdb_write_memory, or the GDB breakpoint
+     insertion routine.
 
      Like `read_memory' and `write_memory' below, returns 0 on success
      and errno on failure.  */
@@ -187,17 +189,23 @@ struct target_ops
   int (*read_auxv) (CORE_ADDR offset, unsigned char *myaddr,
 		    unsigned int len);
 
-  /* Insert and remove a break or watchpoint.
-     Returns 0 on success, -1 on failure and 1 on unsupported.
-     The type is coded as follows:
+  /* Returns true if GDB Z breakpoint type TYPE is supported, false
+     otherwise.  The type is coded as follows:
        '0' - software-breakpoint
        '1' - hardware-breakpoint
        '2' - write watchpoint
        '3' - read watchpoint
-       '4' - access watchpoint  */
+       '4' - access watchpoint
+  */
+  int (*supports_z_point_type) (char z_type);
 
-  int (*insert_point) (char type, CORE_ADDR addr, int len);
-  int (*remove_point) (char type, CORE_ADDR addr, int len);
+  /* Insert and remove a break or watchpoint.
+     Returns 0 on success, -1 on failure and 1 on unsupported.  */
+
+  int (*insert_point) (enum raw_bkpt_type type, CORE_ADDR addr,
+		       int size, struct raw_breakpoint *bp);
+  int (*remove_point) (enum raw_bkpt_type type, CORE_ADDR addr,
+		       int size, struct raw_breakpoint *bp);
 
   /* Returns 1 if target was stopped due to a watchpoint hit, 0 otherwise.  */
 
@@ -296,9 +304,6 @@ struct target_ops
      the pause call.  */
   void (*unpause_all) (int unfreeze);
 
-  /* Cancel all pending breakpoints hits in all threads.  */
-  void (*cancel_breakpoints) (void);
-
   /* Stabilize all threads.  That is, force them out of jump pads.  */
   void (*stabilize_threads) (void);
 
@@ -350,18 +355,27 @@ struct target_ops
   int (*supports_agent) (void);
 
   /* Check whether the target supports branch tracing.  */
-  int (*supports_btrace) (void);
+  int (*supports_btrace) (struct target_ops *, enum btrace_format);
 
-  /* Enable branch tracing for @ptid and allocate a branch trace target
-     information struct for reading and for disabling branch trace.  */
-  struct btrace_target_info *(*enable_btrace) (ptid_t ptid);
+  /* Enable branch tracing for PTID based on CONF and allocate a branch trace
+     target information struct for reading and for disabling branch trace.  */
+  struct btrace_target_info *(*enable_btrace)
+    (ptid_t ptid, const struct btrace_config *conf);
 
-  /* Disable branch tracing.  */
+  /* Disable branch tracing.
+     Returns zero on success, non-zero otherwise.  */
   int (*disable_btrace) (struct btrace_target_info *tinfo);
 
   /* Read branch trace data into buffer.  We use an int to specify the type
-     to break a cyclic dependency.  */
-  void (*read_btrace) (struct btrace_target_info *, struct buffer *, int type);
+     to break a cyclic dependency.
+     Return 0 on success; print an error message into BUFFER and return -1,
+     otherwise.  */
+  int (*read_btrace) (struct btrace_target_info *, struct buffer *, int type);
+
+  /* Read the branch trace configuration into BUFFER.
+     Return 0 on success; print an error message into BUFFER and return -1
+     otherwise.  */
+  int (*read_btrace_conf) (const struct btrace_target_info *, struct buffer *);
 
   /* Return true if target supports range stepping.  */
   int (*supports_range_stepping) (void);
@@ -442,13 +456,6 @@ int kill_inferior (int);
 	(*the_target->unpause_all) (unfreeze);	\
     } while (0)
 
-#define cancel_breakpoints()			\
-  do						\
-    {						\
-      if (the_target->cancel_breakpoints)     	\
-	(*the_target->cancel_breakpoints) ();  	\
-    } while (0)
-
 #define stabilize_threads()			\
   do						\
     {						\
@@ -488,17 +495,21 @@ int kill_inferior (int);
   (the_target->supports_agent ? \
    (*the_target->supports_agent) () : 0)
 
-#define target_supports_btrace() \
-  (the_target->supports_btrace ? (*the_target->supports_btrace) () : 0)
+#define target_supports_btrace(format)			\
+  (the_target->supports_btrace				\
+   ? (*the_target->supports_btrace) (the_target, format) : 0)
 
-#define target_enable_btrace(ptid) \
-  (*the_target->enable_btrace) (ptid)
+#define target_enable_btrace(ptid, conf) \
+  (*the_target->enable_btrace) (ptid, conf)
 
 #define target_disable_btrace(tinfo) \
   (*the_target->disable_btrace) (tinfo)
 
 #define target_read_btrace(tinfo, buffer, type)	\
   (*the_target->read_btrace) (tinfo, buffer, type)
+
+#define target_read_btrace_conf(tinfo, buffer)	\
+  (*the_target->read_btrace_conf) (tinfo, buffer)
 
 #define target_supports_range_stepping() \
   (the_target->supports_range_stepping ? \
@@ -532,7 +543,7 @@ int read_inferior_memory (CORE_ADDR memaddr, unsigned char *myaddr, int len);
 int write_inferior_memory (CORE_ADDR memaddr, const unsigned char *myaddr,
 			   int len);
 
-void set_desired_inferior (int id);
+void set_desired_thread (int id);
 
 const char *target_pid_to_str (ptid_t);
 

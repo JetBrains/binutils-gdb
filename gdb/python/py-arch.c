@@ -1,6 +1,6 @@
 /* Python interface to architecture
 
-   Copyright (C) 2013 Free Software Foundation, Inc.
+   Copyright (C) 2013-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -42,7 +42,7 @@ static struct gdbarch_data *arch_object_data = NULL;
       }								\
   } while (0)
 
-static PyTypeObject arch_object_type
+extern PyTypeObject arch_object_type
     CPYCHECKER_TYPE_OBJECT_FOR_TYPEDEF ("arch_object");
 
 /* Associates an arch_object with GDBARCH as gdbarch_data via the gdbarch
@@ -281,7 +281,7 @@ END_PC." },
   {NULL}  /* Sentinel */
 };
 
-static PyTypeObject arch_object_type = {
+PyTypeObject arch_object_type = {
   PyVarObject_HEAD_INIT (NULL, 0)
   "gdb.Architecture",                 /* tp_name */
   sizeof (arch_object),               /* tp_basicsize */

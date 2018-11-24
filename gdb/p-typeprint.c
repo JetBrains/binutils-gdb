@@ -1,5 +1,5 @@
 /* Support for printing Pascal types for GDB, the GNU debugger.
-   Copyright (C) 2000-2013 Free Software Foundation, Inc.
+   Copyright (C) 2000-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -31,8 +31,6 @@
 #include "p-lang.h"
 #include "typeprint.h"
 #include "gdb-demangle.h"
-#include <string.h>
-#include <errno.h>
 #include <ctype.h>
 
 static void pascal_type_print_varspec_suffix (struct type *, struct ui_file *,
@@ -241,7 +239,7 @@ pascal_type_print_varspec_prefix (struct type *type, struct ui_file *stream,
       if (passed_a_ptr)
 	{
 	  fprintf_filtered (stream, " ");
-	  pascal_type_print_base (TYPE_DOMAIN_TYPE (type),
+	  pascal_type_print_base (TYPE_SELF_TYPE (type),
 				  stream, 0, passed_a_ptr, flags);
 	  fprintf_filtered (stream, "::");
 	}

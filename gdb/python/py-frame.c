@@ -1,6 +1,6 @@
 /* Python interface to stack frames
 
-   Copyright (C) 2008-2013 Free Software Foundation, Inc.
+   Copyright (C) 2008-2015 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -21,13 +21,13 @@
 #include "charset.h"
 #include "block.h"
 #include "frame.h"
-#include "exceptions.h"
 #include "symtab.h"
 #include "stack.h"
 #include "value.h"
 #include "python-internal.h"
 #include "symfile.h"
 #include "objfiles.h"
+#include "user-regs.h"
 
 typedef struct {
   PyObject_HEAD
@@ -61,7 +61,7 @@ typedef struct {
 struct frame_info *
 frame_object_to_frame_info (PyObject *obj)
 {
-  frame_object *frame_obj = (frame_object *) obj;  
+  frame_object *frame_obj = (frame_object *) obj;
   struct frame_info *frame;
 
   frame = frame_find_by_id (frame_obj->frame_id);
@@ -235,6 +235,40 @@ frapy_pc (PyObject *self, PyObject *args)
   return gdb_py_long_from_ulongest (pc);
 }
 
+/* Implementation of gdb.Frame.read_register (self, register) -> gdb.Value.
+   Returns the value of a register in this frame.  */
+
+static PyObject *
+frapy_read_register (PyObject *self, PyObject *args)
+{
+  volatile struct gdb_exception except;
+  const char *regnum_str;
+  struct value *val = NULL;
+
+  if (!PyArg_ParseTuple (args, "s", &regnum_str))
+    return NULL;
+
+  TRY_CATCH (except, RETURN_MASK_ALL)
+    {
+      struct frame_info *frame;
+      int regnum;
+
+      FRAPY_REQUIRE_VALID (self, frame);
+
+      regnum = user_reg_map_name_to_regnum (get_frame_arch (frame),
+                                            regnum_str,
+                                            strlen (regnum_str));
+      if (regnum >= 0)
+        val = value_of_register (regnum, frame);
+
+      if (val == NULL)
+        PyErr_SetString (PyExc_ValueError, _("Unknown register."));
+    }
+  GDB_PY_HANDLE_EXCEPTION (except);
+
+  return val == NULL ? NULL : value_to_value_object (val);
+}
+
 /* Implementation of gdb.Frame.block (self) -> gdb.Block.
    Returns the frame's code block.  */
 
@@ -242,7 +276,7 @@ static PyObject *
 frapy_block (PyObject *self, PyObject *args)
 {
   struct frame_info *frame;
-  struct block *block = NULL, *fn_block;
+  const struct block *block = NULL, *fn_block;
   volatile struct gdb_exception except;
 
   TRY_CATCH (except, RETURN_MASK_ALL)
@@ -260,16 +294,14 @@ frapy_block (PyObject *self, PyObject *args)
   if (block == NULL || fn_block == NULL || BLOCK_FUNCTION (fn_block) == NULL)
     {
       PyErr_SetString (PyExc_RuntimeError,
-		       _("Cannot locate object file for block."));
+		       _("Cannot locate block for frame."));
       return NULL;
     }
 
   if (block)
     {
-      struct symtab *symt;
-
-      symt = SYMBOL_SYMTAB (BLOCK_FUNCTION (fn_block));
-      return block_to_block_object (block, symt->objfile);
+      return block_to_block_object
+	(block, symbol_objfile (BLOCK_FUNCTION (fn_block)));
     }
 
   Py_RETURN_NONE;
@@ -583,12 +615,12 @@ gdbpy_frame_stop_reason_string (PyObject *self, PyObject *args)
 
   if (reason < UNWIND_FIRST || reason > UNWIND_LAST)
     {
-      PyErr_SetString (PyExc_ValueError, 
+      PyErr_SetString (PyExc_ValueError,
 		       _("Invalid frame stop reason."));
       return NULL;
     }
 
-  str = frame_stop_reason_string (reason);
+  str = unwind_stop_reason_to_string (reason);
   return PyUnicode_Decode (str, strlen (str), host_charset (), NULL);
 }
 
@@ -646,12 +678,8 @@ gdbpy_initialize_frames (void)
 #define SET(name, description) \
   if (PyModule_AddIntConstant (gdb_module, "FRAME_"#name, name) < 0) \
     return -1;
-#define FIRST_ERROR(name) \
-  if (PyModule_AddIntConstant (gdb_module, "FRAME_"#name, name) < 0) \
-    return -1;
 #include "unwind_stop_reasons.def"
 #undef SET
-#undef FIRST_ERROR
 
   return gdb_pymodule_addobject (gdb_module, "Frame",
 				 (PyObject *) &frame_object_type);
@@ -678,6 +706,9 @@ Return the reason why it's not possible to find frames older than this." },
   { "pc", frapy_pc, METH_NOARGS,
     "pc () -> Long.\n\
 Return the frame's resume address." },
+  { "read_register", frapy_read_register, METH_VARARGS,
+    "read_register (register_name) -> gdb.Value\n\
+Return the value of the register in the frame." },
   { "block", frapy_block, METH_NOARGS,
     "block () -> gdb.Block.\n\
 Return the frame's code block." },
