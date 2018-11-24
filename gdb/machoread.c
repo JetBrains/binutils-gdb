@@ -33,6 +33,7 @@
 #include "psympriv.h"
 #include "complaints.h"
 #include "gdb_bfd.h"
+#include <string>
 
 /* If non-zero displays debugging message.  */
 static unsigned int mach_o_debug_level = 0;
@@ -96,7 +97,8 @@ macho_register_oso (VEC (oso_el) **oso_vector_ptr,
 /* Add symbol SYM to the minimal symbol table of OBJFILE.  */
 
 static void
-macho_symtab_add_minsym (struct objfile *objfile, const asymbol *sym)
+macho_symtab_add_minsym (minimal_symbol_reader &reader,
+			 struct objfile *objfile, const asymbol *sym)
 {
   if (sym->name == NULL || *sym->name == '\0')
     {
@@ -146,10 +148,9 @@ macho_symtab_add_minsym (struct objfile *objfile, const asymbol *sym)
       else
         return;	/* Skip this symbol.  */
 
-      prim_record_minimal_symbol_and_info
-        (sym->name, symaddr, ms_type,
-	 gdb_bfd_section_index (objfile->obfd, sym->section),
-	 objfile);
+      reader.record_with_info (sym->name, symaddr, ms_type,
+			       gdb_bfd_section_index (objfile->obfd,
+						      sym->section));
     }
 }
 
@@ -157,12 +158,12 @@ macho_symtab_add_minsym (struct objfile *objfile, const asymbol *sym)
    NUMBER_OF_SYMBOLS for OBJFILE.  Registers OSO filenames found.  */
 
 static void
-macho_symtab_read (struct objfile *objfile,
+macho_symtab_read (minimal_symbol_reader &reader,
+		   struct objfile *objfile,
 		   long number_of_symbols, asymbol **symbol_table,
 		   VEC (oso_el) **oso_vector_ptr)
 {
   long i;
-  const asymbol *dir_so = NULL;
   const asymbol *file_so = NULL;
   asymbol **oso_file = NULL;
   unsigned int nbr_syms = 0;
@@ -208,7 +209,6 @@ macho_symtab_read (struct objfile *objfile,
               else
                 {
                   file_so = sym;
-                  dir_so = NULL;
                   state = S_FIRST_SO;
                 }
             }
@@ -228,7 +228,7 @@ macho_symtab_read (struct objfile *objfile,
           else
             {
               /* Non-debugging symbols go to the minimal symbol table.  */
-              macho_symtab_add_minsym (objfile, sym);
+              macho_symtab_add_minsym (reader, objfile, sym);
             }
           break;
 
@@ -245,7 +245,6 @@ macho_symtab_read (struct objfile *objfile,
               else if (state == S_FIRST_SO)
                 {
                   /* Second SO stab for the file name.  */
-                  dir_so = file_so;
                   file_so = sym;
                   state = S_SECOND_SO;
                 }
@@ -292,7 +291,6 @@ macho_symtab_read (struct objfile *objfile,
                 {
                   complaint (&symfile_complaints, _("Missing nul SO"));
                   file_so = sym;
-                  dir_so = NULL;
                   state = S_FIRST_SO;
                 }
             }
@@ -432,7 +430,8 @@ macho_resolve_oso_sym_with_minsym (struct objfile *main_objfile, asymbol *sym)
 
 static void
 macho_add_oso_symfile (oso_el *oso, bfd *abfd, const char *name,
-                       struct objfile *main_objfile, int symfile_flags)
+                       struct objfile *main_objfile,
+		       symfile_add_flags symfile_flags)
 {
   int storage;
   int i;
@@ -634,12 +633,11 @@ macho_add_oso_symfile (oso_el *oso, bfd *abfd, const char *name,
 static void
 macho_symfile_read_all_oso (VEC (oso_el) **oso_vector_ptr,
 			    struct objfile *main_objfile,
-			    int symfile_flags)
+			    symfile_add_flags symfile_flags)
 {
   int ix;
   VEC (oso_el) *vec = *oso_vector_ptr;
   oso_el *oso;
-  struct cleanup *cleanup = make_cleanup (null_cleanup, NULL);
 
   /* Sort oso by name so that files from libraries are gathered.  */
   qsort (VEC_address (oso_el, vec), VEC_length (oso_el, vec),
@@ -655,37 +653,33 @@ macho_symfile_read_all_oso (VEC (oso_el) **oso_vector_ptr,
 	{
 	  bfd *archive_bfd;
 	  bfd *member_bfd;
-	  char *archive_name = XNEWVEC (char, pfx_len + 1);
           int last_ix;
           oso_el *oso2;
           int ix2;
 
-	  memcpy (archive_name, oso->name, pfx_len);
-	  archive_name[pfx_len] = '\0';
-
-	  make_cleanup (xfree, archive_name);
+	  std::string archive_name (oso->name, pfx_len);
 
           /* Compute number of oso for this archive.  */
           for (last_ix = ix;
                VEC_iterate (oso_el, vec, last_ix, oso2); last_ix++)
             {
-              if (strncmp (oso2->name, archive_name, pfx_len) != 0)
+              if (strncmp (oso2->name, archive_name.c_str (), pfx_len) != 0)
                 break;
             }
 
 	  /* Open the archive and check the format.  */
-	  archive_bfd = gdb_bfd_open (archive_name, gnutarget, -1);
+	  archive_bfd = gdb_bfd_open (archive_name.c_str (), gnutarget, -1);
 	  if (archive_bfd == NULL)
 	    {
 	      warning (_("Could not open OSO archive file \"%s\""),
-		       archive_name);
+		       archive_name.c_str ());
               ix = last_ix;
 	      continue;
 	    }
 	  if (!bfd_check_format (archive_bfd, bfd_archive))
 	    {
 	      warning (_("OSO archive file \"%s\" not an archive."),
-		       archive_name);
+		       archive_name.c_str ());
 	      gdb_bfd_unref (archive_bfd);
               ix = last_ix;
 	      continue;
@@ -696,7 +690,7 @@ macho_symfile_read_all_oso (VEC (oso_el) **oso_vector_ptr,
 	  if (member_bfd == NULL)
 	    {
 	      warning (_("Could not read archive members out of "
-			 "OSO archive \"%s\""), archive_name);
+			 "OSO archive \"%s\""), archive_name.c_str ());
 	      gdb_bfd_unref (archive_bfd);
               ix = last_ix;
 	      continue;
@@ -760,8 +754,6 @@ macho_symfile_read_all_oso (VEC (oso_el) **oso_vector_ptr,
           ix++;
         }
     }
-
-  do_cleanups (cleanup);
 }
 
 /* DSYM (debug symbols) files contain the debug info of an executable.
@@ -835,10 +827,9 @@ macho_check_dsym (struct objfile *objfile, char **filenamep)
 }
 
 static void
-macho_symfile_read (struct objfile *objfile, int symfile_flags)
+macho_symfile_read (struct objfile *objfile, symfile_add_flags symfile_flags)
 {
   bfd *abfd = objfile->obfd;
-  CORE_ADDR offset;
   long storage_needed;
   bfd *dsym_bfd;
   VEC (oso_el) *oso_vector = NULL;
@@ -866,8 +857,7 @@ macho_symfile_read (struct objfile *objfile, int symfile_flags)
 	  symbol_table = (asymbol **) xmalloc (storage_needed);
 	  make_cleanup (xfree, symbol_table);
 
-          init_minimal_symbol_collection ();
-          make_cleanup_discard_minimal_symbols ();
+          minimal_symbol_reader reader (objfile);
 
 	  symcount = bfd_canonicalize_symtab (objfile->obfd, symbol_table);
 
@@ -876,9 +866,10 @@ macho_symfile_read (struct objfile *objfile, int symfile_flags)
 		   bfd_get_filename (objfile->obfd),
 		   bfd_errmsg (bfd_get_error ()));
 
-	  macho_symtab_read (objfile, symcount, symbol_table, &oso_vector);
+	  macho_symtab_read (reader, objfile, symcount, symbol_table,
+			     &oso_vector);
 
-          install_minimal_symbols (objfile);
+          reader.install ();
 	}
 
       /* Try to read .eh_frame / .debug_frame.  */
@@ -891,8 +882,6 @@ macho_symfile_read (struct objfile *objfile, int symfile_flags)
       dsym_bfd = macho_check_dsym (objfile, &dsym_filename);
       if (dsym_bfd != NULL)
 	{
-	  int ix;
-	  oso_el *oso;
           struct bfd_section *asect, *dsect;
 
 	  make_cleanup (xfree, dsym_filename);
@@ -963,7 +952,6 @@ macho_symfile_offsets (struct objfile *objfile,
                        const struct section_addr_info *addrs)
 {
   unsigned int i;
-  unsigned int num_sections;
   struct obj_section *osect;
 
   /* Allocate section_offsets.  */

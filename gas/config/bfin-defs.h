@@ -325,7 +325,6 @@ Expr_Node *Expr_Node_Create (Expr_Node_Type type,
 INSTR_T Expr_Node_Gen_Reloc (Expr_Node *head, int parent_reloc);
 
 #define MKREF(x)	mkexpr (0,x)
-#define ALLOCATE(x)	malloc (x)
 
 #define NULL_CODE ((INSTR_T) 0)
 
@@ -378,7 +377,7 @@ extern "C" {
 
 extern int debug_codeselection;
 
-void error (char *format, ...);
+void error (const char *format, ...);
 void warn (char *format, ...);
 int  semantic_error (char *syntax);
 void semantic_error_2 (char *syntax);

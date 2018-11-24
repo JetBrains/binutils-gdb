@@ -1147,8 +1147,9 @@ NAME (aout, set_section_contents) (bfd *abfd,
   if (section != obj_textsec (abfd)
       && section != obj_datasec (abfd))
     {
-      (*_bfd_error_handler)
-	("%s: can not represent section `%s' in a.out object file format",
+      _bfd_error_handler
+	/* xgettext:c-format */
+	(_("%s: can not represent section `%s' in a.out object file format"),
 	 bfd_get_filename (abfd), bfd_get_section_name (abfd, section));
       bfd_set_error (bfd_error_nonrepresentable_section);
       return FALSE;
@@ -1379,8 +1380,9 @@ translate_to_native_sym_flags (bfd *abfd,
     {
       /* This case occurs, e.g., for the *DEBUG* section of a COFF
 	 file.  */
-      (*_bfd_error_handler)
-	("%B: can not represent section for symbol `%s' in a.out object file format",
+      _bfd_error_handler
+	/* xgettext:c-format */
+	(_("%B: can not represent section for symbol `%s' in a.out object file format"),
 	 abfd, cache_ptr->name != NULL ? cache_ptr->name : "*unknown*");
       bfd_set_error (bfd_error_nonrepresentable_section);
       return FALSE;
@@ -1406,8 +1408,9 @@ translate_to_native_sym_flags (bfd *abfd,
     sym_pointer->e_type[0] = N_UNDF | N_EXT;
   else
     {
-      (*_bfd_error_handler)
-	("%B: can not represent section `%A' in a.out object file format",
+      _bfd_error_handler
+	/* xgettext:c-format */
+	(_("%B: can not represent section `%A' in a.out object file format"),
 	 abfd, sec);
       bfd_set_error (bfd_error_nonrepresentable_section);
       return FALSE;
@@ -2608,7 +2611,7 @@ aout_link_check_ar_symbols (bfd *abfd,
 	     However, it might be correct.  */
 	  if (!(*info->callbacks
 		->add_archive_element) (info, abfd, name, subsbfd))
-	    return FALSE;
+	    continue;
 	  *pneeded = TRUE;
 	  return TRUE;
 	}
@@ -2985,6 +2988,7 @@ aout_link_write_other_symbol (struct bfd_hash_entry *bh, void *data)
     case bfd_link_hash_undefweak:
       type = N_WEAKU;
       val = 0;
+      /* Fall through.  */
     case bfd_link_hash_indirect:
     case bfd_link_hash_warning:
       /* FIXME: Ignore these for now.  The circumstances under which
@@ -3070,9 +3074,8 @@ aout_link_reloc_link_order (struct aout_final_link_info *flaginfo,
 	}
       else
 	{
-	  if (! ((*flaginfo->info->callbacks->unattached_reloc)
-		 (flaginfo->info, pr->u.name, NULL, NULL, (bfd_vma) 0)))
-	    return FALSE;
+	  (*flaginfo->info->callbacks->unattached_reloc)
+	    (flaginfo->info, pr->u.name, NULL, NULL, (bfd_vma) 0);
 	  r_index = 0;
 	}
     }
@@ -3167,18 +3170,14 @@ aout_link_reloc_link_order (struct aout_final_link_info *flaginfo,
 	case bfd_reloc_outofrange:
 	  abort ();
 	case bfd_reloc_overflow:
-	  if (! ((*flaginfo->info->callbacks->reloc_overflow)
-		 (flaginfo->info, NULL,
-		  (p->type == bfd_section_reloc_link_order
-		   ? bfd_section_name (flaginfo->output_bfd,
-				       pr->u.section)
-		   : pr->u.name),
-		  howto->name, pr->addend, NULL,
-		  (asection *) NULL, (bfd_vma) 0)))
-	    {
-	      free (buf);
-	      return FALSE;
-	    }
+	  (*flaginfo->info->callbacks->reloc_overflow)
+	    (flaginfo->info, NULL,
+	     (p->type == bfd_section_reloc_link_order
+	      ? bfd_section_name (flaginfo->output_bfd,
+				  pr->u.section)
+	      : pr->u.name),
+	     howto->name, pr->addend, NULL,
+	     (asection *) NULL, (bfd_vma) 0);
 	  break;
 	}
       ok = bfd_set_section_contents (flaginfo->output_bfd, o,
@@ -3355,10 +3354,9 @@ pdp11_aout_link_input_section (struct aout_final_link_info *flaginfo,
 
 			  name = strings + GET_WORD (input_bfd,
 						     syms[r_index].e_strx);
-			  if (! ((*flaginfo->info->callbacks->unattached_reloc)
-				 (flaginfo->info, name, input_bfd, input_section,
-				  r_addr)))
-			    return FALSE;
+			  (*flaginfo->info->callbacks->unattached_reloc)
+			    (flaginfo->info, name, input_bfd, input_section,
+			     r_addr);
 			  r_index = 0;
 			}
 		    }
@@ -3469,10 +3467,9 @@ pdp11_aout_link_input_section (struct aout_final_link_info *flaginfo,
 		name = h->root.root.string;
 	      else
 		name = strings + GET_WORD (input_bfd, syms[r_index].e_strx);
-	      if (! ((*flaginfo->info->callbacks->undefined_symbol)
-		     (flaginfo->info, name, input_bfd, input_section,
-		      r_addr, TRUE)))
-		return FALSE;
+	      (*flaginfo->info->callbacks->undefined_symbol)
+		(flaginfo->info, name, input_bfd, input_section,
+		 r_addr, TRUE);
 	    }
 
 	  r = MY_final_link_relocate (howto,
@@ -3504,11 +3501,9 @@ pdp11_aout_link_input_section (struct aout_final_link_info *flaginfo,
 		    s = aout_reloc_type_to_section (input_bfd, r_type);
 		    name = bfd_section_name (input_bfd, s);
 		  }
-		if (! ((*flaginfo->info->callbacks->reloc_overflow)
-		       (flaginfo->info, (h ? &h->root : NULL), name,
-			howto->name, (bfd_vma) 0, input_bfd,
-			input_section, r_addr)))
-		  return FALSE;
+		(*flaginfo->info->callbacks->reloc_overflow)
+		  (flaginfo->info, (h ? &h->root : NULL), name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, r_addr);
 	      }
 	      break;
 	    }
@@ -3708,8 +3703,9 @@ NAME (aout, final_link) (bfd *abfd,
 		 and call get_reloc_upper_bound and canonicalize_reloc to
 		 work out the number of relocs needed, and then multiply
 		 by the reloc size.  */
-	      (*_bfd_error_handler)
-		("%s: relocatable link from %s to %s not supported",
+	      _bfd_error_handler
+		/* xgettext:c-format */
+		(_("%s: relocatable link from %s to %s not supported"),
 		 bfd_get_filename (abfd),
 		 sub->xvec->name, abfd->xvec->name);
 	      bfd_set_error (bfd_error_invalid_operation);

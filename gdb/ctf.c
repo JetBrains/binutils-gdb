@@ -29,8 +29,8 @@
 #include "inferior.h"
 #include "gdbthread.h"
 #include "tracefile.h"
-
 #include <ctype.h>
+#include <algorithm>
 
 /* GDB saves trace buffers and other information (such as trace
    status) got from the remote target into Common Trace Format (CTF).
@@ -111,7 +111,7 @@ ctf_save_write_metadata (struct trace_write_handler *handler,
   va_list args;
 
   va_start (args, format);
-  if (vfprintf (handler->metadata_fd, format, args) < 0)
+  if (gnulib::vfprintf (handler->metadata_fd, format, args) < 0)
     error (_("Unable to write metadata file (%s)"),
 	     safe_strerror (errno));
   va_end (args);
@@ -124,7 +124,7 @@ static int
 ctf_save_write (struct trace_write_handler *handler,
 		const gdb_byte *buf, size_t size)
 {
-  if (fwrite (buf, size, 1, handler->datastream_fd) != 1)
+  if (gnulib::fwrite (buf, size, 1, handler->datastream_fd) != 1)
     error (_("Unable to write file for saving trace data (%s)"),
 	   safe_strerror (errno));
 
@@ -202,27 +202,6 @@ ctf_save_next_packet (struct trace_write_handler *handler)
 static void
 ctf_save_metadata_header (struct trace_write_handler *handler)
 {
-  const char metadata_fmt[] =
-  "\ntrace {\n"
-  "	major = %u;\n"
-  "	minor = %u;\n"
-  "	byte_order = %s;\n"		/* be or le */
-  "	packet.header := struct {\n"
-  "		uint32_t magic;\n"
-  "	};\n"
-  "};\n"
-  "\n"
-  "stream {\n"
-  "	packet.context := struct {\n"
-  "		uint32_t content_size;\n"
-  "		uint32_t packet_size;\n"
-  "		uint16_t tpnum;\n"
-  "	};\n"
-  "	event.header := struct {\n"
-  "		uint32_t id;\n"
-  "	};\n"
-  "};\n";
-
   ctf_save_write_metadata (handler, "/* CTF %d.%d */\n",
 			   CTF_SAVE_MAJOR, CTF_SAVE_MINOR);
   ctf_save_write_metadata (handler,
@@ -262,7 +241,26 @@ ctf_save_metadata_header (struct trace_write_handler *handler)
 #define HOST_ENDIANNESS "le"
 #endif
 
-  ctf_save_write_metadata (handler, metadata_fmt,
+  ctf_save_write_metadata (handler,
+			   "\ntrace {\n"
+			   "	major = %u;\n"
+			   "	minor = %u;\n"
+			   "	byte_order = %s;\n"
+			   "	packet.header := struct {\n"
+			   "		uint32_t magic;\n"
+			   "	};\n"
+			   "};\n"
+			   "\n"
+			   "stream {\n"
+			   "	packet.context := struct {\n"
+			   "		uint32_t content_size;\n"
+			   "		uint32_t packet_size;\n"
+			   "		uint16_t tpnum;\n"
+			   "	};\n"
+			   "	event.header := struct {\n"
+			   "		uint32_t id;\n"
+			   "	};\n"
+			   "};\n",
 			   CTF_SAVE_MAJOR, CTF_SAVE_MINOR,
 			   HOST_ENDIANNESS);
   ctf_save_write_metadata (handler, "\n");
@@ -306,11 +304,6 @@ ctf_target_save (struct trace_file_writer *self,
   return 0;
 }
 
-#ifdef USE_WIN32API
-#undef mkdir
-#define mkdir(pathname, mode) mkdir (pathname)
-#endif
-
 /* This is the implementation of trace_file_write_ops method
    start.  It creates the directory DIRNAME, metadata and datastream
    in the directory.  */
@@ -326,7 +319,7 @@ ctf_start (struct trace_file_writer *self, const char *dirname)
   mode_t hmode = S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP | S_IROTH;
 
   /* Create DIRNAME.  */
-  if (mkdir (dirname, hmode) && errno != EEXIST)
+  if (gnulib::mkdir (dirname, hmode) && errno != EEXIST)
     error (_("Unable to open directory '%s' for saving trace data (%s)"),
 	   dirname, safe_strerror (errno));
 
@@ -617,6 +610,15 @@ ctf_write_uploaded_tp (struct trace_file_writer *self,
 }
 
 /* This is the implementation of trace_file_write_ops method
+   write_tdesc.  */
+
+static void
+ctf_write_tdesc (struct trace_file_writer *self)
+{
+  /* Nothing so far. */
+}
+
+/* This is the implementation of trace_file_write_ops method
    write_definition_end.  */
 
 static void
@@ -799,6 +801,7 @@ static const struct trace_file_write_ops ctf_write_ops =
   ctf_write_status,
   ctf_write_uploaded_tsv,
   ctf_write_uploaded_tp,
+  ctf_write_tdesc,
   ctf_write_definition_end,
   NULL,
   &ctf_write_frame_ops,
@@ -1389,7 +1392,7 @@ ctf_xfer_partial (struct target_ops *ops, enum target_object object,
 	 and this address falls within a read-only section, fallback
 	 to reading from executable, up to LOW_ADDR_AVAILABLE  */
       if (offset < low_addr_available)
-	len = min (len, low_addr_available - offset);
+	len = std::min (len, low_addr_available - offset);
       res = exec_read_partial_read_only (readbuf, offset, len, xfered_len);
 
       if (res == TARGET_XFER_OK)
@@ -1684,7 +1687,7 @@ ctf_traceframe_info (struct target_ops *self)
 	  const struct bt_definition *def;
 
 	  def = bt_ctf_get_field (event, scope, "num");
-	  vnum = (int) bt_ctf_get_int64 (def);
+	  vnum = (int) bt_ctf_get_uint64 (def);
 	  VEC_safe_push (int, info->tvars, vnum);
 	}
       else

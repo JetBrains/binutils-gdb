@@ -1282,6 +1282,7 @@ m32r_info_to_howto_rel (bfd *abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type > (unsigned int) R_M32R_GNU_VTENTRY)
     {
+      /* xgettext:c-format */
       _bfd_error_handler (_("%B: invalid M32R reloc number: %d"), abfd, r_type);
       r_type = 0;
     }
@@ -2444,9 +2445,9 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
       r_type = ELF32_R_TYPE (rel->r_info);
       if (r_type < 0 || r_type >= (int) R_M32R_max)
 	{
-	  (*_bfd_error_handler) (_("%B: unknown relocation type %d"),
-				 input_bfd,
-				 (int) r_type);
+	  /* xgettext:c-format */
+	  _bfd_error_handler (_("%B: unknown relocation type %d"),
+			      input_bfd, (int) r_type);
 	  bfd_set_error (bfd_error_bad_value);
 	  ret = FALSE;
 	  continue;
@@ -2565,7 +2566,8 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 						    rel->r_offset)
 			   != (bfd_vma) -1))
 		{
-		  (*_bfd_error_handler)
+		  _bfd_error_handler
+		    /* xgettext:c-format */
 		    (_("%B(%A+0x%lx): unresolvable %s relocation against symbol `%s'"),
 		     input_bfd,
 		     input_section,
@@ -2580,14 +2582,11 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 		   && ELF_ST_VISIBILITY (h->other) == STV_DEFAULT)
 	    ;
 	  else if (!bfd_link_relocatable (info))
-	    {
-	      if (! ((*info->callbacks->undefined_symbol)
-		     (info, h->root.root.string, input_bfd,
-		      input_section, offset,
-		      (info->unresolved_syms_in_objects == RM_GENERATE_ERROR
-		       || ELF_ST_VISIBILITY (h->other)))))
-		return FALSE;
-	    }
+	    (*info->callbacks->undefined_symbol)
+	      (info, h->root.root.string, input_bfd,
+	       input_section, offset,
+	       (info->unresolved_syms_in_objects == RM_GENERATE_ERROR
+		|| ELF_ST_VISIBILITY (h->other)));
 	}
 
       if (sec != NULL && discarded_section (sec))
@@ -3012,7 +3011,8 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 		  }
 		else
 		  {
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%B: The target (%s) of an %s relocation is in the wrong section (%A)"),
 		       input_bfd,
 		       sec,
@@ -3062,17 +3062,14 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      if (! ((*info->callbacks->reloc_overflow)
-		     (info, (h ? &h->root : NULL), name, howto->name,
-		      (bfd_vma) 0, input_bfd, input_section, offset)))
-		return FALSE;
+	      (*info->callbacks->reloc_overflow)
+		(info, (h ? &h->root : NULL), name, howto->name,
+		 (bfd_vma) 0, input_bfd, input_section, offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      if (! ((*info->callbacks->undefined_symbol)
-		     (info, name, input_bfd, input_section,
-		      offset, TRUE)))
-		return FALSE;
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, offset, TRUE);
 	      break;
 
 	    case bfd_reloc_outofrange:
@@ -3092,10 +3089,8 @@ m32r_elf_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 	      /* fall through */
 
 	    common_error:
-	      if (!((*info->callbacks->warning)
-		    (info, errmsg, name, input_bfd, input_section,
-		     offset)))
-		return FALSE;
+	      (*info->callbacks->warning) (info, errmsg, name, input_bfd,
+					   input_section, offset);
 	      break;
 	    }
 	}
@@ -3353,19 +3348,17 @@ m32r_elf_finish_dynamic_sections (bfd *output_bfd,
               break;
 
             case DT_PLTGOT:
-              s = htab->sgot->output_section;
+              s = htab->sgotplt;
               goto get_vma;
             case DT_JMPREL:
-              s = htab->srelplt->output_section;
+              s = htab->srelplt;
             get_vma:
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
 
             case DT_PLTRELSZ:
-              s = htab->srelplt->output_section;
-              BFD_ASSERT (s != NULL);
+              s = htab->srelplt;
 	      dyn.d_un.d_val = s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
@@ -3382,7 +3375,7 @@ m32r_elf_finish_dynamic_sections (bfd *output_bfd,
                  about changing the DT_RELA entry.  */
               if (htab->srelplt != NULL)
                 {
-                  s = htab->srelplt->output_section;
+                  s = htab->srelplt;
 		  dyn.d_un.d_val -= s->size;
                 }
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
@@ -3494,8 +3487,9 @@ m32r_elf_set_private_flags (bfd *abfd, flagword flags)
    object file when linking.  */
 
 static bfd_boolean
-m32r_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+m32r_elf_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword out_flags;
   flagword in_flags;
 
@@ -3538,7 +3532,7 @@ m32r_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
           || ((out_flags & EF_M32R_ARCH) == E_M32R_ARCH)
           || ((in_flags  & EF_M32R_ARCH) == E_M32R2_ARCH))
 	{
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
 	    (_("%B: Instruction set mismatch with previous modules"), ibfd);
 
 	  bfd_set_error (bfd_error_bad_value);

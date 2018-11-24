@@ -19,6 +19,7 @@
 
 #ifndef ARM_GET_NEXT_PCS_H
 #define ARM_GET_NEXT_PCS_H 1
+#include "gdb_vecs.h"
 
 /* Forward declaration.  */
 struct arm_get_next_pcs;
@@ -27,9 +28,12 @@ struct arm_get_next_pcs;
 struct arm_get_next_pcs_ops
 {
   ULONGEST (*read_mem_uint) (CORE_ADDR memaddr, int len, int byte_order);
-  CORE_ADDR (*syscall_next_pc) (struct arm_get_next_pcs *self, CORE_ADDR pc);
+  CORE_ADDR (*syscall_next_pc) (struct arm_get_next_pcs *self);
   CORE_ADDR (*addr_bits_remove) (struct arm_get_next_pcs *self, CORE_ADDR val);
   int (*is_thumb) (struct arm_get_next_pcs *self);
+
+  /* Fix up PC if needed.  */
+  CORE_ADDR (*fixup) (struct arm_get_next_pcs *self, CORE_ADDR pc);
 };
 
 /* Context for a get_next_pcs call on ARM.  */
@@ -57,7 +61,6 @@ void arm_get_next_pcs_ctor (struct arm_get_next_pcs *self,
 			    struct regcache *regcache);
 
 /* Find the next possible PCs after the current instruction executes.  */
-VEC (CORE_ADDR) *arm_get_next_pcs (struct arm_get_next_pcs *self,
-				   CORE_ADDR pc);
+VEC (CORE_ADDR) *arm_get_next_pcs (struct arm_get_next_pcs *self);
 
 #endif /* ARM_GET_NEXT_PCS_H */

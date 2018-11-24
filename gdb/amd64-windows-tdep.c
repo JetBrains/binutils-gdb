@@ -30,6 +30,7 @@
 #include "coff/pe.h"
 #include "libcoff.h"
 #include "value.h"
+#include <algorithm>
 
 /* The registers used to pass integer arguments during a function call.  */
 static int amd64_windows_dummy_call_integer_regs[] =
@@ -141,7 +142,7 @@ amd64_windows_store_arg_in_reg (struct regcache *regcache,
 
   gdb_assert (TYPE_LENGTH (type) <= 8);
   memset (buf, 0, sizeof buf);
-  memcpy (buf, valbuf, min (TYPE_LENGTH (type), 8));
+  memcpy (buf, valbuf, std::min (TYPE_LENGTH (type), (unsigned int) 8));
   regcache_cooked_write (regcache, regno, buf);
 }
 
@@ -595,8 +596,6 @@ amd64_windows_frame_decode_epilogue (struct frame_info *this_frame,
 	{
 	  /* rex jmp reg  */
 	  gdb_byte op1;
-	  unsigned int reg;
-	  gdb_byte buf[8];
 
 	  if (target_read_memory (pc + 2, &op1, 1) != 0)
 	    return -1;
@@ -648,7 +647,6 @@ amd64_windows_frame_decode_insns (struct frame_info *this_frame,
 	 address is odd (http://www.codemachine.com/article_x64deepdive.html).
       */
       struct external_pex64_runtime_function d;
-      CORE_ADDR sa, ea;
 
       if (target_read_memory (cache->image_base + (unwind_info & ~1),
 			      (gdb_byte *) &d, sizeof (d)) != 0)
@@ -671,7 +669,6 @@ amd64_windows_frame_decode_insns (struct frame_info *this_frame,
       gdb_byte *end_insns;
       unsigned char codes_count;
       unsigned char frame_reg;
-      unsigned char frame_off;
       CORE_ADDR start;
 
       /* Read and decode header.  */
@@ -1016,13 +1013,7 @@ amd64_windows_frame_cache (struct frame_info *this_frame, void **this_cache)
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   struct amd64_windows_frame_cache *cache;
   gdb_byte buf[8];
-  struct obj_section *sec;
-  pe_data_type *pe;
-  IMAGE_DATA_DIRECTORY *dir;
-  CORE_ADDR image_base;
   CORE_ADDR pc;
-  struct objfile *objfile;
-  unsigned long lo, hi;
   CORE_ADDR unwind_info = 0;
 
   if (*this_cache)
@@ -1065,10 +1056,8 @@ amd64_windows_frame_prev_register (struct frame_info *this_frame,
 				   void **this_cache, int regnum)
 {
   struct gdbarch *gdbarch = get_frame_arch (this_frame);
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   struct amd64_windows_frame_cache *cache =
     amd64_windows_frame_cache (this_frame, this_cache);
-  struct value *val;
   CORE_ADDR prev;
 
   if (frame_debug)
@@ -1114,7 +1103,6 @@ static void
 amd64_windows_frame_this_id (struct frame_info *this_frame, void **this_cache,
 		   struct frame_id *this_id)
 {
-  struct gdbarch *gdbarch = get_frame_arch (this_frame);
   struct amd64_windows_frame_cache *cache =
     amd64_windows_frame_cache (this_frame, this_cache);
 
@@ -1156,7 +1144,7 @@ amd64_windows_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
       else if (target_read_memory (image_base + unwind_info,
 				   (gdb_byte *) &ex_ui, sizeof (ex_ui)) == 0
 	       && PEX64_UWI_VERSION (ex_ui.Version_Flags) == 1)
-	return max (pc, image_base + start_rva + ex_ui.SizeOfPrologue);
+	return std::max (pc, image_base + start_rva + ex_ui.SizeOfPrologue);
     }
 
   /* See if we can determine the end of the prologue via the symbol
@@ -1168,7 +1156,7 @@ amd64_windows_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
 	= skip_prologue_using_sal (gdbarch, func_addr);
 
       if (post_prologue_pc != 0)
-	return max (pc, post_prologue_pc);
+	return std::max (pc, post_prologue_pc);
     }
 
   return pc;
@@ -1222,8 +1210,6 @@ amd64_windows_auto_wide_charset (void)
 static void
 amd64_windows_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
 {
-  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
-
   /* The dwarf2 unwinder (appended very early by i386_gdbarch_init) is
      preferred over the SEH one.  The reasons are:
      - binaries without SEH but with dwarf2 debug info are correcly handled

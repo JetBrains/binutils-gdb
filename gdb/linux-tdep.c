@@ -243,14 +243,14 @@ get_linux_inferior_data (void)
   return info;
 }
 
-/* This function is suitable for architectures that don't
-   extend/override the standard siginfo structure.  */
+/* See linux-tdep.h.  */
 
-static struct type *
-linux_get_siginfo_type (struct gdbarch *gdbarch)
+struct type *
+linux_get_siginfo_type_with_fields (struct gdbarch *gdbarch,
+				    linux_siginfo_extra_fields extra_fields)
 {
   struct linux_gdbarch_data *linux_gdbarch_data;
-  struct type *int_type, *uint_type, *long_type, *void_ptr_type;
+  struct type *int_type, *uint_type, *long_type, *void_ptr_type, *short_type;
   struct type *uid_type, *pid_type;
   struct type *sigval_type, *clock_type;
   struct type *siginfo_type, *sifields_type;
@@ -266,6 +266,8 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
 				 1, "unsigned int");
   long_type = arch_integer_type (gdbarch, gdbarch_long_bit (gdbarch),
 				 0, "long");
+  short_type = arch_integer_type (gdbarch, gdbarch_long_bit (gdbarch),
+				 0, "short");
   void_ptr_type = lookup_pointer_type (builtin_type (gdbarch)->builtin_void);
 
   /* sival_t */
@@ -341,6 +343,18 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
   /* _sigfault */
   type = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
   append_composite_type_field (type, "si_addr", void_ptr_type);
+
+  /* Additional bound fields for _sigfault in case they were requested.  */
+  if ((extra_fields & LINUX_SIGINFO_FIELD_ADDR_BND) != 0)
+    {
+      struct type *sigfault_bnd_fields;
+
+      append_composite_type_field (type, "_addr_lsb", short_type);
+      sigfault_bnd_fields = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
+      append_composite_type_field (sigfault_bnd_fields, "_lower", void_ptr_type);
+      append_composite_type_field (sigfault_bnd_fields, "_upper", void_ptr_type);
+      append_composite_type_field (type, "_addr_bnd", sigfault_bnd_fields);
+    }
   append_composite_type_field (sifields_type, "_sigfault", type);
 
   /* _sigpoll */
@@ -362,6 +376,15 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
   linux_gdbarch_data->siginfo_type = siginfo_type;
 
   return siginfo_type;
+}
+
+/* This function is suitable for architectures that don't
+   extend/override the standard siginfo structure.  */
+
+static struct type *
+linux_get_siginfo_type (struct gdbarch *gdbarch)
+{
+  return linux_get_siginfo_type_with_fields (gdbarch, 0);
 }
 
 /* Return true if the target is running on uClinux instead of normal
@@ -455,9 +478,9 @@ decode_vmflags (char *p, struct smaps_vmflags *v)
   p = skip_to_space (p);
   p = skip_spaces (p);
 
-  for (s = strtok_r (p, " ", &saveptr);
+  for (s = gnulib::strtok_r (p, " ", &saveptr);
        s != NULL;
-       s = strtok_r (NULL, " ", &saveptr))
+       s = gnulib::strtok_r (NULL, " ", &saveptr))
     {
       if (strcmp (s, "io") == 0)
 	v->io_page = 1;
@@ -1163,7 +1186,7 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
       struct cleanup *cleanup = make_cleanup (xfree, data);
       char *line, *t;
 
-      line = strtok_r (data, "\n", &t);
+      line = gnulib::strtok_r (data, "\n", &t);
       while (line != NULL)
 	{
 	  ULONGEST addr, endaddr, offset, inode;
@@ -1192,9 +1215,9 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
 	  mapping_file_p = !mapping_anon_p;
 
 	  /* Decode permissions.  */
-	  read = (memchr (permissions, 'r', permissions_len) != 0);
-	  write = (memchr (permissions, 'w', permissions_len) != 0);
-	  exec = (memchr (permissions, 'x', permissions_len) != 0);
+	  read = (gnulib::memchr (permissions, 'r', permissions_len) != 0);
+	  write = (gnulib::memchr (permissions, 'w', permissions_len) != 0);
+	  exec = (gnulib::memchr (permissions, 'x', permissions_len) != 0);
 	  /* 'private' here actually means VM_MAYSHARE, and not
 	     VM_SHARED.  In order to know if a mapping is really
 	     private or not, we must check the flag "sh" in the
@@ -1204,13 +1227,13 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
 	     not have the VmFlags there.  In this case, there is
 	     really no way to know if we are dealing with VM_SHARED,
 	     so we just assume that VM_MAYSHARE is enough.  */
-	  priv = memchr (permissions, 'p', permissions_len) != 0;
+	  priv = gnulib::memchr (permissions, 'p', permissions_len) != 0;
 
 	  /* Try to detect if region should be dumped by parsing smaps
 	     counters.  */
-	  for (line = strtok_r (NULL, "\n", &t);
+	  for (line = gnulib::strtok_r (NULL, "\n", &t);
 	       line != NULL && line[0] >= 'A' && line[0] <= 'Z';
-	       line = strtok_r (NULL, "\n", &t))
+	       line = gnulib::strtok_r (NULL, "\n", &t))
 	    {
 	      char keyword[64 + 1];
 
@@ -1772,7 +1795,6 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
   int n_fields = 0;
   /* Cleanups.  */
   struct cleanup *c;
-  int i;
 
   gdb_assert (p != NULL);
 
@@ -1804,7 +1826,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
 
   psargs = xstrdup (fname);
   if (infargs != NULL)
-    psargs = reconcat (psargs, psargs, " ", infargs, NULL);
+    psargs = reconcat (psargs, psargs, " ", infargs, (char *) NULL);
 
   make_cleanup (xfree, psargs);
 
@@ -1904,7 +1926,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
     }
 
   /* Extracting the UID.  */
-  tmpstr = strstr (proc_status, "Uid:");
+  tmpstr = gnulib::strstr (proc_status, "Uid:");
   if (tmpstr != NULL)
     {
       /* Advancing the pointer to the beginning of the UID.  */
@@ -1917,7 +1939,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
     }
 
   /* Extracting the GID.  */
-  tmpstr = strstr (proc_status, "Gid:");
+  tmpstr = gnulib::strstr (proc_status, "Gid:");
   if (tmpstr != NULL)
     {
       /* Advancing the pointer to the beginning of the GID.  */
@@ -2293,39 +2315,95 @@ linux_gdb_signal_to_target (struct gdbarch *gdbarch,
   return -1;
 }
 
-/* Rummage through mappings to find a mapping's size.  */
-
-static int
-find_mapping_size (CORE_ADDR vaddr, unsigned long size,
-		   int read, int write, int exec, int modified,
-		   void *data)
-{
-  struct mem_range *range = (struct mem_range *) data;
-
-  if (vaddr == range->start)
-    {
-      range->length = size;
-      return 1;
-    }
-  return 0;
-}
-
 /* Helper for linux_vsyscall_range that does the real work of finding
    the vsyscall's address range.  */
 
 static int
 linux_vsyscall_range_raw (struct gdbarch *gdbarch, struct mem_range *range)
 {
+  char filename[100];
+  long pid;
+  char *data;
+
   if (target_auxv_search (&current_target, AT_SYSINFO_EHDR, &range->start) <= 0)
     return 0;
 
-  /* This is installed by linux_init_abi below, so should always be
-     available.  */
-  gdb_assert (gdbarch_find_memory_regions_p (target_gdbarch ()));
+  /* It doesn't make sense to access the host's /proc when debugging a
+     core file.  Instead, look for the PT_LOAD segment that matches
+     the vDSO.  */
+  if (!target_has_execution)
+    {
+      Elf_Internal_Phdr *phdrs;
+      long phdrs_size;
+      int num_phdrs, i;
 
-  range->length = 0;
-  gdbarch_find_memory_regions (gdbarch, find_mapping_size, range);
-  return 1;
+      phdrs_size = bfd_get_elf_phdr_upper_bound (core_bfd);
+      if (phdrs_size == -1)
+	return 0;
+
+      phdrs = (Elf_Internal_Phdr *) alloca (phdrs_size);
+      num_phdrs = bfd_get_elf_phdrs (core_bfd, phdrs);
+      if (num_phdrs == -1)
+	return 0;
+
+      for (i = 0; i < num_phdrs; i++)
+	if (phdrs[i].p_type == PT_LOAD
+	    && phdrs[i].p_vaddr == range->start)
+	  {
+	    range->length = phdrs[i].p_memsz;
+	    return 1;
+	  }
+
+      return 0;
+    }
+
+  /* We need to know the real target PID to access /proc.  */
+  if (current_inferior ()->fake_pid_p)
+    return 0;
+
+  pid = current_inferior ()->pid;
+
+  /* Note that reading /proc/PID/task/PID/maps (1) is much faster than
+     reading /proc/PID/maps (2).  The later identifies thread stacks
+     in the output, which requires scanning every thread in the thread
+     group to check whether a VMA is actually a thread's stack.  With
+     Linux 4.4 on an Intel i7-4810MQ @ 2.80GHz, with an inferior with
+     a few thousand threads, (1) takes a few miliseconds, while (2)
+     takes several seconds.  Also note that "smaps", what we read for
+     determining core dump mappings, is even slower than "maps".  */
+  xsnprintf (filename, sizeof filename, "/proc/%ld/task/%ld/maps", pid, pid);
+  data = target_fileio_read_stralloc (NULL, filename);
+  if (data != NULL)
+    {
+      struct cleanup *cleanup = make_cleanup (xfree, data);
+      char *line;
+      char *saveptr = NULL;
+
+      for (line = gnulib::strtok_r (data, "\n", &saveptr);
+	   line != NULL;
+	   line = gnulib::strtok_r (NULL, "\n", &saveptr))
+	{
+	  ULONGEST addr, endaddr;
+	  const char *p = line;
+
+	  addr = strtoulst (p, &p, 16);
+	  if (addr == range->start)
+	    {
+	      if (*p == '-')
+		p++;
+	      endaddr = strtoulst (p, &p, 16);
+	      range->length = endaddr - addr;
+	      do_cleanups (cleanup);
+	      return 1;
+	    }
+	}
+
+      do_cleanups (cleanup);
+    }
+  else
+    warning (_("unable to open /proc file '%s'"), filename);
+
+  return 0;
 }
 
 /* Implementation of the "vsyscall_range" gdbarch hook.  Handles
@@ -2441,7 +2519,8 @@ linux_displaced_step_location (struct gdbarch *gdbarch)
      location.  The auxiliary vector gets us the PowerPC-side entry
      point address instead.  */
   if (target_auxv_search (&current_target, AT_ENTRY, &addr) <= 0)
-    error (_("Cannot find AT_ENTRY auxiliary vector entry."));
+    throw_error (NOT_SUPPORTED_ERROR,
+		 _("Cannot find AT_ENTRY auxiliary vector entry."));
 
   /* Make certain that the address points at real code, and not a
      function descriptor.  */

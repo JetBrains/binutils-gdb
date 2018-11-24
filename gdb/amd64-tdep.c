@@ -40,10 +40,12 @@
 #include "amd64-tdep.h"
 #include "i387-tdep.h"
 #include "x86-xstate.h"
+#include <algorithm>
 
 #include "features/i386/amd64.c"
 #include "features/i386/amd64-avx.c"
 #include "features/i386/amd64-mpx.c"
+#include "features/i386/amd64-avx-mpx.c"
 #include "features/i386/amd64-avx512.c"
 
 #include "features/i386/x32.c"
@@ -455,6 +457,35 @@ amd64_pseudo_register_write (struct gdbarch *gdbarch,
     i386_pseudo_register_write (gdbarch, regcache, regnum, buf);
 }
 
+/* Implement the 'ax_pseudo_register_collect' gdbarch method.  */
+
+static int
+amd64_ax_pseudo_register_collect (struct gdbarch *gdbarch,
+				  struct agent_expr *ax, int regnum)
+{
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+
+  if (i386_byte_regnum_p (gdbarch, regnum))
+    {
+      int gpnum = regnum - tdep->al_regnum;
+
+      if (gpnum >= AMD64_NUM_LOWER_BYTE_REGS)
+	ax_reg_mask (ax, gpnum - AMD64_NUM_LOWER_BYTE_REGS);
+      else
+	ax_reg_mask (ax, gpnum);
+      return 0;
+    }
+  else if (i386_dword_regnum_p (gdbarch, regnum))
+    {
+      int gpnum = regnum - tdep->eax_regnum;
+
+      ax_reg_mask (ax, gpnum);
+      return 0;
+    }
+  else
+    return i386_ax_pseudo_register_collect (gdbarch, ax, regnum);
+}
+
 
 
 /* Register classes as defined in the psABI.  */
@@ -816,10 +847,10 @@ amd64_return_value (struct gdbarch *gdbarch, struct value *function,
       gdb_assert (regnum != -1);
 
       if (readbuf)
-	regcache_raw_read_part (regcache, regnum, offset, min (len, 8),
+	regcache_raw_read_part (regcache, regnum, offset, std::min (len, 8),
 				readbuf + i * 8);
       if (writebuf)
-	regcache_raw_write_part (regcache, regnum, offset, min (len, 8),
+	regcache_raw_write_part (regcache, regnum, offset, std::min (len, 8),
 				 writebuf + i * 8);
     }
 
@@ -927,7 +958,7 @@ amd64_push_arguments (struct regcache *regcache, int nargs,
 
 	      gdb_assert (regnum != -1);
 	      memset (buf, 0, sizeof buf);
-	      memcpy (buf, valbuf + j * 8, min (len, 8));
+	      memcpy (buf, valbuf + j * 8, std::min (len, 8));
 	      regcache_raw_write_part (regcache, regnum, offset, 8, buf);
 	    }
 	}
@@ -1272,12 +1303,10 @@ static void
 fixup_riprel (struct gdbarch *gdbarch, struct displaced_step_closure *dsc,
 	      CORE_ADDR from, CORE_ADDR to, struct regcache *regs)
 {
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   const struct amd64_insn *insn_details = &dsc->insn_details;
   int modrm_offset = insn_details->modrm_offset;
   gdb_byte *insn = insn_details->raw_insn + modrm_offset;
   CORE_ADDR rip_base;
-  int32_t disp;
   int insn_length;
   int arch_tmp_regno, tmp_regno;
   ULONGEST orig_value;
@@ -1286,7 +1315,6 @@ fixup_riprel (struct gdbarch *gdbarch, struct displaced_step_closure *dsc,
   ++insn;
 
   /* Compute the rip-relative address.	*/
-  disp = extract_signed_integer (insn, sizeof (int32_t), byte_order);
   insn_length = gdb_buffered_insn_length (gdbarch, dsc->insn_buf,
 					  dsc->max_len, from);
   rip_base = from + insn_length;
@@ -1737,15 +1765,47 @@ amd64_relocate_instruction (struct gdbarch *gdbarch,
      the user program would return to.  */
   if (insn[0] == 0xe8)
     {
-      gdb_byte push_buf[16];
-      unsigned int ret_addr;
+      gdb_byte push_buf[32];
+      CORE_ADDR ret_addr;
+      int i = 0;
 
       /* Where "ret" in the original code will return to.  */
       ret_addr = oldloc + insn_length;
-      push_buf[0] = 0x68; /* pushq $...  */
-      store_unsigned_integer (&push_buf[1], 4, byte_order, ret_addr);
+
+      /* If pushing an address higher than or equal to 0x80000000,
+	 avoid 'pushq', as that sign extends its 32-bit operand, which
+	 would be incorrect.  */
+      if (ret_addr <= 0x7fffffff)
+	{
+	  push_buf[0] = 0x68; /* pushq $...  */
+	  store_unsigned_integer (&push_buf[1], 4, byte_order, ret_addr);
+	  i = 5;
+	}
+      else
+	{
+	  push_buf[i++] = 0x48; /* sub    $0x8,%rsp */
+	  push_buf[i++] = 0x83;
+	  push_buf[i++] = 0xec;
+	  push_buf[i++] = 0x08;
+
+	  push_buf[i++] = 0xc7; /* movl    $imm,(%rsp) */
+	  push_buf[i++] = 0x04;
+	  push_buf[i++] = 0x24;
+	  store_unsigned_integer (&push_buf[i], 4, byte_order,
+				  ret_addr & 0xffffffff);
+	  i += 4;
+
+	  push_buf[i++] = 0xc7; /* movl    $imm,4(%rsp) */
+	  push_buf[i++] = 0x44;
+	  push_buf[i++] = 0x24;
+	  push_buf[i++] = 0x04;
+	  store_unsigned_integer (&push_buf[i], 4, byte_order,
+				  ret_addr >> 32);
+	  i += 4;
+	}
+      gdb_assert (i <= sizeof (push_buf));
       /* Push the push.  */
-      append_insns (to, 5, push_buf);
+      append_insns (to, i, push_buf);
 
       /* Convert the relative call to a relative jump.  */
       insn[0] = 0xe9;
@@ -2008,7 +2068,7 @@ amd64_analyze_stack_align (CORE_ADDR pc, CORE_ADDR current_pc,
   if (current_pc > pc + offset_and)
     cache->saved_sp_reg = amd64_arch_reg_to_regnum (reg);
 
-  return min (pc + offset + 2, current_pc);
+  return std::min (pc + offset + 2, current_pc);
 }
 
 /* Similar to amd64_analyze_stack_align for x32.  */
@@ -2190,7 +2250,7 @@ amd64_x32_analyze_stack_align (CORE_ADDR pc, CORE_ADDR current_pc,
   if (current_pc > pc + offset_and)
     cache->saved_sp_reg = amd64_arch_reg_to_regnum (reg);
 
-  return min (pc + offset + 2, current_pc);
+  return std::min (pc + offset + 2, current_pc);
 }
 
 /* Do a limited analysis of the prologue at PC and update CACHE
@@ -2379,7 +2439,7 @@ amd64_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR start_pc)
 	  && (cust != NULL
 	      && COMPUNIT_PRODUCER (cust) != NULL
 	      && startswith (COMPUNIT_PRODUCER (cust), "clang ")))
-        return max (start_pc, post_prologue_pc);
+        return std::max (start_pc, post_prologue_pc);
     }
 
   amd64_init_frame_cache (&cache);
@@ -2997,6 +3057,8 @@ amd64_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
 					  amd64_pseudo_register_read_value);
   set_gdbarch_pseudo_register_write (gdbarch,
 				     amd64_pseudo_register_write);
+  set_gdbarch_ax_pseudo_register_collect (gdbarch,
+					  amd64_ax_pseudo_register_collect);
 
   set_tdesc_pseudo_register_name (gdbarch, amd64_pseudo_register_name);
 
@@ -3132,6 +3194,8 @@ amd64_target_description (uint64_t xcr0)
       return tdesc_amd64_avx512;
     case X86_XSTATE_MPX_MASK:
       return tdesc_amd64_mpx;
+    case X86_XSTATE_AVX_MPX_MASK:
+      return tdesc_amd64_avx_mpx;
     case X86_XSTATE_AVX_MASK:
       return tdesc_amd64_avx;
     default:
@@ -3148,6 +3212,7 @@ _initialize_amd64_tdep (void)
   initialize_tdesc_amd64 ();
   initialize_tdesc_amd64_avx ();
   initialize_tdesc_amd64_mpx ();
+  initialize_tdesc_amd64_avx_mpx ();
   initialize_tdesc_amd64_avx512 ();
 
   initialize_tdesc_x32 ();

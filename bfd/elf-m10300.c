@@ -808,8 +808,9 @@ mn10300_info_to_howto (bfd *abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= R_MN10300_MAX)
     {
-      (*_bfd_error_handler) (_("%B: unrecognised MN10300 reloc number: %d"),
-			     abfd, r_type);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: unrecognised MN10300 reloc number: %d"),
+			  abfd, r_type);
       bfd_set_error (bfd_error_bad_value);
       r_type = R_MN10300_NONE;
     }
@@ -1022,7 +1023,8 @@ mn10300_do_tls_transition (bfd *         input_bfd,
       break;
 
     default:
-      (*_bfd_error_handler)
+      _bfd_error_handler
+	/* xgettext:c-format */
 	(_("%s: Unsupported transition from %s to %s"),
 	 bfd_get_filename (input_bfd),
 	 elf_mn10300_howto_table[r_type].name,
@@ -1214,7 +1216,8 @@ mn10300_elf_check_relocs (bfd *abfd,
 		    /* Transition GD->IE.  */
 		    tls_type = GOT_TLS_IE;
 		  else
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%B: %s' accessed both as normal and thread local symbol"),
 		       abfd, h ? h->root.root.string : "<local>");
 		}
@@ -1470,6 +1473,7 @@ mn10300_elf_final_link_relocate (reloc_howto_type *howto,
 	  && h != NULL
 	  && ! SYMBOL_REFERENCES_LOCAL (info, h))
 	return bfd_reloc_dangerous;
+      /* Fall through.  */
     case R_MN10300_GOT32:
       /* Issue 2052223:
 	 Taking the address of a protected function in a shared library
@@ -2109,7 +2113,8 @@ mn10300_elf_relocate_section (bfd *output_bfd,
 		   && _bfd_elf_section_offset (output_bfd, info, input_section,
 					       rel->r_offset) != (bfd_vma) -1)
 
-	    (*_bfd_error_handler)
+	    _bfd_error_handler
+	      /* xgettext:c-format */
 	      (_("%B(%A+0x%lx): unresolvable %s relocation against symbol `%s'"),
 	       input_bfd,
 	       input_section,
@@ -2151,18 +2156,14 @@ mn10300_elf_relocate_section (bfd *output_bfd,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      if (! ((*info->callbacks->reloc_overflow)
-		     (info, (h ? &h->root.root : NULL), name,
-		      howto->name, (bfd_vma) 0, input_bfd,
-		      input_section, rel->r_offset)))
-		return FALSE;
+	      (*info->callbacks->reloc_overflow)
+		(info, (h ? &h->root.root : NULL), name, howto->name,
+		 (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      if (! ((*info->callbacks->undefined_symbol)
-		     (info, name, input_bfd, input_section,
-		      rel->r_offset, TRUE)))
-		return FALSE;
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, rel->r_offset, TRUE);
 	      break;
 
 	    case bfd_reloc_outofrange:
@@ -2178,6 +2179,7 @@ mn10300_elf_relocate_section (bfd *output_bfd,
 		msg = _("error: inappropriate relocation type for shared"
 			" library (did you forget -fpic?)");
 	      else if (r_type == R_MN10300_GOT32)
+		/* xgettext:c-format */
 		msg = _("%B: taking the address of protected function"
 			" '%s' cannot be done when making a shared library");
 	      else
@@ -4728,8 +4730,10 @@ _bfd_mn10300_elf_object_p (bfd *abfd)
    object file when linking.  */
 
 static bfd_boolean
-_bfd_mn10300_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+_bfd_mn10300_elf_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
+
   if (bfd_get_flavour (ibfd) != bfd_target_elf_flavour
       || bfd_get_flavour (obfd) != bfd_target_elf_flavour)
     return TRUE;
@@ -5462,15 +5466,13 @@ _bfd_mn10300_elf_finish_dynamic_sections (bfd * output_bfd,
 	    case DT_JMPREL:
 	      name = ".rela.plt";
 	    get_vma:
-	      s = bfd_get_section_by_name (output_bfd, name);
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->vma;
+	      s = bfd_get_linker_section (dynobj, name);
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_PLTRELSZ:
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
-	      BFD_ASSERT (s != NULL);
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      dyn.d_un.d_val = s->size;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
@@ -5485,7 +5487,7 @@ _bfd_mn10300_elf_finish_dynamic_sections (bfd * output_bfd,
 		 the linker script arranges for .rela.plt to follow all
 		 other relocation sections, we don't have to worry
 		 about changing the DT_RELA entry.  */
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      if (s != NULL)
 		dyn.d_un.d_val -= s->size;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);

@@ -740,6 +740,7 @@ or1k_info_to_howto_rela (bfd * abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= (unsigned int) R_OR1K_max)
     {
+      /* xgettext:c-format */
       _bfd_error_handler (_("%B: invalid OR1K reloc number: %d"), abfd, r_type);
       r_type = 0;
     }
@@ -989,7 +990,7 @@ or1k_elf_relocate_section (bfd *output_bfd,
 
           /* Addend should be zero.  */
           if (rel->r_addend != 0)
-            (*_bfd_error_handler)
+	    _bfd_error_handler
               (_("internal error: addend should be zero for R_OR1K_GOT16"));
 
           break;
@@ -998,7 +999,10 @@ or1k_elf_relocate_section (bfd *output_bfd,
         case R_OR1K_GOTOFF_HI16:
           /* Relocation is offset from GOT.  */
           BFD_ASSERT (sgot != NULL);
-          relocation -= sgot->output_section->vma;
+	  relocation
+	    -= (htab->root.hgot->root.u.def.value
+		+ htab->root.hgot->root.u.def.section->output_offset
+		+ htab->root.hgot->root.u.def.section->output_section->vma);
           break;
 
         case R_OR1K_INSN_REL_26:
@@ -1073,7 +1077,7 @@ or1k_elf_relocate_section (bfd *output_bfd,
                     else
                       {
                         BFD_FAIL ();
-                        (*_bfd_error_handler)
+			_bfd_error_handler
                           (_("%B: probably compiled without -fPIC?"),
                            input_bfd);
                         bfd_set_error (bfd_error_bad_value);
@@ -1095,7 +1099,7 @@ or1k_elf_relocate_section (bfd *output_bfd,
         case R_OR1K_TLS_LDO_LO16:
           /* TODO: implement support for local dynamic.  */
           BFD_FAIL ();
-          (*_bfd_error_handler)
+	  _bfd_error_handler
             (_("%B: support for local dynamic not implemented"),
              input_bfd);
           bfd_set_error (bfd_error_bad_value);
@@ -1230,7 +1234,7 @@ or1k_elf_relocate_section (bfd *output_bfd,
           /* These are resolved dynamically on load and shouldn't
              be used as linker input.  */
           BFD_FAIL ();
-          (*_bfd_error_handler)
+	  _bfd_error_handler
             (_("%B: will not resolve runtime TLS relocation"),
              input_bfd);
           bfd_set_error (bfd_error_bad_value);
@@ -1249,13 +1253,13 @@ or1k_elf_relocate_section (bfd *output_bfd,
           switch (r)
             {
             case bfd_reloc_overflow:
-              r = info->callbacks->reloc_overflow
+	      (*info->callbacks->reloc_overflow)
                 (info, (h ? &h->root : NULL), name, howto->name,
                  (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
               break;
 
             case bfd_reloc_undefined:
-              r = info->callbacks->undefined_symbol
+	      (*info->callbacks->undefined_symbol)
                 (info, name, input_bfd, input_section, rel->r_offset, TRUE);
               break;
 
@@ -1277,11 +1281,8 @@ or1k_elf_relocate_section (bfd *output_bfd,
             }
 
           if (msg)
-            r = info->callbacks->warning
-              (info, msg, name, input_bfd, input_section, rel->r_offset);
-
-          if (!r)
-            return FALSE;
+	    (*info->callbacks->warning) (info, msg, name, input_bfd,
+					 input_section, rel->r_offset);
         }
     }
 
@@ -1642,7 +1643,8 @@ or1k_elf_check_relocs (bfd *abfd,
                         || strcmp (bfd_get_section_name (abfd, sec),
                                    name + 5) != 0)
                       {
-                        (*_bfd_error_handler)
+			_bfd_error_handler
+			  /* xgettext:c-format */
                           (_("%B: bad relocation section name `%s\'"),
                            abfd, name);
                       }
@@ -1759,20 +1761,17 @@ or1k_elf_finish_dynamic_sections (bfd *output_bfd,
               continue;
 
             case DT_PLTGOT:
-              s = htab->sgot->output_section;
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              s = htab->sgotplt;
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               break;
 
             case DT_JMPREL:
-              s = htab->srelplt->output_section;
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              s = htab->srelplt;
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               break;
 
             case DT_PLTRELSZ:
-              s = htab->srelplt->output_section;
-              BFD_ASSERT (s != NULL);
+              s = htab->srelplt;
               dyn.d_un.d_val = s->size;
               break;
 
@@ -1788,19 +1787,8 @@ or1k_elf_finish_dynamic_sections (bfd *output_bfd,
                  about changing the DT_RELA entry.  */
               if (htab->srelplt != NULL)
                 {
-                  /* FIXME: this calculation sometimes produces
-                     wrong result, the problem is that the dyn.d_un.d_val
-                     is not always correct, needs investigation why
-                     that happens. In the meantime, reading the
-                     ".rela.dyn" section by name seems to yield
-                     correct result.
-
-                  s = htab->srelplt->output_section;
+                  s = htab->srelplt;
                   dyn.d_un.d_val -= s->size;
-                  */
-
-                  s = bfd_get_section_by_name (output_bfd, ".rela.dyn");
-                  dyn.d_un.d_val = s ? s->size : 0;
                 }
               break;
             }
@@ -2779,8 +2767,9 @@ or1k_elf_set_private_flags (bfd *abfd, flagword flags)
    EF_OR1K_NODELAY flag setting.  */
 
 static bfd_boolean
-elf32_or1k_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+elf32_or1k_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword out_flags;
   flagword in_flags;
 
@@ -2804,7 +2793,7 @@ elf32_or1k_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
 
   if ((in_flags & EF_OR1K_NODELAY) != (out_flags & EF_OR1K_NODELAY))
     {
-      (*_bfd_error_handler)
+      _bfd_error_handler
 	(_("%B: EF_OR1K_NODELAY flag mismatch with previous modules"), ibfd);
 
       bfd_set_error (bfd_error_bad_value);

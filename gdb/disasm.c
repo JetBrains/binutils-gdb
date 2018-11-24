@@ -25,6 +25,7 @@
 #include "gdbcore.h"
 #include "dis-asm.h"
 #include "source.h"
+#include <algorithm>
 
 /* Disassemble functions.
    FIXME: We should get rid of all the duplicate code in gdb that does
@@ -86,11 +87,10 @@ allocate_dis_line_table (void)
 			    xfree, xcalloc, xfree);
 }
 
-/* Add DLE to TABLE.
-   Returns 1 if added, 0 if already present.  */
+/* Add a new dis_line_entry containing SYMTAB and LINE to TABLE.  */
 
 static void
-maybe_add_dis_line_entry (htab_t table, struct symtab *symtab, int line)
+add_dis_line_entry (htab_t table, struct symtab *symtab, int line)
 {
   void **slot;
   struct dis_line_entry dle, *dlep;
@@ -176,7 +176,7 @@ int
 gdb_pretty_print_insn (struct gdbarch *gdbarch, struct ui_out *uiout,
 		       struct disassemble_info * di,
 		       const struct disasm_insn *insn, int flags,
-		       struct ui_file *stb)
+		       string_file &stb)
 {
   /* parts of the symbolic representation of the address */
   int unmapped;
@@ -240,7 +240,7 @@ gdb_pretty_print_insn (struct gdbarch *gdbarch, struct ui_out *uiout,
   if (name != NULL)
     xfree (name);
 
-  ui_file_rewind (stb);
+  stb.rewind ();
   if (flags & DISASSEMBLY_RAW_INSN)
     {
       CORE_ADDR end_pc;
@@ -250,9 +250,7 @@ gdb_pretty_print_insn (struct gdbarch *gdbarch, struct ui_out *uiout,
 
       /* Build the opcodes using a temporary stream so we can
 	 write them out in a single go for the MI.  */
-      struct ui_file *opcode_stream = mem_fileopen ();
-      struct cleanup *cleanups =
-	make_cleanup_ui_file_delete (opcode_stream);
+      string_file opcode_stream;
 
       size = gdbarch_print_insn (gdbarch, pc, di);
       end_pc = pc + size;
@@ -262,21 +260,18 @@ gdb_pretty_print_insn (struct gdbarch *gdbarch, struct ui_out *uiout,
 	  err = (*di->read_memory_func) (pc, &data, 1, di);
 	  if (err != 0)
 	    (*di->memory_error_func) (err, pc, di);
-	  fprintf_filtered (opcode_stream, "%s%02x",
-			    spacer, (unsigned) data);
+	  opcode_stream.printf ("%s%02x", spacer, (unsigned) data);
 	  spacer = " ";
 	}
 
       ui_out_field_stream (uiout, "opcodes", opcode_stream);
       ui_out_text (uiout, "\t");
-
-      do_cleanups (cleanups);
     }
   else
     size = gdbarch_print_insn (gdbarch, pc, di);
 
   ui_out_field_stream (uiout, "inst", stb);
-  ui_file_rewind (stb);
+  stb.rewind ();
   do_cleanups (ui_out_chain);
   ui_out_text (uiout, "\n");
 
@@ -287,7 +282,7 @@ static int
 dump_insns (struct gdbarch *gdbarch, struct ui_out *uiout,
 	    struct disassemble_info * di,
 	    CORE_ADDR low, CORE_ADDR high,
-	    int how_many, int flags, struct ui_file *stb,
+	    int how_many, int flags, string_file &stb,
 	    CORE_ADDR *end_pc)
 {
   struct disasm_insn insn;
@@ -329,7 +324,7 @@ do_mixed_source_and_assembly_deprecated
   (struct gdbarch *gdbarch, struct ui_out *uiout,
    struct disassemble_info *di, struct symtab *symtab,
    CORE_ADDR low, CORE_ADDR high,
-   int how_many, int flags, struct ui_file *stb)
+   int how_many, int flags, string_file &stb)
 {
   int newlines = 0;
   int nlines;
@@ -492,14 +487,10 @@ do_mixed_source_and_assembly (struct gdbarch *gdbarch, struct ui_out *uiout,
 			      struct disassemble_info *di,
 			      struct symtab *main_symtab,
 			      CORE_ADDR low, CORE_ADDR high,
-			      int how_many, int flags, struct ui_file *stb)
+			      int how_many, int flags, string_file &stb)
 {
-  int newlines = 0;
   const struct linetable_entry *le, *first_le;
-  struct symtab_and_line sal;
   int i, nlines;
-  int out_of_order = 0;
-  int next_line = 0;
   int num_displayed = 0;
   print_source_lines_flags psl_flags = 0;
   struct cleanup *cleanups;
@@ -552,7 +543,7 @@ do_mixed_source_and_assembly (struct gdbarch *gdbarch, struct ui_out *uiout,
       pc += length;
 
       if (sal.symtab != NULL)
-	maybe_add_dis_line_entry (dis_line_table, sal.symtab, sal.line);
+	add_dis_line_entry (dis_line_table, sal.symtab, sal.line);
     }
 
   /* Second pass: print the disassembly.
@@ -593,7 +584,6 @@ do_mixed_source_and_assembly (struct gdbarch *gdbarch, struct ui_out *uiout,
 
   while (pc < high)
     {
-      struct linetable_entry *le = NULL;
       struct symtab_and_line sal;
       CORE_ADDR end_pc;
       int start_preceding_line_to_display = 0;
@@ -719,7 +709,7 @@ do_mixed_source_and_assembly (struct gdbarch *gdbarch, struct ui_out *uiout,
 	}
 
       if (sal.end != 0)
-	end_pc = min (sal.end, high);
+	end_pc = std::min (sal.end, high);
       else
 	end_pc = pc + 1;
       num_displayed += dump_insns (gdbarch, uiout, di, pc, end_pc,
@@ -741,15 +731,13 @@ static void
 do_assembly_only (struct gdbarch *gdbarch, struct ui_out *uiout,
 		  struct disassemble_info * di,
 		  CORE_ADDR low, CORE_ADDR high,
-		  int how_many, int flags, struct ui_file *stb)
+		  int how_many, int flags, string_file &stb)
 {
-  int num_displayed = 0;
   struct cleanup *ui_out_chain;
 
   ui_out_chain = make_cleanup_ui_out_list_begin_end (uiout, "asm_insns");
 
-  num_displayed = dump_insns (gdbarch, uiout, di, low, high, how_many,
-                              flags, stb, NULL);
+  dump_insns (gdbarch, uiout, di, low, high, how_many, flags, stb, NULL);
 
   do_cleanups (ui_out_chain);
 }
@@ -801,11 +789,9 @@ gdb_disassembly (struct gdbarch *gdbarch, struct ui_out *uiout,
 		 char *file_string, int flags, int how_many,
 		 CORE_ADDR low, CORE_ADDR high)
 {
-  struct ui_file *stb = mem_fileopen ();
-  struct cleanup *cleanups = make_cleanup_ui_file_delete (stb);
-  struct disassemble_info di = gdb_disassemble_info (gdbarch, stb);
+  string_file stb;
+  struct disassemble_info di = gdb_disassemble_info (gdbarch, &stb);
   struct symtab *symtab;
-  struct linetable_entry *le = NULL;
   int nlines = -1;
 
   /* Assume symtab is valid for whole PC range.  */
@@ -826,7 +812,6 @@ gdb_disassembly (struct gdbarch *gdbarch, struct ui_out *uiout,
     do_mixed_source_and_assembly_deprecated (gdbarch, uiout, &di, symtab,
 					     low, high, how_many, flags, stb);
 
-  do_cleanups (cleanups);
   gdb_flush (gdb_stdout);
 }
 
@@ -853,28 +838,13 @@ gdb_print_insn (struct gdbarch *gdbarch, CORE_ADDR memaddr,
   return length;
 }
 
-static void
-do_ui_file_delete (void *arg)
-{
-  ui_file_delete ((struct ui_file *) arg);
-}
-
 /* Return the length in bytes of the instruction at address MEMADDR in
    debugged memory.  */
 
 int
 gdb_insn_length (struct gdbarch *gdbarch, CORE_ADDR addr)
 {
-  static struct ui_file *null_stream = NULL;
-
-  /* Dummy file descriptor for the disassembler.  */
-  if (!null_stream)
-    {
-      null_stream = ui_file_new ();
-      make_final_cleanup (do_ui_file_delete, null_stream);
-    }
-
-  return gdb_print_insn (gdbarch, addr, null_stream, NULL);
+  return gdb_print_insn (gdbarch, addr, &null_stream, NULL);
 }
 
 /* fprintf-function for gdb_buffered_insn_length.  This function is a

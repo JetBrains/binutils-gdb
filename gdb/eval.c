@@ -95,14 +95,9 @@ evaluate_subexp (struct type *expect_type, struct expression *exp,
 CORE_ADDR
 parse_and_eval_address (const char *exp)
 {
-  struct expression *expr = parse_expression (exp);
-  CORE_ADDR addr;
-  struct cleanup *old_chain =
-    make_cleanup (free_current_contents, &expr);
+  expression_up expr = parse_expression (exp);
 
-  addr = value_as_address (evaluate_expression (expr));
-  do_cleanups (old_chain);
-  return addr;
+  return value_as_address (evaluate_expression (expr.get ()));
 }
 
 /* Like parse_and_eval_address, but treats the value of the expression
@@ -110,27 +105,17 @@ parse_and_eval_address (const char *exp)
 LONGEST
 parse_and_eval_long (const char *exp)
 {
-  struct expression *expr = parse_expression (exp);
-  LONGEST retval;
-  struct cleanup *old_chain =
-    make_cleanup (free_current_contents, &expr);
+  expression_up expr = parse_expression (exp);
 
-  retval = value_as_long (evaluate_expression (expr));
-  do_cleanups (old_chain);
-  return (retval);
+  return value_as_long (evaluate_expression (expr.get ()));
 }
 
 struct value *
 parse_and_eval (const char *exp)
 {
-  struct expression *expr = parse_expression (exp);
-  struct value *val;
-  struct cleanup *old_chain =
-    make_cleanup (free_current_contents, &expr);
+  expression_up expr = parse_expression (exp);
 
-  val = evaluate_expression (expr);
-  do_cleanups (old_chain);
-  return val;
+  return evaluate_expression (expr.get ());
 }
 
 /* Parse up to a comma (or to a closeparen)
@@ -140,14 +125,9 @@ parse_and_eval (const char *exp)
 struct value *
 parse_to_comma_and_eval (const char **expp)
 {
-  struct expression *expr = parse_exp_1 (expp, 0, (struct block *) 0, 1);
-  struct value *val;
-  struct cleanup *old_chain =
-    make_cleanup (free_current_contents, &expr);
+  expression_up expr = parse_exp_1 (expp, 0, (struct block *) 0, 1);
 
-  val = evaluate_expression (expr);
-  do_cleanups (old_chain);
-  return val;
+  return evaluate_expression (expr.get ());
 }
 
 /* Evaluate an expression in internal prefix form
@@ -406,8 +386,8 @@ value_f90_subarray (struct value *array,
   int pc = (*pos) + 1;
   LONGEST low_bound, high_bound;
   struct type *range = check_typedef (TYPE_INDEX_TYPE (value_type (array)));
-  enum f90_range_type range_type
-    = (enum f90_range_type) longest_to_int (exp->elts[pc].longconst);
+  enum range_type range_type
+    = (enum range_type) longest_to_int (exp->elts[pc].longconst);
  
   *pos += 3;
 
@@ -1810,13 +1790,13 @@ evaluate_subexp_standard (struct type *expect_type,
       switch (code)
 	{
 	case TYPE_CODE_ARRAY:
-	  if (exp->elts[*pos].opcode == OP_F90_RANGE)
+	  if (exp->elts[*pos].opcode == OP_RANGE)
 	    return value_f90_subarray (arg1, exp, pos, noside);
 	  else
 	    goto multi_f77_subscript;
 
 	case TYPE_CODE_STRING:
-	  if (exp->elts[*pos].opcode == OP_F90_RANGE)
+	  if (exp->elts[*pos].opcode == OP_RANGE)
 	    return value_f90_subarray (arg1, exp, pos, noside);
 	  else
 	    {
@@ -1900,7 +1880,8 @@ evaluate_subexp_standard (struct type *expect_type,
       {
         struct type *type = value_type (arg1);
         struct type *real_type;
-        int full, top, using_enc;
+        int full, using_enc;
+        LONGEST top;
 	struct value_print_options opts;
 
 	get_user_print_options (&opts);
@@ -1917,7 +1898,7 @@ evaluate_subexp_standard (struct type *expect_type,
       arg3 = value_struct_elt (&arg1, NULL, &exp->elts[pc + 2].string,
 			       NULL, "structure pointer");
       if (noside == EVAL_AVOID_SIDE_EFFECTS)
-	arg3 = value_zero (value_type (arg3), not_lval);
+	arg3 = value_zero (value_type (arg3), VALUE_LVAL (arg3));
       return arg3;
 
     case STRUCTOP_MEMBER:
@@ -2427,7 +2408,8 @@ evaluate_subexp_standard (struct type *expect_type,
       if (noside == EVAL_SKIP)
 	goto nosideret;
       type = check_typedef (value_type (arg2));
-      if (TYPE_CODE (type) != TYPE_CODE_INT)
+      if (TYPE_CODE (type) != TYPE_CODE_INT
+          && TYPE_CODE (type) != TYPE_CODE_ENUM)
 	error (_("Non-integral right operand for \"@\" operator."));
       if (noside == EVAL_AVOID_SIDE_EFFECTS)
 	{
@@ -3102,14 +3084,13 @@ struct type *
 parse_and_eval_type (char *p, int length)
 {
   char *tmp = (char *) alloca (length + 4);
-  struct expression *expr;
 
   tmp[0] = '(';
   memcpy (tmp + 1, p, length);
   tmp[length + 1] = ')';
   tmp[length + 2] = '0';
   tmp[length + 3] = '\0';
-  expr = parse_expression (tmp);
+  expression_up expr = parse_expression (tmp);
   if (expr->elts[0].opcode != UNOP_CAST)
     error (_("Internal error in eval_type."));
   return expr->elts[1].type;

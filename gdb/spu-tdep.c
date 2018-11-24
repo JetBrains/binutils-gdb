@@ -363,7 +363,7 @@ spu_value_from_register (struct gdbarch *gdbarch, struct type *type,
 {
   struct value *value = default_value_from_register (gdbarch, type,
 						     regnum, frame_id);
-  int len = TYPE_LENGTH (type);
+  LONGEST len = TYPE_LENGTH (type);
 
   if (regnum < SPU_NUM_GPRS && len < 16)
     {
@@ -1570,16 +1570,9 @@ spu_return_value (struct gdbarch *gdbarch, struct value *function,
 
 
 /* Breakpoints.  */
+constexpr gdb_byte spu_break_insn[] = { 0x00, 0x00, 0x3f, 0xff };
 
-static const gdb_byte *
-spu_breakpoint_from_pc (struct gdbarch *gdbarch,
-			CORE_ADDR * pcptr, int *lenptr)
-{
-  static const gdb_byte breakpoint[] = { 0x00, 0x00, 0x3f, 0xff };
-
-  *lenptr = sizeof breakpoint;
-  return breakpoint;
-}
+typedef BP_MANIPULATION (spu_break_insn) spu_breakpoint;
 
 static int
 spu_memory_remove_breakpoint (struct gdbarch *gdbarch,
@@ -1617,22 +1610,24 @@ spu_memory_remove_breakpoint (struct gdbarch *gdbarch,
 
 /* Software single-stepping support.  */
 
-static int
+static VEC (CORE_ADDR) *
 spu_software_single_step (struct frame_info *frame)
 {
   struct gdbarch *gdbarch = get_frame_arch (frame);
-  struct address_space *aspace = get_frame_address_space (frame);
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   CORE_ADDR pc, next_pc;
   unsigned int insn;
   int offset, reg;
   gdb_byte buf[4];
   ULONGEST lslr;
+  VEC (CORE_ADDR) *next_pcs = NULL;
 
   pc = get_frame_pc (frame);
 
   if (target_read_memory (pc, buf, 4))
-    return 1;
+    throw_error (MEMORY_ERROR, _("Could not read instruction at %s."),
+		 paddress (gdbarch, pc));
+
   insn = extract_unsigned_integer (buf, 4, byte_order);
 
   /* Get local store limit.  */
@@ -1648,8 +1643,7 @@ spu_software_single_step (struct frame_info *frame)
   else
     next_pc = (SPUADDR_ADDR (pc) + 4) & lslr;
 
-  insert_single_step_breakpoint (gdbarch,
-				 aspace, SPUADDR (SPUADDR_SPU (pc), next_pc));
+  VEC_safe_push (CORE_ADDR, next_pcs, SPUADDR (SPUADDR_SPU (pc), next_pc));
 
   if (is_branch (insn, &offset, &reg))
     {
@@ -1658,32 +1652,15 @@ spu_software_single_step (struct frame_info *frame)
       if (reg == SPU_PC_REGNUM)
 	target += SPUADDR_ADDR (pc);
       else if (reg != -1)
-	{
-	  int optim, unavail;
-
-	  if (get_frame_register_bytes (frame, reg, 0, 4, buf,
-					 &optim, &unavail))
-	    target += extract_unsigned_integer (buf, 4, byte_order) & -4;
-	  else
-	    {
-	      if (optim)
-		throw_error (OPTIMIZED_OUT_ERROR,
-			     _("Could not determine address of "
-			       "single-step breakpoint."));
-	      if (unavail)
-		throw_error (NOT_AVAILABLE_ERROR,
-			     _("Could not determine address of "
-			       "single-step breakpoint."));
-	    }
-	}
+	target += get_frame_register_unsigned (frame, reg) & -4;
 
       target = target & lslr;
       if (target != next_pc)
-	insert_single_step_breakpoint (gdbarch, aspace,
-				       SPUADDR (SPUADDR_SPU (pc), target));
+	VEC_safe_push (CORE_ADDR, next_pcs, SPUADDR (SPUADDR_SPU (pc),
+						     target));
     }
 
-  return 1;
+  return next_pcs;
 }
 
 
@@ -2423,7 +2400,7 @@ info_spu_dma_cmdlist (gdb_byte *buf, int nr, enum bfd_endian byte_order)
       int mfc_cmd_opcode, mfc_cmd_tag, rclass_id, tclass_id;
       int list_lsa, list_size, mfc_lsa, mfc_size;
       ULONGEST mfc_ea;
-      int list_valid_p, noop_valid_p, qw_valid_p, ea_valid_p, cmd_error_p;
+      int list_valid_p, qw_valid_p, ea_valid_p, cmd_error_p;
 
       /* Decode contents of MFC Command Queue Context Save/Restore Registers.
 	 See "Cell Broadband Engine Registers V1.3", section 3.3.2.1.  */
@@ -2448,7 +2425,6 @@ info_spu_dma_cmdlist (gdb_byte *buf, int nr, enum bfd_endian byte_order)
 
       mfc_lsa = spu_mfc_get_bitfield (mfc_cq_dw2, 0, 13);
       mfc_size = spu_mfc_get_bitfield (mfc_cq_dw2, 14, 24);
-      noop_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 37, 37);
       qw_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 38, 38);
       ea_valid_p = spu_mfc_get_bitfield (mfc_cq_dw2, 39, 39);
       cmd_error_p = spu_mfc_get_bitfield (mfc_cq_dw2, 40, 40);
@@ -2796,7 +2772,8 @@ spu_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 
   /* Breakpoints.  */
   set_gdbarch_decr_pc_after_break (gdbarch, 4);
-  set_gdbarch_breakpoint_from_pc (gdbarch, spu_breakpoint_from_pc);
+  set_gdbarch_breakpoint_kind_from_pc (gdbarch, spu_breakpoint::kind_from_pc);
+  set_gdbarch_sw_breakpoint_from_kind (gdbarch, spu_breakpoint::bp_from_kind);
   set_gdbarch_memory_remove_breakpoint (gdbarch, spu_memory_remove_breakpoint);
   set_gdbarch_software_single_step (gdbarch, spu_software_single_step);
   set_gdbarch_get_longjmp_target (gdbarch, spu_get_longjmp_target);

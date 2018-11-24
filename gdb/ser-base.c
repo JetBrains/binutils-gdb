@@ -23,7 +23,7 @@
 #include "event-loop.h"
 
 #include "gdb_select.h"
-#include "gdb_sys_time.h"
+#include <sys/time.h>
 #ifdef USE_WIN32API
 #include <winsock2.h>
 #endif
@@ -164,7 +164,13 @@ fd_event (int error, void *context)
          pull characters out of the buffer.  See also
          generic_readchar().  */
       int nr;
-      nr = scb->ops->read_prim (scb, BUFSIZ);
+
+      do
+	{
+	  nr = scb->ops->read_prim (scb, BUFSIZ);
+	}
+      while (nr < 0 && errno == EINTR);
+
       if (nr == 0)
 	{
 	  scb->bufcnt = SERIAL_EOF;
@@ -207,6 +213,7 @@ ser_base_wait_for (struct serial *scb, int timeout)
       int numfds;
       struct timeval tv;
       fd_set readfds, exceptfds;
+      int nfds;
 
       /* NOTE: Some OS's can scramble the READFDS when the select()
          call fails (ex the kernel with Red Hat 5.2).  Initialize all
@@ -220,10 +227,13 @@ ser_base_wait_for (struct serial *scb, int timeout)
       FD_SET (scb->fd, &readfds);
       FD_SET (scb->fd, &exceptfds);
 
+      QUIT;
+
+      nfds = scb->fd + 1;
       if (timeout >= 0)
-	numfds = gdb_select (scb->fd + 1, &readfds, 0, &exceptfds, &tv);
+	numfds = interruptible_select (nfds, &readfds, 0, &exceptfds, &tv);
       else
-	numfds = gdb_select (scb->fd + 1, &readfds, 0, &exceptfds, 0);
+	numfds = interruptible_select (nfds, &readfds, 0, &exceptfds, 0);
 
       if (numfds <= 0)
 	{
@@ -285,7 +295,7 @@ ser_base_read_error_fd (struct serial *scb, int close_fd)
 	  gdb_assert (s > 0 && s <= GDB_MI_MSG_WIDTH);
 	  buf[s] = '\0';
 	  current = buf;
-	  while ((newline = strstr (current, "\n")) != NULL)
+	  while ((newline = gnulib::strstr (current, "\n")) != NULL)
 	    {
 	      *newline = '\0';
 	      fputs_unfiltered (current, gdb_stderr);
@@ -358,7 +368,11 @@ do_ser_base_readchar (struct serial *scb, int timeout)
   if (status < 0)
     return status;
 
-  status = scb->ops->read_prim (scb, BUFSIZ);
+  do
+    {
+      status = scb->ops->read_prim (scb, BUFSIZ);
+    }
+  while (status < 0 && errno == EINTR);
 
   if (status <= 0)
     {
@@ -445,10 +459,16 @@ ser_base_write (struct serial *scb, const void *buf, size_t count)
 
   while (count > 0)
     {
+      QUIT;
+
       cc = scb->ops->write_prim (scb, str, count);
 
       if (cc < 0)
-	return 1;
+	{
+	  if (errno == EINTR)
+	    continue;
+	  return 1;
+	}
       count -= cc;
       str += cc;
     }

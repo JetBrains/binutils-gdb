@@ -52,8 +52,9 @@ enum mi_print_types
    appropriate Python exception set, and EXT_LANG_BT_OK on success.  */
 
 static enum ext_lang_bt_status
-extract_sym (PyObject *obj, char **name, struct symbol **sym,
-	     struct block **sym_block, const struct language_defn **language)
+extract_sym (PyObject *obj, gdb::unique_xmalloc_ptr<char> *name,
+	     struct symbol **sym, struct block **sym_block,
+	     const struct language_defn **language)
 {
   PyObject *result = PyObject_CallMethod (obj, "symbol", NULL);
 
@@ -101,7 +102,7 @@ extract_sym (PyObject *obj, char **name, struct symbol **sym,
 
       /* Duplicate the symbol name, so the caller has consistency
 	 in garbage collection.  */
-      *name = xstrdup (SYMBOL_PRINT_NAME (*sym));
+      name->reset (xstrdup (SYMBOL_PRINT_NAME (*sym)));
 
       /* If a symbol is specified attempt to determine the language
 	 from the symbol.  If mode is not "auto", then the language
@@ -211,16 +212,11 @@ py_print_type (struct ui_out *out, struct value *val)
 
   TRY
     {
-      struct type *type;
-      struct ui_file *stb;
-      struct cleanup *cleanup;
+      check_typedef (value_type (val));
 
-      stb = mem_fileopen ();
-      cleanup = make_cleanup_ui_file_delete (stb);
-      type = check_typedef (value_type (val));
-      type_print (value_type (val), "", stb, -1);
+      string_file stb;
+      type_print (value_type (val), "", &stb, -1);
       ui_out_field_stream (out, "type", stb);
-      do_cleanups (cleanup);
     }
   CATCH (except, RETURN_MASK_ALL)
     {
@@ -249,11 +245,6 @@ py_print_value (struct ui_out *out, struct value *val,
 		const struct language_defn *language)
 {
   int should_print = 0;
-  int local_indent = (4 * indent);
-
-  /* Never set an indent level for common_val_print if MI.  */
-  if (ui_out_is_mi_like_p (out))
-    local_indent = 0;
 
   /* MI does not print certain values, differentiated by type,
      depending on what ARGS_TYPE indicates.  Test type against option.
@@ -289,14 +280,10 @@ py_print_value (struct ui_out *out, struct value *val,
     {
       TRY
 	{
-	  struct ui_file *stb;
-	  struct cleanup *cleanup;
+	  string_file stb;
 
-	  stb = mem_fileopen ();
-	  cleanup = make_cleanup_ui_file_delete (stb);
-	  common_val_print (val, stb, indent, opts, language);
+	  common_val_print (val, &stb, indent, opts, language);
 	  ui_out_field_stream (out, "value", stb);
-	  do_cleanups (cleanup);
 	}
       CATCH (except, RETURN_MASK_ALL)
 	{
@@ -405,26 +392,22 @@ py_print_single_arg (struct ui_out *out,
 	 entry value options.  */
       if (fa != NULL)
 	{
-	  struct ui_file *stb;
+	  string_file stb;
 
-	  stb = mem_fileopen ();
-	  make_cleanup_ui_file_delete (stb);
-	  fprintf_symbol_filtered (stb, SYMBOL_PRINT_NAME (fa->sym),
+	  fprintf_symbol_filtered (&stb, SYMBOL_PRINT_NAME (fa->sym),
 				   SYMBOL_LANGUAGE (fa->sym),
 				   DMGL_PARAMS | DMGL_ANSI);
 	  if (fa->entry_kind == print_entry_values_compact)
 	    {
-	      fputs_filtered ("=", stb);
+	      stb.puts ("=");
 
-	      fprintf_symbol_filtered (stb, SYMBOL_PRINT_NAME (fa->sym),
+	      fprintf_symbol_filtered (&stb, SYMBOL_PRINT_NAME (fa->sym),
 				       SYMBOL_LANGUAGE (fa->sym),
 				       DMGL_PARAMS | DMGL_ANSI);
 	    }
 	  if (fa->entry_kind == print_entry_values_only
 	      || fa->entry_kind == print_entry_values_compact)
-	    {
-	      fputs_filtered ("@entry", stb);
-	    }
+	    stb.puts ("@entry");
 	  ui_out_field_stream (out, "name", stb);
 	}
       else
@@ -544,7 +527,7 @@ enumerate_args (PyObject *iter,
   while (item)
     {
       const struct language_defn *language;
-      char *sym_name;
+      gdb::unique_xmalloc_ptr<char> sym_name;
       struct symbol *sym;
       struct block *sym_block;
       struct value *val;
@@ -560,7 +543,6 @@ enumerate_args (PyObject *iter,
       success = extract_value (item, &val);
       if (success == EXT_LANG_BT_ERROR)
 	{
-	  xfree (sym_name);
 	  Py_DECREF (item);
 	  goto error;
 	}
@@ -570,10 +552,7 @@ enumerate_args (PyObject *iter,
 
       if (sym && ui_out_is_mi_like_p (out)
 	  && ! mi_should_print (sym, MI_PRINT_ARGS))
-	{
-	  xfree (sym_name);
-	  continue;
-	}
+	continue;
 
       /* If the object did not provide a value, read it using
 	 read_frame_args and account for entry values, if any.  */
@@ -587,7 +566,6 @@ enumerate_args (PyObject *iter,
 	    {
 	      PyErr_SetString (PyExc_RuntimeError,
 			       _("No symbol or value provided."));
-	      xfree (sym_name);
 	      goto error;
 	    }
 
@@ -597,7 +575,6 @@ enumerate_args (PyObject *iter,
 	    }
 	  CATCH (except, RETURN_MASK_ALL)
 	    {
-	      xfree (sym_name);
 	      gdbpy_convert_exception (except);
 	      goto error;
 	    }
@@ -617,7 +594,6 @@ enumerate_args (PyObject *iter,
 		{
 		  xfree (arg.error);
 		  xfree (entryarg.error);
-		  xfree (sym_name);
 		  goto error;
 		}
 	    }
@@ -635,7 +611,6 @@ enumerate_args (PyObject *iter,
 		    {
 		      xfree (arg.error);
 		      xfree (entryarg.error);
-		      xfree (sym_name);
 		      gdbpy_convert_exception (except);
 		      goto error;
 		    }
@@ -648,7 +623,6 @@ enumerate_args (PyObject *iter,
 		{
 		      xfree (arg.error);
 		      xfree (entryarg.error);
-		      xfree (sym_name);
 		      goto error;
 		}
 	    }
@@ -661,17 +635,12 @@ enumerate_args (PyObject *iter,
 	  /* If the object has provided a value, we just print that.  */
 	  if (val != NULL)
 	    {
-	      if (py_print_single_arg (out, sym_name, NULL, val, &opts,
+	      if (py_print_single_arg (out, sym_name.get (), NULL, val, &opts,
 				       args_type, print_args_field,
 				       language) == EXT_LANG_BT_ERROR)
-		{
-		  xfree (sym_name);
-		  goto error;
-		}
+		goto error;
 	    }
 	}
-
-      xfree (sym_name);
 
       /* Collect the next item from the iterator.  If
 	 this is the last item, do not print the
@@ -742,7 +711,7 @@ enumerate_locals (PyObject *iter,
   while ((item = PyIter_Next (iter)))
     {
       const struct language_defn *language;
-      char *sym_name;
+      gdb::unique_xmalloc_ptr<char> sym_name;
       struct value *val;
       enum ext_lang_bt_status success = EXT_LANG_BT_ERROR;
       struct symbol *sym;
@@ -758,8 +727,6 @@ enumerate_locals (PyObject *iter,
 	  do_cleanups (locals_cleanups);
 	  goto error;
 	}
-
-      make_cleanup (xfree, sym_name);
 
       success = extract_value (item, &val);
       if (success == EXT_LANG_BT_ERROR)
@@ -807,7 +774,7 @@ enumerate_locals (PyObject *iter,
 	      ui_out_spaces (out, local_indent);
 	    }
 
-	  ui_out_field_string (out, "name", sym_name);
+	  ui_out_field_string (out, "name", sym_name.get ());
 
 	  if (! ui_out_is_mi_like_p (out))
 	    ui_out_text (out, " = ");
@@ -1039,6 +1006,7 @@ py_print_frame (PyObject *filter, int flags,
   struct value_print_options opts;
   PyObject *py_inf_frame;
   int print_level, print_frame_info, print_args, print_locals;
+  gdb::unique_xmalloc_ptr<char> function_to_free;
 
   /* Extract print settings from FLAGS.  */
   print_level = (flags & PRINT_LEVEL) ? 1 : 0;
@@ -1122,7 +1090,13 @@ py_print_frame (PyObject *filter, int flags,
 
 	  if (paddr != Py_None)
 	    {
-	      address = PyLong_AsLong (paddr);
+	      if (get_addr_from_python (paddr, &address) < 0)
+		{
+		  Py_DECREF (paddr);
+		  do_cleanups (cleanup_stack);
+		  return EXT_LANG_BT_ERROR;
+		}
+
 	      has_addr = 1;
 	    }
 	  Py_DECREF (paddr);
@@ -1205,24 +1179,22 @@ py_print_frame (PyObject *filter, int flags,
 
 	  if (gdbpy_is_string (py_func))
 	    {
-	      char *function_to_free;
+	      function_to_free = python_string_to_host_string (py_func);
 
-	      function = function_to_free =
-		python_string_to_host_string (py_func);
-
-	      if (function == NULL)
+	      if (function_to_free == NULL)
 		{
 		  do_cleanups (cleanup_stack);
 		  return EXT_LANG_BT_ERROR;
 		}
-	      make_cleanup (xfree, function_to_free);
+
+	      function = function_to_free.get ();
 	    }
 	  else if (PyLong_Check (py_func))
 	    {
-	      CORE_ADDR addr = PyLong_AsUnsignedLongLong (py_func);
+	      CORE_ADDR addr;
 	      struct bound_minimal_symbol msymbol;
 
-	      if (PyErr_Occurred ())
+	      if (get_addr_from_python (py_func, &addr) < 0)
 		{
 		  do_cleanups (cleanup_stack);
 		  return EXT_LANG_BT_ERROR;
@@ -1302,7 +1274,8 @@ py_print_frame (PyObject *filter, int flags,
 
 	  if (py_fn != Py_None)
 	    {
-	      char *filename = python_string_to_host_string (py_fn);
+	      gdb::unique_xmalloc_ptr<char>
+		filename (python_string_to_host_string (py_fn));
 
 	      if (filename == NULL)
 		{
@@ -1310,13 +1283,12 @@ py_print_frame (PyObject *filter, int flags,
 		  return EXT_LANG_BT_ERROR;
 		}
 
-	      make_cleanup (xfree, filename);
 	      TRY
 		{
 		  ui_out_wrap_hint (out, "   ");
 		  ui_out_text (out, " at ");
 		  annotate_frame_source_file ();
-		  ui_out_field_string (out, "file", filename);
+		  ui_out_field_string (out, "file", filename.get ());
 		  annotate_frame_source_file_end ();
 		}
 	      CATCH (except, RETURN_MASK_ERROR)
@@ -1346,6 +1318,12 @@ py_print_frame (PyObject *filter, int flags,
 	  if (py_line != Py_None)
 	    {
 	      line = PyLong_AsLong (py_line);
+	      if (PyErr_Occurred ())
+		{
+		  do_cleanups (cleanup_stack);
+		  return EXT_LANG_BT_ERROR;
+		}
+
 	      TRY
 		{
 		  ui_out_text (out, ":");

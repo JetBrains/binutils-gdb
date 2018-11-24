@@ -287,6 +287,7 @@ rl78_info_to_howto_rela (bfd *               abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= (unsigned int) R_RL78_max)
     {
+      /* xgettext:c-format */
       _bfd_error_handler (_("%B: invalid RL78 reloc number: %d"), abfd, r_type);
       r_type = 0;
     }
@@ -295,7 +296,6 @@ rl78_info_to_howto_rela (bfd *               abfd ATTRIBUTE_UNUSED,
 
 static bfd_vma
 get_symbol_value (const char *            name,
-		  bfd_reloc_status_type * status,
 		  struct bfd_link_info *  info,
 		  bfd *                   input_bfd,
 		  asection *              input_section,
@@ -312,12 +312,8 @@ get_symbol_value (const char *            name,
       || (h->type != bfd_link_hash_defined
 	  && h->type != bfd_link_hash_defweak))
     {
-      bfd_reloc_status_type res;
-
-      res = info->callbacks->undefined_symbol
+      (*info->callbacks->undefined_symbol)
 	(info, name, input_bfd, input_section, offset, TRUE);
-      if (status)
-	* status = res;
       return 0;
     }
 
@@ -327,44 +323,36 @@ get_symbol_value (const char *            name,
 }
 
 static bfd_vma
-get_romstart (bfd_reloc_status_type * status,
-	      struct bfd_link_info *  info,
+get_romstart (struct bfd_link_info *  info,
 	      bfd *                   abfd,
 	      asection *              sec,
 	      int		      offset)
 {
   static bfd_boolean cached = FALSE;
   static bfd_vma     cached_value = 0;
-  static bfd_reloc_status_type cached_status;
 
   if (!cached)
     {
-      cached_value = get_symbol_value ("_start", & cached_status, info, abfd, sec, offset);
+      cached_value = get_symbol_value ("_start", info, abfd, sec, offset);
       cached = TRUE;
     }
-  if (status)
-    * status = cached_status;
   return cached_value;
 }
 
 static bfd_vma
-get_ramstart (bfd_reloc_status_type * status,
-	      struct bfd_link_info *  info,
+get_ramstart (struct bfd_link_info *  info,
 	      bfd *                   abfd,
 	      asection *              sec,
 	      int		      offset)
 {
   static bfd_boolean cached = FALSE;
   static bfd_vma     cached_value = 0;
-  static bfd_reloc_status_type cached_status;
 
   if (!cached)
     {
-      cached_value = get_symbol_value ("__datastart", & cached_status, info, abfd, sec, offset);
+      cached_value = get_symbol_value ("__datastart", info, abfd, sec, offset);
       cached = TRUE;
     }
-  if (status)
-    * status = cached_status;
   return cached_value;
 }
 
@@ -573,12 +561,12 @@ rl78_special_reloc (bfd *      input_bfd,
 	break;
 
     case R_RL78_OPromtop:
-      relocation = get_romstart (&r, NULL, input_bfd, input_section,
+      relocation = get_romstart (NULL, input_bfd, input_section,
 				 reloc->address);
       break;
 
     case R_RL78_OPramtop:
-      relocation = get_ramstart (&r, NULL, input_bfd, input_section,
+      relocation = get_ramstart (NULL, input_bfd, input_section,
 				 reloc->address);
       break;
     }
@@ -1068,12 +1056,12 @@ rl78_elf_relocate_section
 	  break;
 
 	case R_RL78_OPromtop:
-	  relocation = get_romstart (&r, info, input_bfd, input_section, rel->r_offset);
+	  relocation = get_romstart (info, input_bfd, input_section, rel->r_offset);
 	  (void) rl78_compute_complex_reloc (r_type, relocation, input_section);
 	  break;
 
 	case R_RL78_OPramtop:
-	  relocation = get_ramstart (&r, info, input_bfd, input_section, rel->r_offset);
+	  relocation = get_ramstart (info, input_bfd, input_section, rel->r_offset);
 	  (void) rl78_compute_complex_reloc (r_type, relocation, input_section);
 	  break;
 
@@ -1092,45 +1080,47 @@ rl78_elf_relocate_section
 	      /* Catch the case of a missing function declaration
 		 and emit a more helpful error message.  */
 	      if (r_type == R_RL78_DIR24S_PCREL)
+		/* xgettext:c-format */
 		msg = _("%B(%A): error: call to undefined function '%s'");
 	      else
-		r = info->callbacks->reloc_overflow
+		(*info->callbacks->reloc_overflow)
 		  (info, (h ? &h->root : NULL), name, howto->name, (bfd_vma) 0,
 		   input_bfd, input_section, rel->r_offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      r = info->callbacks->undefined_symbol
-		(info, name, input_bfd, input_section, rel->r_offset,
-		 TRUE);
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, rel->r_offset, TRUE);
 	      break;
 
 	    case bfd_reloc_other:
+	      /* xgettext:c-format */
 	      msg = _("%B(%A): warning: unaligned access to symbol '%s' in the small data area");
 	      break;
 
 	    case bfd_reloc_outofrange:
+	      /* xgettext:c-format */
 	      msg = _("%B(%A): internal error: out of range error");
 	      break;
 
 	    case bfd_reloc_notsupported:
+	      /* xgettext:c-format */
 	      msg = _("%B(%A): internal error: unsupported relocation error");
 	      break;
 
 	    case bfd_reloc_dangerous:
+	      /* xgettext:c-format */
 	      msg = _("%B(%A): internal error: dangerous relocation");
 	      break;
 
 	    default:
+	      /* xgettext:c-format */
 	      msg = _("%B(%A): internal error: unknown error");
 	      break;
 	    }
 
 	  if (msg)
 	    _bfd_error_handler (msg, input_bfd, input_section, name);
-
-	  if (! r)
-	    return FALSE;
 	}
     }
 
@@ -1173,8 +1163,9 @@ rl78_cpu_name (flagword flags)
    object file when linking.  */
 
 static bfd_boolean
-rl78_elf_merge_private_bfd_data (bfd * ibfd, bfd * obfd)
+rl78_elf_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword new_flags;
   flagword old_flags;
   bfd_boolean error = FALSE;
@@ -1209,7 +1200,8 @@ rl78_elf_merge_private_bfd_data (bfd * ibfd, bfd * obfd)
 		     but that is still incompatible with the G10 ABI.  */
 		  error = TRUE;
 
-		  (*_bfd_error_handler)
+		  _bfd_error_handler
+		    /* xgettext:c-format */
 		    (_("RL78 ABI conflict: G10 file %s cannot be linked with %s file %s"),
 		     bfd_get_filename (ibfd),
 		     rl78_cpu_name (out_cpu), bfd_get_filename (obfd));
@@ -1225,7 +1217,8 @@ rl78_elf_merge_private_bfd_data (bfd * ibfd, bfd * obfd)
 	    {
 	      error = TRUE;
 
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("RL78 ABI conflict: cannot link %s file %s with %s file %s"),
 		 rl78_cpu_name (in_cpu),  bfd_get_filename (ibfd),
 		 rl78_cpu_name (out_cpu), bfd_get_filename (obfd));
@@ -1234,15 +1227,17 @@ rl78_elf_merge_private_bfd_data (bfd * ibfd, bfd * obfd)
 
       if (changed_flags & E_FLAG_RL78_64BIT_DOUBLES)
 	{
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
 	    (_("RL78 merge conflict: cannot link 32-bit and 64-bit objects together"));
 
 	  if (old_flags & E_FLAG_RL78_64BIT_DOUBLES)
-	    (*_bfd_error_handler) (_("- %s is 64-bit, %s is not"),
-				   bfd_get_filename (obfd), bfd_get_filename (ibfd));
+	    /* xgettext:c-format */
+	    _bfd_error_handler (_("- %s is 64-bit, %s is not"),
+				bfd_get_filename (obfd), bfd_get_filename (ibfd));
 	  else
-	    (*_bfd_error_handler) (_("- %s is 64-bit, %s is not"),
-				   bfd_get_filename (ibfd), bfd_get_filename (obfd));
+	    /* xgettext:c-format */
+	    _bfd_error_handler (_("- %s is 64-bit, %s is not"),
+				bfd_get_filename (ibfd), bfd_get_filename (obfd));
 	  error = TRUE;
 	}
     }
@@ -1932,12 +1927,12 @@ rl78_offset_for_reloc (bfd *                    abfd,
 	  break;
 
 	case R_RL78_OPromtop:
-	  symval = get_romstart (NULL, info, input_bfd, input_section, rel->r_offset);
+	  symval = get_romstart (info, input_bfd, input_section, rel->r_offset);
 	  (void) rl78_compute_complex_reloc (r_type, symval, input_section);
 	  break;
 
 	case R_RL78_OPramtop:
-	  symval = get_ramstart (NULL, info, input_bfd, input_section, rel->r_offset);
+	  symval = get_ramstart (info, input_bfd, input_section, rel->r_offset);
 	  (void) rl78_compute_complex_reloc (r_type, symval, input_section);
 	  break;
 
@@ -1975,6 +1970,7 @@ rl78_offset_for_reloc (bfd *                    abfd,
 	default:
 	reloc_computes_value:
 	  symval = rl78_compute_complex_reloc (r_type, symval, input_section);
+	  /* Fall through.  */
 	case R_RL78_DIR32:
 	case R_RL78_DIR24S:
 	case R_RL78_DIR16:

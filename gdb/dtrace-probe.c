@@ -413,7 +413,7 @@ dtrace_process_dof_probe (struct objfile *objfile,
       for (j = 0; j < ret->probe_argc; j++)
 	{
 	  struct dtrace_probe_arg arg;
-	  struct expression *expr = NULL;
+	  expression_up expr;
 
 	  /* Set arg.expr to ensure all fields in expr are initialized and
 	     the compiler will not warn when arg is used.  */
@@ -430,11 +430,11 @@ dtrace_process_dof_probe (struct objfile *objfile,
 
 	  TRY
 	    {
-	      expr = parse_expression_with_language (arg.type_str, language_c);
+	      expr = std::move (parse_expression_with_language (arg.type_str,
+								language_c));
 	    }
 	  CATCH (ex, RETURN_MASK_ERROR)
 	    {
-	      expr = NULL;
 	    }
 	  END_CATCH
 
@@ -463,8 +463,6 @@ static void
 dtrace_process_dof (asection *sect, struct objfile *objfile,
 		    VEC (probe_p) **probesp, struct dtrace_dof_hdr *dof)
 {
-  bfd *abfd = objfile->obfd;
-  int size = bfd_get_arch_size (abfd) / 8;
   struct gdbarch *gdbarch = get_objfile_arch (objfile);
   struct dtrace_dof_sect *section;
   int i;

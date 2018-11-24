@@ -103,11 +103,6 @@ perf_event_new_data (const struct perf_event_buffer *pev)
   return *pev->data_head != pev->last_head;
 }
 
-/* Try to determine the size of a pointer in bits for the OS.
-
-   This is the same as the size of a pointer for the inferior process
-   except when a 32-bit inferior is running on a 64-bit OS.  */
-
 /* Copy the last SIZE bytes from PEV ending at DATA_HEAD and return a pointer
    to the memory holding the copy.
    The caller is responsible for freeing the memory.  */
@@ -124,10 +119,24 @@ perf_event_read (const struct perf_event_buffer *pev, __u64 data_head,
   if (size == 0)
     return NULL;
 
+  /* We should never ask for more data than the buffer can hold.  */
+  buffer_size = pev->size;
+  gdb_assert (size <= buffer_size);
+
+  /* If we ask for more data than we seem to have, we wrap around and read
+     data from the end of the buffer.  This is already handled by the %
+     BUFFER_SIZE operation, below.  Here, we just need to make sure that we
+     don't underflow.
+
+     Note that this is perfectly OK for perf event buffers where data_head
+     doesn'grow indefinitely and instead wraps around to remain within the
+     buffer's boundaries.  */
+  if (data_head < size)
+    data_head += buffer_size;
+
   gdb_assert (size <= data_head);
   data_tail = data_head - size;
 
-  buffer_size = pev->size;
   begin = pev->mem;
   start = begin + data_tail % buffer_size;
   stop = begin + data_head % buffer_size;
@@ -158,10 +167,7 @@ perf_event_read_all (struct perf_event_buffer *pev, gdb_byte **data,
   __u64 data_head;
 
   data_head = *pev->data_head;
-
   size = pev->size;
-  if (data_head < size)
-    size = (size_t) data_head;
 
   *data = perf_event_read (pev, data_head, size);
   *psize = size;
@@ -182,7 +188,7 @@ perf_event_pt_event_type (int *type)
   if (file == NULL)
     return -1;
 
-  found = fscanf (file, "%d", type);
+  found = gnulib::fscanf (file, "%d", type);
 
   fclose (file);
 
@@ -215,7 +221,7 @@ linux_determine_kernel_start (void)
       uint64_t addr;
       int match;
 
-      line = fgets (buffer, sizeof (buffer), file);
+      line = gnulib::fgets (buffer, sizeof (buffer), file);
       if (line == NULL)
 	break;
 

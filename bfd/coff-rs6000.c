@@ -2736,7 +2736,8 @@ xcoff_reloc_type_fail (bfd *input_bfd,
                        bfd_vma *relocation ATTRIBUTE_UNUSED,
                        bfd_byte *contents ATTRIBUTE_UNUSED)
 {
-  (*_bfd_error_handler)
+  _bfd_error_handler
+    /* xgettext: c-format */
     (_("%s: unsupported relocation type 0x%02x"),
      bfd_get_filename (input_bfd), (unsigned int) rel->r_type);
   bfd_set_error (bfd_error_bad_value);
@@ -2821,7 +2822,8 @@ xcoff_reloc_type_toc (bfd *input_bfd,
     {
       if (h->toc_section == NULL)
 	{
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext: c-format */
 	    (_("%s: TOC reloc at 0x%x to symbol `%s' with no TOC entry"),
 	     bfd_get_filename (input_bfd), rel->r_vaddr,
 	     h->root.root.string);
@@ -3367,15 +3369,12 @@ xcoff_ppc_relocate_section (bfd *output_bfd,
 	    {
 	      if (info->unresolved_syms_in_objects != RM_IGNORE
 		  && (h->flags & XCOFF_WAS_UNDEFINED) != 0)
-		{
-		  if (! ((*info->callbacks->undefined_symbol)
-			 (info, h->root.root.string,
-			  input_bfd, input_section,
-			  rel->r_vaddr - input_section->vma,
-			  (info->unresolved_syms_in_objects
-			   == RM_GENERATE_ERROR))))
-		    return FALSE;
-		}
+		(*info->callbacks->undefined_symbol)
+		  (info, h->root.root.string,
+		   input_bfd, input_section,
+		   rel->r_vaddr - input_section->vma,
+		   info->unresolved_syms_in_objects == RM_GENERATE_ERROR);
+
 	      if (h->root.type == bfd_link_hash_defined
 		  || h->root.type == bfd_link_hash_defweak)
 		{
@@ -3455,11 +3454,10 @@ xcoff_ppc_relocate_section (bfd *output_bfd,
 	    }
 	  sprintf (reloc_type_name, "0x%02x", rel->r_type);
 
-	  if (! ((*info->callbacks->reloc_overflow)
-		 (info, (h ? &h->root : NULL), name, reloc_type_name,
-		  (bfd_vma) 0, input_bfd, input_section,
-		  rel->r_vaddr - input_section->vma)))
-	    return FALSE;
+	  (*info->callbacks->reloc_overflow)
+	    (info, (h ? &h->root : NULL), name, reloc_type_name,
+	     (bfd_vma) 0, input_bfd, input_section,
+	     rel->r_vaddr - input_section->vma);
 	}
 
       /* Add RELOCATION to the right bits of VALUE_TO_RELOCATE.  */
@@ -3571,7 +3569,8 @@ xcoff_create_csect_from_smclas (bfd *abfd,
     }
   else
     {
-      (*_bfd_error_handler)
+      _bfd_error_handler
+	/* xgettext: c-format */
 	(_("%B: symbol `%s' has unrecognized smclas %d"),
 	 abfd, symbol_name, aux->x_csect.x_smclas);
       bfd_set_error (bfd_error_bad_value);
@@ -4014,6 +4013,7 @@ const struct xcoff_dwsect_name xcoff_dwsect_names[] = {
 #define _bfd_xcoff_bfd_discard_group bfd_generic_discard_group
 #define _bfd_xcoff_section_already_linked _bfd_generic_section_already_linked
 #define _bfd_xcoff_bfd_define_common_symbol _bfd_xcoff_define_common_symbol
+#define _bfd_xcoff_bfd_link_check_relocs    _bfd_generic_link_check_relocs
 
 /* For dynamic symbols and relocs entry points.  */
 #define _bfd_xcoff_get_synthetic_symtab _bfd_nodynamic_get_synthetic_symtab

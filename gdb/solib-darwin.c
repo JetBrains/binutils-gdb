@@ -363,7 +363,6 @@ static CORE_ADDR
 darwin_read_exec_load_addr_from_dyld (struct darwin_info *info)
 {
   struct type *ptr_type = builtin_type (target_gdbarch ())->builtin_data_ptr;
-  enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch ());
   int ptr_len = TYPE_LENGTH (ptr_type);
   unsigned int image_info_size = ptr_len * 3;
   int i;
@@ -422,14 +421,6 @@ static int
 darwin_in_dynsym_resolve_code (CORE_ADDR pc)
 {
   return 0;
-}
-
-
-/* No special symbol handling.  */
-
-static void
-darwin_special_symbol_handling (void)
-{
 }
 
 /* A wrapper for bfd_mach_o_fat_extract that handles reference
@@ -524,7 +515,6 @@ darwin_solib_read_all_image_info_addr (struct darwin_info *info)
 {
   gdb_byte buf[8];
   LONGEST len;
-  enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch ());
   struct type *ptr_type = builtin_type (target_gdbarch ())->builtin_data_ptr;
 
   /* Sanity check.  */
@@ -695,7 +685,6 @@ _initialize_darwin_solib (void)
   darwin_so_ops.free_so = darwin_free_so;
   darwin_so_ops.clear_solib = darwin_clear_solib;
   darwin_so_ops.solib_create_inferior_hook = darwin_solib_create_inferior_hook;
-  darwin_so_ops.special_symbol_handling = darwin_special_symbol_handling;
   darwin_so_ops.current_sos = darwin_current_sos;
   darwin_so_ops.open_symbol_file_object = open_symbol_file_object;
   darwin_so_ops.in_dynsym_resolve_code = darwin_in_dynsym_resolve_code;

@@ -164,6 +164,8 @@ static const struct ld_option ld_options[] =
     'o', N_("FILE"), N_("Set output file name"), EXACTLY_TWO_DASHES },
   { {NULL, required_argument, NULL, '\0'},
     'O', NULL, N_("Optimize output file"), ONE_DASH },
+  { {"out-implib", required_argument, NULL, OPTION_OUT_IMPLIB},
+    '\0', N_("FILE"), N_("Generate import library"), TWO_DASHES },
 #ifdef ENABLE_PLUGINS
   { {"plugin", required_argument, NULL, OPTION_PLUGIN},
     '\0', N_("PLUGIN"), N_("Load named plugin"), ONE_DASH },
@@ -705,6 +707,7 @@ parse_args (unsigned argc, char **argv)
 
 	default:
 	  einfo (_("%P%F: use the --help option for usage information\n"));
+	  break;
 
 	case 1:			/* File name.  */
 	  lang_add_input_file (optarg, lang_input_file_is_file_enum, NULL);
@@ -1004,6 +1007,9 @@ parse_args (unsigned argc, char **argv)
 	case OPTION_OFORMAT:
 	  lang_add_output_format (optarg, NULL, NULL, 0);
 	  break;
+	case OPTION_OUT_IMPLIB:
+	  command_line.out_implib_filename = xstrdup (optarg);
+	  break;
 	case OPTION_PRINT_SYSROOT:
 	  if (*ld_sysroot)
 	    puts (ld_sysroot);
@@ -1275,7 +1281,7 @@ parse_args (unsigned argc, char **argv)
 	  break;
 	case OPTION_TASK_LINK:
 	  link_info.task_link = TRUE;
-	  /* Fall through - do an implied -r option.  */
+	  /* Fall through.  */
 	case OPTION_UR:
 	  if (bfd_link_pic (&link_info))
 	    einfo (_("%P%F: -r and %s may not be used together\n"),
@@ -1586,15 +1592,14 @@ parse_args (unsigned argc, char **argv)
   /* We may have -Bsymbolic, -Bsymbolic-functions, --dynamic-list-data,
      --dynamic-list-cpp-new, --dynamic-list-cpp-typeinfo and
      --dynamic-list FILE.  -Bsymbolic and -Bsymbolic-functions are
-     for shared libraries.  -Bsymbolic overrides all others and vice
-     versa.  */
+     for PIC outputs.  -Bsymbolic overrides all others and vice versa.  */
   switch (command_line.symbolic)
     {
     case symbolic_unset:
       break;
     case symbolic:
-      /* -Bsymbolic is for shared library only.  */
-      if (bfd_link_dll (&link_info))
+      /* -Bsymbolic is for PIC output only.  */
+      if (bfd_link_pic (&link_info))
 	{
 	  link_info.symbolic = TRUE;
 	  /* Should we free the unused memory?  */
@@ -1603,8 +1608,8 @@ parse_args (unsigned argc, char **argv)
 	}
       break;
     case symbolic_functions:
-      /* -Bsymbolic-functions is for shared library only.  */
-      if (bfd_link_dll (&link_info))
+      /* -Bsymbolic-functions is for PIC output only.  */
+      if (bfd_link_pic (&link_info))
 	command_line.dynamic_list = dynamic_list_data;
       break;
     }
@@ -1615,6 +1620,7 @@ parse_args (unsigned argc, char **argv)
       break;
     case dynamic_list_data:
       link_info.dynamic_data = TRUE;
+      /* Fall through.  */
     case dynamic_list:
       link_info.dynamic = TRUE;
       break;
@@ -1687,6 +1693,7 @@ set_segment_start (const char *section, char *valstr)
     if (strcmp (seg->name, name) == 0)
       {
 	seg->value = val;
+	lang_section_start (section, exp_intop (val), seg);
 	return;
       }
   /* There was no existing value so we must create a new segment
@@ -1718,6 +1725,8 @@ elf_shlib_list_options (FILE *file)
   --enable-new-dtags          Enable new dynamic tags\n"));
   fprintf (file, _("\
   --eh-frame-hdr              Create .eh_frame_hdr section\n"));
+  fprintf (file, _("\
+  --no-eh-frame-hdr           Do not create .eh_frame_hdr section\n"));
   fprintf (file, _("\
   --exclude-libs=LIBS         Make all symbols in LIBS hidden\n"));
   fprintf (file, _("\
@@ -1755,10 +1764,21 @@ elf_shlib_list_options (FILE *file)
   fprintf (file, _("\
   -z origin                   Mark object requiring immediate $ORIGIN\n\
 				processing at runtime\n"));
+#if DEFAULT_LD_Z_RELRO
+  fprintf (file, _("\
+  -z relro                    Create RELRO program header (default)\n"));
+  fprintf (file, _("\
+  -z norelro                  Don't create RELRO program header\n"));
+#else
   fprintf (file, _("\
   -z relro                    Create RELRO program header\n"));
   fprintf (file, _("\
-  -z norelro                  Don't create RELRO program header\n"));
+  -z norelro                  Don't create RELRO program header (default)\n"));
+#endif
+  fprintf (file, _("\
+  -z common                   Generate common symbols with STT_COMMON type\n"));
+  fprintf (file, _("\
+  -z nocommon                 Generate common symbols with STT_OBJECT type\n"));
   fprintf (file, _("\
   -z stacksize=SIZE           Set size of stack segment\n"));
   fprintf (file, _("\

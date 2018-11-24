@@ -26,7 +26,7 @@
 #include "elf/hppa.h"
 #include "libhppa.h"
 #include "elf64-hppa.h"
-
+#include "libiberty.h"
 
 #define ARCH_SIZE	       64
 
@@ -1094,20 +1094,18 @@ allocate_global_data_opd (struct elf_link_hash_entry *eh, void *data)
 	      char *new_name;
 	      struct elf_link_hash_entry *nh;
 
-	      new_name = alloca (strlen (eh->root.root.string) + 2);
-	      new_name[0] = '.';
-	      strcpy (new_name + 1, eh->root.root.string);
+	      new_name = concat (".", eh->root.root.string, NULL);
 
 	      nh = elf_link_hash_lookup (elf_hash_table (x->info),
 					 new_name, TRUE, TRUE, TRUE);
 
+	      free (new_name);
 	      nh->root.type = eh->root.type;
 	      nh->root.u.def.value = eh->root.u.def.value;
 	      nh->root.u.def.section = eh->root.u.def.section;
 
 	      if (! bfd_elf_link_record_dynamic_symbol (x->info, nh))
 		return FALSE;
-
 	     }
 	  hh->opd_offset = x->ofs;
 	  x->ofs += OPD_ENTRY_SIZE;
@@ -2079,9 +2077,10 @@ elf64_hppa_finish_dynamic_symbol (bfd *output_bfd,
 
       if ((value & 7) || value + max_offset >= 2*max_offset - 8)
 	{
-	  (*_bfd_error_handler) (_("stub entry for %s cannot load .plt, dp offset = %ld"),
-				 hh->eh.root.root.string,
-				 (long) value);
+	  _bfd_error_handler
+	    /* xgettext:c-format */
+	    (_("stub entry for %s cannot load .plt, dp offset = %ld"),
+	     hh->eh.root.root.string, (long) value);
 	  return FALSE;
 	}
 
@@ -2205,9 +2204,7 @@ elf64_hppa_finalize_opd (struct elf_link_hash_entry *eh, void *data)
 	  char *new_name;
 	  struct elf_link_hash_entry *nh;
 
-	  new_name = alloca (strlen (eh->root.root.string) + 2);
-	  new_name[0] = '.';
-	  strcpy (new_name + 1, eh->root.root.string);
+	  new_name = concat (".", eh->root.root.string, NULL);
 
 	  nh = elf_link_hash_lookup (elf_hash_table (info),
 				     new_name, TRUE, TRUE, FALSE);
@@ -2216,6 +2213,7 @@ elf64_hppa_finalize_opd (struct elf_link_hash_entry *eh, void *data)
 	     symbol index.  */
 	  if (nh)
 	    dynindx = nh->dynindx;
+	  free (new_name);
 	}
 
       rel.r_addend = 0;
@@ -2945,7 +2943,7 @@ elf_hppa_record_segment_addrs (bfd *abfd,
 static bfd_boolean
 elf_hppa_final_link (bfd *abfd, struct bfd_link_info *info)
 {
-  bfd_boolean retval;
+  struct stat buf;
   struct elf64_hppa_link_hash_table *hppa_info = hppa_link_hash_table (info);
 
   if (hppa_info == NULL)
@@ -3029,7 +3027,8 @@ elf_hppa_final_link (bfd *abfd, struct bfd_link_info *info)
 			  info);
 
   /* Invoke the regular ELF backend linker to do all the work.  */
-  retval = bfd_elf_final_link (abfd, info);
+  if (!bfd_elf_final_link (abfd, info))
+    return FALSE;
 
   elf_link_hash_traverse (elf_hash_table (info),
 			  elf_hppa_remark_useless_dynamic_symbols,
@@ -3037,10 +3036,17 @@ elf_hppa_final_link (bfd *abfd, struct bfd_link_info *info)
 
   /* If we're producing a final executable, sort the contents of the
      unwind section. */
-  if (retval && !bfd_link_relocatable (info))
-    retval = elf_hppa_sort_unwind (abfd);
+  if (bfd_link_relocatable (info))
+    return TRUE;
 
-  return retval;
+  /* Do not attempt to sort non-regular files.  This is here
+     especially for configure scripts and kernel builds which run
+     tests with "ld [...] -o /dev/null".  */
+  if (stat (abfd->filename, &buf) != 0
+      || !S_ISREG(buf.st_mode))
+    return TRUE;
+
+  return elf_hppa_sort_unwind (abfd);
 }
 
 /* Relocate the given INSN.  VALUE should be the actual value we want
@@ -3276,7 +3282,8 @@ elf_hppa_final_link_relocate (Elf_Internal_Rela *rel,
 	if (max_branch_offset != 0
 	    && value + addend + max_branch_offset >= 2*max_branch_offset)
 	  {
-	    (*_bfd_error_handler)
+	    _bfd_error_handler
+	      /* xgettext:c-format */
 	      (_("%B(%A+0x%" BFD_VMA_FMT "x): cannot reach %s"),
 	      input_bfd,
 	      input_section,
@@ -3903,12 +3910,11 @@ elf64_hppa_relocate_section (bfd *output_bfd,
 	      bfd_boolean err;
 	      err = (info->unresolved_syms_in_objects == RM_GENERATE_ERROR
 		     || ELF_ST_VISIBILITY (eh->other) != STV_DEFAULT);
-	      if (!info->callbacks->undefined_symbol (info,
-						      eh->root.root.string,
-						      input_bfd,
-						      input_section,
-						      rel->r_offset, err))
-		return FALSE;
+	      (*info->callbacks->undefined_symbol) (info,
+						    eh->root.root.string,
+						    input_bfd,
+						    input_section,
+						    rel->r_offset, err);
 	    }
 
           if (!bfd_link_relocatable (info)
@@ -3920,12 +3926,9 @@ elf64_hppa_relocate_section (bfd *output_bfd,
               if (info->unresolved_syms_in_objects == RM_IGNORE
                   && ELF_ST_VISIBILITY (eh->other) == STV_DEFAULT
                   && eh->type == STT_PARISC_MILLI)
-                {
-                  if (! info->callbacks->undefined_symbol
-                      (info, eh_name (eh), input_bfd,
-                       input_section, rel->r_offset, FALSE))
-                    return FALSE;
-                }
+		(*info->callbacks->undefined_symbol)
+		  (info, eh_name (eh), input_bfd,
+		   input_section, rel->r_offset, FALSE);
             }
 	}
 
@@ -3964,11 +3967,9 @@ elf64_hppa_relocate_section (bfd *output_bfd,
 		      sym_name = bfd_section_name (input_bfd, sym_sec);
 		  }
 
-		if (!((*info->callbacks->reloc_overflow)
-		      (info, (eh ? &eh->root : NULL), sym_name,
-		       howto->name, (bfd_vma) 0, input_bfd,
-		       input_section, rel->r_offset)))
-		  return FALSE;
+		(*info->callbacks->reloc_overflow)
+		  (info, (eh ? &eh->root : NULL), sym_name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      }
 	      break;
 	    }

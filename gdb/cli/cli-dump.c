@@ -177,7 +177,7 @@ dump_binary_file (const char *filename, const char *mode,
   int status;
 
   file = fopen_with_cleanup (filename, mode);
-  status = fwrite (buf, len, 1, file);
+  status = gnulib::fwrite (buf, len, 1, file);
   if (status != 1)
     perror_with_name (filename);
 }
@@ -212,7 +212,6 @@ dump_memory_to_file (const char *cmd, const char *mode, const char *file_format)
   CORE_ADDR hi;
   ULONGEST count;
   const char *filename;
-  gdb_byte *buf;
   const char *lo_exp;
   const char *hi_exp;
 
@@ -237,18 +236,17 @@ dump_memory_to_file (const char *cmd, const char *mode, const char *file_format)
 
   /* FIXME: Should use read_memory_partial() and a magic blocking
      value.  */
-  buf = (gdb_byte *) xmalloc (count);
-  make_cleanup (xfree, buf);
-  read_memory (lo, buf, count);
+  std::unique_ptr<gdb_byte[]> buf (new gdb_byte[count]);
+  read_memory (lo, buf.get (), count);
   
   /* Have everything.  Open/write the data.  */
   if (file_format == NULL || strcmp (file_format, "binary") == 0)
     {
-      dump_binary_file (filename, mode, buf, count);
+      dump_binary_file (filename, mode, buf.get (), count);
     }
   else
     {
-      dump_bfd_file (filename, mode, file_format, lo, buf, count);
+      dump_bfd_file (filename, mode, file_format, lo, buf.get (), count);
     }
 
   do_cleanups (old_cleanups);
@@ -518,7 +516,6 @@ restore_binary_file (const char *filename, struct callback_data *data)
 {
   struct cleanup *cleanup = make_cleanup (null_cleanup, NULL);
   FILE *file = fopen_with_cleanup (filename, FOPEN_RB);
-  gdb_byte *buf;
   long len;
 
   /* Get the file size for reading.  */
@@ -553,13 +550,13 @@ restore_binary_file (const char *filename, struct callback_data *data)
     perror_with_name (filename);
 
   /* Now allocate a buffer and read the file contents.  */
-  buf = (gdb_byte *) xmalloc (len);
-  make_cleanup (xfree, buf);
-  if (fread (buf, 1, len, file) != len)
+  std::unique_ptr<gdb_byte[]> buf (new gdb_byte[len]);
+  if (gnulib::fread (buf.get (), 1, len, file) != len)
     perror_with_name (filename);
 
   /* Now write the buffer into target memory.  */
-  len = target_write_memory (data->load_start + data->load_offset, buf, len);
+  len = target_write_memory (data->load_start + data->load_offset,
+			     buf.get (), len);
   if (len != 0)
     warning (_("restore: memory write failed (%s)."), safe_strerror (len));
   do_cleanups (cleanup);

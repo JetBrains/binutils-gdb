@@ -636,8 +636,7 @@ _bfd_sparc_elf_info_to_howto_ptr (unsigned int r_type)
     default:
       if (r_type >= (unsigned int) R_SPARC_max_std)
 	{
-	  (*_bfd_error_handler) (_("invalid relocation type %d"),
-				 (int) r_type);
+	  _bfd_error_handler (_("invalid relocation type %d"), (int) r_type);
 	  r_type = R_SPARC_NONE;
 	}
       return &_bfd_sparc_elf_howto_table[r_type];
@@ -1412,8 +1411,8 @@ _bfd_sparc_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
       if (r_symndx >= NUM_SHDR_ENTRIES (symtab_hdr))
 	{
-	  (*_bfd_error_handler) (_("%B: bad symbol index: %d"),
-				 abfd, r_symndx);
+	  /* xgettext:c-format */
+	  _bfd_error_handler (_("%B: bad symbol index: %d"), abfd, r_symndx);
 	  return FALSE;
 	}
 
@@ -1592,7 +1591,8 @@ _bfd_sparc_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 		  tls_type = old_tls_type;
 		else
 		  {
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%B: `%s' accessed both as normal and thread local symbol"),
 		       abfd, h ? h->root.root.string : "<local>");
 		    return FALSE;
@@ -2661,19 +2661,19 @@ _bfd_sparc_elf_size_dynamic_sections (bfd *output_bfd,
   /* Allocate .plt and .got entries, and space for local symbols.  */
   htab_traverse (htab->loc_hash_table, allocate_local_dynrelocs, info);
 
-  if (! ABI_64_P (output_bfd)
-      && !htab->is_vxworks
+  if (!htab->is_vxworks
       && elf_hash_table (info)->dynamic_sections_created)
     {
-      /* Make space for the trailing nop in .plt.  */
-      if (htab->elf.splt->size > 0)
-	htab->elf.splt->size += 1 * SPARC_INSN_BYTES;
+      if (! ABI_64_P (output_bfd))
+        {
+          /* Make space for the trailing nop in .plt.  */
+          if (htab->elf.splt->size > 0)
+            htab->elf.splt->size += 1 * SPARC_INSN_BYTES;
+        }
 
       /* If the .got section is more than 0x1000 bytes, we add
 	 0x1000 to the value of _GLOBAL_OFFSET_TABLE_, so that 13
-	 bit relocations have a greater chance of working.
-
-	 FIXME: Make this optimization work for 64-bit too.  */
+	 bit relocations have a greater chance of working.  */
       if (htab->elf.sgot->size >= 0x1000
 	  && elf_hash_table (info)->hgot->root.u.def.value == 0)
 	elf_hash_table (info)->hgot->root.u.def.value = 0x1000;
@@ -3148,7 +3148,8 @@ _bfd_sparc_elf_relocate_section (bfd *output_bfd,
 	      else
 		name = bfd_elf_sym_name (input_bfd, symtab_hdr, sym,
 					 NULL);
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B: relocation %s against STT_GNU_IFUNC "
 		   "symbol `%s' isn't handled by %s"), input_bfd,
 		 _bfd_sparc_elf_howto_table[r_type].name,
@@ -3481,7 +3482,8 @@ _bfd_sparc_elf_relocate_section (bfd *output_bfd,
 		}
 	      else
 		{
-		  if (r_type == R_SPARC_32 || r_type == R_SPARC_64)
+		  if (  (!ABI_64_P (output_bfd) && r_type == R_SPARC_32)
+		      || (ABI_64_P (output_bfd) && r_type == R_SPARC_64))
 		    {
 		      outrel.r_info = SPARC_ELF_R_INFO (htab, NULL,
 							0, R_SPARC_RELATIVE);
@@ -3526,7 +3528,7 @@ _bfd_sparc_elf_relocate_section (bfd *output_bfd,
 			  if (indx == 0)
 			    {
 			      BFD_FAIL ();
-			      (*_bfd_error_handler)
+			      _bfd_error_handler
 				(_("%B: probably compiled without -fPIC?"),
 				 input_bfd);
 			      bfd_set_error (bfd_error_bad_value);
@@ -3906,7 +3908,8 @@ _bfd_sparc_elf_relocate_section (bfd *output_bfd,
 	       && h->def_dynamic)
 	  && _bfd_elf_section_offset (output_bfd, info, input_section,
 				      rel->r_offset) != (bfd_vma) -1)
-	(*_bfd_error_handler)
+	_bfd_error_handler
+	  /* xgettext:c-format */
 	  (_("%B(%A+0x%lx): unresolvable %s relocation against symbol `%s'"),
 	   input_bfd,
 	   input_section,
@@ -4199,11 +4202,9 @@ do_relocation:
 		    if (*name == '\0')
 		      name = bfd_section_name (input_bfd, sec);
 		  }
-		if (! ((*info->callbacks->reloc_overflow)
-		       (info, (h ? &h->root : NULL), name, howto->name,
-			(bfd_vma) 0, input_bfd, input_section,
-			rel->r_offset)))
-		  return FALSE;
+		(*info->callbacks->reloc_overflow)
+		  (info, (h ? &h->root : NULL), name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      }
 	      break;
 	    }
@@ -4630,13 +4631,13 @@ sparc_finish_dyn (bfd *output_bfd, struct bfd_link_info *info,
 	    {
 	      asection *s;
 
-	      s = bfd_get_section_by_name (output_bfd, name);
+	      s = bfd_get_linker_section (dynobj, name);
 	      if (s == NULL)
 		dyn.d_un.d_val = 0;
 	      else
 		{
 		  if (! size)
-		    dyn.d_un.d_ptr = s->vma;
+		    dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 		  else
 		    dyn.d_un.d_val = s->size;
 		}
@@ -4832,11 +4833,49 @@ _bfd_sparc_elf_finish_dynamic_sections (bfd *output_bfd, struct bfd_link_info *i
 bfd_boolean
 _bfd_sparc_elf_object_p (bfd *abfd)
 {
+  obj_attribute *attrs = elf_known_obj_attributes (abfd)[OBJ_ATTR_GNU];
+  obj_attribute *hwcaps = &attrs[Tag_GNU_Sparc_HWCAPS];
+  obj_attribute *hwcaps2 = &attrs[Tag_GNU_Sparc_HWCAPS2];
+
+  unsigned int v9c_hwcaps_mask = ELF_SPARC_HWCAP_ASI_BLK_INIT;
+  unsigned int v9d_hwcaps_mask = (ELF_SPARC_HWCAP_FMAF
+                                  | ELF_SPARC_HWCAP_VIS3
+                                  | ELF_SPARC_HWCAP_HPC);
+  unsigned int v9e_hwcaps_mask = (ELF_SPARC_HWCAP_AES
+                                  | ELF_SPARC_HWCAP_DES
+                                  | ELF_SPARC_HWCAP_KASUMI
+                                  | ELF_SPARC_HWCAP_CAMELLIA
+                                  | ELF_SPARC_HWCAP_MD5
+                                  | ELF_SPARC_HWCAP_SHA1
+                                  | ELF_SPARC_HWCAP_SHA256
+                                  | ELF_SPARC_HWCAP_SHA512
+                                  | ELF_SPARC_HWCAP_MPMUL
+                                  | ELF_SPARC_HWCAP_MONT
+                                  | ELF_SPARC_HWCAP_CRC32C
+                                  | ELF_SPARC_HWCAP_CBCOND
+                                  | ELF_SPARC_HWCAP_PAUSE);
+  unsigned int v9v_hwcaps_mask = (ELF_SPARC_HWCAP_FJFMAU
+                                 | ELF_SPARC_HWCAP_IMA);
+  unsigned int v9m_hwcaps2_mask = (ELF_SPARC_HWCAP2_SPARC5
+                                   | ELF_SPARC_HWCAP2_MWAIT
+                                   | ELF_SPARC_HWCAP2_XMPMUL
+                                   | ELF_SPARC_HWCAP2_XMONT);
+
   if (ABI_64_P (abfd))
     {
       unsigned long mach = bfd_mach_sparc_v9;
 
-      if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US3)
+      if (hwcaps2->i & v9m_hwcaps2_mask)
+        mach = bfd_mach_sparc_v9m;
+      else if (hwcaps->i & v9v_hwcaps_mask)
+        mach = bfd_mach_sparc_v9v;
+      else if (hwcaps->i & v9e_hwcaps_mask)
+        mach = bfd_mach_sparc_v9e;
+      else if (hwcaps->i & v9d_hwcaps_mask)
+        mach = bfd_mach_sparc_v9d;
+      else if (hwcaps->i & v9c_hwcaps_mask)
+        mach = bfd_mach_sparc_v9c;
+      else if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US3)
 	mach = bfd_mach_sparc_v9b;
       else if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US1)
 	mach = bfd_mach_sparc_v9a;
@@ -4846,7 +4885,22 @@ _bfd_sparc_elf_object_p (bfd *abfd)
     {
       if (elf_elfheader (abfd)->e_machine == EM_SPARC32PLUS)
 	{
-	  if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US3)
+          if (hwcaps2->i & v9m_hwcaps2_mask)
+	    return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
+					      bfd_mach_sparc_v8plusm);
+          else if (hwcaps->i & v9v_hwcaps_mask)
+            return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
+					      bfd_mach_sparc_v8plusv);
+          else if (hwcaps->i & v9e_hwcaps_mask)
+            return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
+					      bfd_mach_sparc_v8pluse);
+          else if (hwcaps->i & v9d_hwcaps_mask)
+            return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
+					      bfd_mach_sparc_v8plusd);
+          else if (hwcaps->i & v9c_hwcaps_mask)
+            return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
+					      bfd_mach_sparc_v8plusc);
+	  else if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US3)
 	    return bfd_default_set_arch_mach (abfd, bfd_arch_sparc,
 					      bfd_mach_sparc_v8plusb);
 	  else if (elf_elfheader (abfd)->e_flags & EF_SPARC_SUN_US1)
@@ -4892,8 +4946,9 @@ _bfd_sparc_elf_plt_sym_val (bfd_vma i, const asection *plt, const arelent *rel)
    object file when linking.  */
 
 bfd_boolean
-_bfd_sparc_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+_bfd_sparc_elf_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   obj_attribute *in_attr, *in_attrs;
   obj_attribute *out_attr, *out_attrs;
 
@@ -4924,9 +4979,8 @@ _bfd_sparc_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
   out_attr->i |= in_attr->i;
   out_attr->type = 1;
 
-
   /* Merge Tag_compatibility attributes and any common GNU ones.  */
-  _bfd_elf_merge_object_attributes (ibfd, obfd);
+  _bfd_elf_merge_object_attributes (ibfd, info);
 
   return TRUE;
 }

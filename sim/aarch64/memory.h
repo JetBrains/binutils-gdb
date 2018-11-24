@@ -23,13 +23,9 @@
 #define _MEMORY_H
 
 #include <sys/types.h>
-#include "bfd.h"
 #include "simulator.h"
 
-extern float        aarch64_get_mem_float (sim_cpu *, uint64_t);
-extern double       aarch64_get_mem_double (sim_cpu *, uint64_t);
 extern void         aarch64_get_mem_long_double (sim_cpu *, uint64_t, FRegister *);
-
 extern uint64_t     aarch64_get_mem_u64 (sim_cpu *, uint64_t);
 extern int64_t      aarch64_get_mem_s64 (sim_cpu *, uint64_t);
 extern uint32_t     aarch64_get_mem_u32 (sim_cpu *, uint64_t);
@@ -41,10 +37,7 @@ extern int32_t      aarch64_get_mem_s8  (sim_cpu *, uint64_t);
 extern void         aarch64_get_mem_blk (sim_cpu *, uint64_t, char *, unsigned);
 extern const char * aarch64_get_mem_ptr (sim_cpu *, uint64_t);
 
-extern void         aarch64_set_mem_float (sim_cpu *, uint64_t, float);
-extern void         aarch64_set_mem_double (sim_cpu *, uint64_t, double);
 extern void         aarch64_set_mem_long_double (sim_cpu *, uint64_t, FRegister);
-
 extern void         aarch64_set_mem_u64 (sim_cpu *, uint64_t, uint64_t);
 extern void         aarch64_set_mem_s64 (sim_cpu *, uint64_t, int64_t);
 extern void         aarch64_set_mem_u32 (sim_cpu *, uint64_t, uint32_t);
@@ -58,7 +51,5 @@ extern void         aarch64_set_mem_s8  (sim_cpu *, uint64_t, int8_t);
 
 extern uint64_t     aarch64_get_heap_start (sim_cpu *);
 extern uint64_t     aarch64_get_stack_start (sim_cpu *);
-
-extern void         mem_add_blk (sim_cpu *, uint64_t, char *, uint64_t, bfd_boolean);
 
 #endif /* _MEMORY_H */

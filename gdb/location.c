@@ -227,59 +227,52 @@ static char *
 explicit_to_string_internal (int as_linespec,
 			     const struct explicit_location *explicit_loc)
 {
-  struct ui_file *buf;
-  char space, *result;
   int need_space = 0;
-  struct cleanup *cleanup;
-
-  space = as_linespec ? ':' : ' ';
-  buf = mem_fileopen ();
-  cleanup = make_cleanup_ui_file_delete (buf);
+  char space = as_linespec ? ':' : ' ';
+  string_file buf;
 
   if (explicit_loc->source_filename != NULL)
     {
       if (!as_linespec)
-	fputs_unfiltered ("-source ", buf);
-      fputs_unfiltered (explicit_loc->source_filename, buf);
+	buf.puts ("-source ");
+      buf.puts (explicit_loc->source_filename);
       need_space = 1;
     }
 
   if (explicit_loc->function_name != NULL)
     {
       if (need_space)
-	fputc_unfiltered (space, buf);
+	buf.putc (space);
       if (!as_linespec)
-	fputs_unfiltered ("-function ", buf);
-      fputs_unfiltered (explicit_loc->function_name, buf);
+	buf.puts ("-function ");
+      buf.puts (explicit_loc->function_name);
       need_space = 1;
     }
 
   if (explicit_loc->label_name != NULL)
     {
       if (need_space)
-	fputc_unfiltered (space, buf);
+	buf.putc (space);
       if (!as_linespec)
-	fputs_unfiltered ("-label ", buf);
-      fputs_unfiltered (explicit_loc->label_name, buf);
+	buf.puts ("-label ");
+      buf.puts (explicit_loc->label_name);
       need_space = 1;
     }
 
   if (explicit_loc->line_offset.sign != LINE_OFFSET_UNKNOWN)
     {
       if (need_space)
-	fputc_unfiltered (space, buf);
+	buf.putc (space);
       if (!as_linespec)
-	fputs_unfiltered ("-line ", buf);
-      fprintf_filtered (buf, "%s%d",
-			(explicit_loc->line_offset.sign == LINE_OFFSET_NONE ? ""
-			 : (explicit_loc->line_offset.sign
-			    == LINE_OFFSET_PLUS ? "+" : "-")),
-			explicit_loc->line_offset.offset);
+	buf.puts ("-line ");
+      buf.printf ("%s%d",
+		  (explicit_loc->line_offset.sign == LINE_OFFSET_NONE ? ""
+		   : (explicit_loc->line_offset.sign
+		      == LINE_OFFSET_PLUS ? "+" : "-")),
+		  explicit_loc->line_offset.offset);
     }
 
-  result = ui_file_xstrdup (buf, NULL);
-  do_cleanups (cleanup);
-  return result;
+  return xstrdup (buf.c_str ());
 }
 
 /* See description in location.h.  */
@@ -498,9 +491,8 @@ explicit_location_lex_one (const char **inp,
 	{
 	  /* Special case: C++ operator,.  */
 	  if (language->la_language == language_cplus
-	      && strncmp (*inp, "operator", 8)
-	      && (*inp)[9] == ',')
-	    (*inp) += 9;
+	      && strncmp (*inp, "operator", 8) == 0)
+	    (*inp) += 8;
 	  ++(*inp);
 	}
     }
@@ -522,11 +514,13 @@ string_to_explicit_location (const char **argp,
   struct event_location *location;
 
   /* It is assumed that input beginning with '-' and a non-digit
-     character is an explicit location.  */
+     character is an explicit location.  "-p" is reserved, though,
+     for probe locations.  */
   if (argp == NULL
-      || *argp == '\0'
+      || *argp == NULL
       || *argp[0] != '-'
-      || !isalpha ((*argp)[1]))
+      || !isalpha ((*argp)[1])
+      || ((*argp)[0] == '-' && (*argp)[1] == 'p'))
     return NULL;
 
   location = new_explicit_location (NULL);
@@ -634,52 +628,65 @@ string_to_explicit_location (const char **argp,
 /* See description in location.h.  */
 
 struct event_location *
+string_to_event_location_basic (char **stringp,
+				const struct language_defn *language)
+{
+  struct event_location *location;
+  const char *cs;
+
+  /* Try the input as a probe spec.  */
+  cs = *stringp;
+  if (cs != NULL && probe_linespec_to_ops (&cs) != NULL)
+    {
+      location = new_probe_location (*stringp);
+      *stringp += strlen (*stringp);
+    }
+  else
+    {
+      /* Try an address location.  */
+      if (*stringp != NULL && **stringp == '*')
+	{
+	  const char *arg, *orig;
+	  CORE_ADDR addr;
+
+	  orig = arg = *stringp;
+	  addr = linespec_expression_to_pc (&arg);
+	  location = new_address_location (addr, orig, arg - orig);
+	  *stringp += arg - orig;
+	}
+      else
+	{
+	  /* Everything else is a linespec.  */
+	  location = new_linespec_location (stringp);
+	}
+    }
+
+  return location;
+}
+
+/* See description in location.h.  */
+
+struct event_location *
 string_to_event_location (char **stringp,
 			  const struct language_defn *language)
 {
   struct event_location *location;
+  const char *arg, *orig;
 
-  /* First, check if the string is an address location.  */
-  if (*stringp != NULL && **stringp == '*')
+  /* Try an explicit location.  */
+  orig = arg = *stringp;
+  location = string_to_explicit_location (&arg, language, 0);
+  if (location != NULL)
     {
-      const char *arg, *orig;
-      CORE_ADDR addr;
-
-      orig = arg = *stringp;
-      addr = linespec_expression_to_pc (&arg);
-      location = new_address_location (addr, orig, arg - orig);
+      /* It was a valid explicit location.  Advance STRINGP to
+	 the end of input.  */
       *stringp += arg - orig;
     }
   else
     {
-      const char *cs;
-
-      /* Next, try the input as a probe spec.  */
-      cs = *stringp;
-      if (cs != NULL && probe_linespec_to_ops (&cs) != NULL)
-	{
-	  location = new_probe_location (*stringp);
-	  *stringp += strlen (*stringp);
-	}
-      else
-	{
-	  const char *arg, *orig;
-
-	  /* Next, try an explicit location.  */
-	  orig = arg = *stringp;
-	  location = string_to_explicit_location (&arg, language, 0);
-	  if (location != NULL)
-	    {
-	      /* It was a valid explicit location.  Advance STRINGP to
-		 the end of input.  */
-	      *stringp += arg - orig;
-	    }
-	  else
-	    {
-	      /* Everything else is a linespec.  */
-	      location = new_linespec_location (stringp);
-	    }
-	}
+      /* Everything else is a "basic" linespec, address, or probe
+	 location.  */
+      location = string_to_event_location_basic (stringp, language);
     }
 
   return location;

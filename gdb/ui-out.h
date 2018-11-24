@@ -32,7 +32,8 @@ struct ui_file;
 
 /* FIXME: This should not be a global but something passed down from main.c
    or top.c.  */
-extern struct ui_out *current_uiout;
+extern struct ui_out **current_ui_current_uiout_ptr (void);
+#define current_uiout (*current_ui_current_uiout_ptr ())
 
 /* alignment enum */
 enum ui_align
@@ -110,7 +111,7 @@ extern void ui_out_field_string (struct ui_out * uiout, const char *fldname,
 				 const char *string);
 
 extern void ui_out_field_stream (struct ui_out *uiout, const char *fldname,
-				 struct ui_file *stream);
+				 string_file &stream);
 
 extern void ui_out_field_fmt (struct ui_out *uiout, const char *fldname,
 			      const char *format, ...)

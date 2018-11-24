@@ -1477,7 +1477,7 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
       row = COMMON_ROW;
       if (!bfd_link_relocatable (info)
 	  && strcmp (name, "__gnu_lto_slim") == 0)
-	(*_bfd_error_handler)
+	_bfd_error_handler
 	  (_("%s: plugin needed to handle lto object"),
 	   bfd_get_filename (abfd));
     }
@@ -1544,9 +1544,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	  /* We have found a definition for a symbol which was
 	     previously common.  */
 	  BFD_ASSERT (h->type == bfd_link_hash_common);
-	  if (! ((*info->callbacks->multiple_common)
-		 (info, h, abfd, bfd_link_hash_defined, 0)))
-	    return FALSE;
+	  (*info->callbacks->multiple_common) (info, h, abfd,
+					       bfd_link_hash_defined, 0);
 	  /* Fall through.  */
 	case DEF:
 	case DEFW:
@@ -1603,10 +1602,9 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 			if (oldtype == bfd_link_hash_defweak)
 			  abort ();
 
-			if (! ((*info->callbacks->constructor)
-			       (info, c == 'I',
-				h->root.string, abfd, section, value)))
-			  return FALSE;
+			(*info->callbacks->constructor) (info, c == 'I',
+							 h->root.string, abfd,
+							 section, value);
 		      }
 		  }
 	      }
@@ -1675,9 +1673,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	     already had a common definition.  Use the maximum of the
 	     two sizes, and use the section required by the larger symbol.  */
 	  BFD_ASSERT (h->type == bfd_link_hash_common);
-	  if (! ((*info->callbacks->multiple_common)
-		 (info, h, abfd, bfd_link_hash_common, value)))
-	    return FALSE;
+	  (*info->callbacks->multiple_common) (info, h, abfd,
+					       bfd_link_hash_common, value);
 	  if (value > h->u.c.size)
 	    {
 	      unsigned int power;
@@ -1715,9 +1712,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	case CREF:
 	  /* We have found a common definition for a symbol which
 	     was already defined.  */
-	  if (! ((*info->callbacks->multiple_common)
-		 (info, h, abfd, bfd_link_hash_common, value)))
-	    return FALSE;
+	  (*info->callbacks->multiple_common) (info, h, abfd,
+					       bfd_link_hash_common, value);
 	  break;
 
 	case MIND:
@@ -1728,23 +1724,22 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	  /* Fall through.  */
 	case MDEF:
 	  /* Handle a multiple definition.  */
-	  if (! ((*info->callbacks->multiple_definition)
-		 (info, h, abfd, section, value)))
-	    return FALSE;
+	  (*info->callbacks->multiple_definition) (info, h,
+						   abfd, section, value);
 	  break;
 
 	case CIND:
 	  /* Create an indirect symbol from an existing common symbol.  */
 	  BFD_ASSERT (h->type == bfd_link_hash_common);
-	  if (! ((*info->callbacks->multiple_common)
-		 (info, h, abfd, bfd_link_hash_indirect, 0)))
-	    return FALSE;
+	  (*info->callbacks->multiple_common) (info, h, abfd,
+					       bfd_link_hash_indirect, 0);
 	  /* Fall through.  */
 	case IND:
 	  if (inh->type == bfd_link_hash_indirect
 	      && inh->u.i.link == h)
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B: indirect symbol `%s' to `%s' is a loop"),
 		 abfd, name, string);
 	      bfd_set_error (bfd_error_invalid_operation);
@@ -1779,9 +1774,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 
 	case SET:
 	  /* Add an entry to a set.  */
-	  if (! (*info->callbacks->add_to_set) (info, h, BFD_RELOC_CTOR,
-						abfd, section, value))
-	    return FALSE;
+	  (*info->callbacks->add_to_set) (info, h, BFD_RELOC_CTOR,
+					  abfd, section, value);
 	  break;
 
 	case WARNC:
@@ -1790,10 +1784,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	  if (h->u.i.warning != NULL
 	      && (abfd->flags & BFD_PLUGIN) == 0)
 	    {
-	      if (! (*info->callbacks->warning) (info, h->u.i.warning,
-						 h->root.string, abfd,
-						 NULL, 0))
-		return FALSE;
+	      (*info->callbacks->warning) (info, h->u.i.warning,
+					   h->root.string, abfd, NULL, 0);
 	      /* Only issue a warning once.  */
 	      h->u.i.warning = NULL;
 	    }
@@ -1819,9 +1811,8 @@ _bfd_generic_link_add_one_symbol (struct bfd_link_info *info,
 	       && (h->u.undef.next != NULL || info->hash->undefs_tail == h))
 	      || h->non_ir_ref)
 	    {
-	      if (! (*info->callbacks->warning) (info, string, h->root.string,
-						 hash_entry_bfd (h), NULL, 0))
-		return FALSE;
+	      (*info->callbacks->warning) (info, string, h->root.string,
+					   hash_entry_bfd (h), NULL, 0);
 	      break;
 	    }
 	  /* Fall through.  */
@@ -2412,9 +2403,8 @@ _bfd_generic_reloc_link_order (bfd *abfd,
       if (h == NULL
 	  || ! h->written)
 	{
-	  if (! ((*info->callbacks->unattached_reloc)
-		 (info, link_order->u.reloc.p->u.name, NULL, NULL, 0)))
-	    return FALSE;
+	  (*info->callbacks->unattached_reloc)
+	    (info, link_order->u.reloc.p->u.name, NULL, NULL, 0);
 	  bfd_set_error (bfd_error_bad_value);
 	  return FALSE;
 	}
@@ -2448,17 +2438,13 @@ _bfd_generic_reloc_link_order (bfd *abfd,
 	case bfd_reloc_outofrange:
 	  abort ();
 	case bfd_reloc_overflow:
-	  if (! ((*info->callbacks->reloc_overflow)
-		 (info, NULL,
-		  (link_order->type == bfd_section_reloc_link_order
-		   ? bfd_section_name (abfd, link_order->u.reloc.p->u.section)
-		   : link_order->u.reloc.p->u.name),
-		  r->howto->name, link_order->u.reloc.p->addend,
-		  NULL, NULL, 0)))
-	    {
-	      free (buf);
-	      return FALSE;
-	    }
+	  (*info->callbacks->reloc_overflow)
+	    (info, NULL,
+	     (link_order->type == bfd_section_reloc_link_order
+	      ? bfd_section_name (abfd, link_order->u.reloc.p->u.section)
+	      : link_order->u.reloc.p->u.name),
+	     r->howto->name, link_order->u.reloc.p->addend,
+	     NULL, NULL, 0);
 	  break;
 	}
       loc = link_order->offset * bfd_octets_per_byte (abfd);
@@ -2621,7 +2607,8 @@ default_indirect_link_order (bfd *output_bfd,
 	 because somebody is attempting to link together different
 	 types of object files.  Handling this case correctly is
 	 difficult, and sometimes impossible.  */
-      (*_bfd_error_handler)
+      _bfd_error_handler
+	/* xgettext:c-format */
 	(_("Attempt to do relocatable link with %s input and %s output"),
 	 bfd_get_target (input_bfd), bfd_get_target (output_bfd));
       bfd_set_error (bfd_error_wrong_format);
@@ -2907,6 +2894,7 @@ _bfd_handle_already_linked (asection *sec,
 
     case SEC_LINK_DUPLICATES_ONE_ONLY:
       info->callbacks->einfo
+	/* xgettext:c-format */
 	(_("%B: ignoring duplicate section `%A'\n"),
 	 sec->owner, sec);
       break;
@@ -2916,6 +2904,7 @@ _bfd_handle_already_linked (asection *sec,
 	;
       else if (sec->size != l->sec->size)
 	info->callbacks->einfo
+	  /* xgettext:c-format */
 	  (_("%B: duplicate section `%A' has different size\n"),
 	   sec->owner, sec);
       break;
@@ -2925,6 +2914,7 @@ _bfd_handle_already_linked (asection *sec,
 	;
       else if (sec->size != l->sec->size)
 	info->callbacks->einfo
+	  /* xgettext:c-format */
 	  (_("%B: duplicate section `%A' has different size\n"),
 	   sec->owner, sec);
       else if (sec->size != 0)
@@ -2933,15 +2923,18 @@ _bfd_handle_already_linked (asection *sec,
 
 	  if (!bfd_malloc_and_get_section (sec->owner, sec, &sec_contents))
 	    info->callbacks->einfo
+	      /* xgettext:c-format */
 	      (_("%B: could not read contents of section `%A'\n"),
 	       sec->owner, sec);
 	  else if (!bfd_malloc_and_get_section (l->sec->owner, l->sec,
 						&l_sec_contents))
 	    info->callbacks->einfo
+	      /* xgettext:c-format */
 	      (_("%B: could not read contents of section `%A'\n"),
 	       l->sec->owner, l->sec);
 	  else if (memcmp (sec_contents, l_sec_contents, sec->size) != 0)
 	    info->callbacks->einfo
+	      /* xgettext:c-format */
 	      (_("%B: duplicate section `%A' has different contents\n"),
 	       sec->owner, sec);
 
@@ -3303,4 +3296,104 @@ bfd_hide_sym_by_version (struct bfd_elf_version_tree *verdefs,
   bfd_boolean hidden = FALSE;
   bfd_find_version_for_sym (verdefs, sym_name, &hidden);
   return hidden;
+}
+
+/*
+FUNCTION
+	bfd_link_check_relocs
+
+SYNOPSIS
+	bfd_boolean bfd_link_check_relocs
+	  (bfd *abfd, struct bfd_link_info *info);
+
+DESCRIPTION
+	Checks the relocs in ABFD for validity.
+	Does not execute the relocs.
+	Return TRUE if everything is OK, FALSE otherwise.
+	This is the external entry point to this code.
+*/
+
+bfd_boolean
+bfd_link_check_relocs (bfd *abfd, struct bfd_link_info *info)
+{
+  return BFD_SEND (abfd, _bfd_link_check_relocs, (abfd, info));
+}
+
+/*
+FUNCTION
+	_bfd_generic_link_check_relocs
+
+SYNOPSIS
+	bfd_boolean _bfd_generic_link_check_relocs
+	  (bfd *abfd, struct bfd_link_info *info);
+
+DESCRIPTION
+        Stub function for targets that do not implement reloc checking.
+	Return TRUE.
+	This is an internal function.  It should not be called from
+	outside the BFD library.
+*/
+
+bfd_boolean
+_bfd_generic_link_check_relocs (bfd *abfd ATTRIBUTE_UNUSED,
+				struct bfd_link_info *info ATTRIBUTE_UNUSED)
+{
+  return TRUE;
+}
+
+/*
+FUNCTION
+	bfd_merge_private_bfd_data
+
+SYNOPSIS
+	bfd_boolean bfd_merge_private_bfd_data
+	  (bfd *ibfd, struct bfd_link_info *info);
+
+DESCRIPTION
+	Merge private BFD information from the BFD @var{ibfd} to the
+	the output file BFD when linking.  Return <<TRUE>> on success,
+	<<FALSE>> on error.  Possible error returns are:
+
+	o <<bfd_error_no_memory>> -
+	Not enough memory exists to create private data for @var{obfd}.
+
+.#define bfd_merge_private_bfd_data(ibfd, info) \
+.     BFD_SEND ((info)->output_bfd, _bfd_merge_private_bfd_data, \
+.		(ibfd, info))
+*/
+
+/*
+INTERNAL_FUNCTION
+	_bfd_generic_verify_endian_match
+
+SYNOPSIS
+	bfd_boolean _bfd_generic_verify_endian_match
+	  (bfd *ibfd, struct bfd_link_info *info);
+
+DESCRIPTION
+	Can be used from / for bfd_merge_private_bfd_data to check that
+	endianness matches between input and output file.  Returns
+	TRUE for a match, otherwise returns FALSE and emits an error.
+*/
+
+bfd_boolean
+_bfd_generic_verify_endian_match (bfd *ibfd, struct bfd_link_info *info)
+{
+  bfd *obfd = info->output_bfd;
+
+  if (ibfd->xvec->byteorder != obfd->xvec->byteorder
+      && ibfd->xvec->byteorder != BFD_ENDIAN_UNKNOWN
+      && obfd->xvec->byteorder != BFD_ENDIAN_UNKNOWN)
+    {
+      if (bfd_big_endian (ibfd))
+	_bfd_error_handler (_("%B: compiled for a big endian system "
+			      "and target is little endian"), ibfd);
+      else
+	_bfd_error_handler (_("%B: compiled for a little endian system "
+			      "and target is big endian"), ibfd);
+      bfd_set_error (bfd_error_wrong_format);
+      return FALSE;
+    }
+
+  return TRUE;
 }

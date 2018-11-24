@@ -1508,10 +1508,10 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 	     datalabel processing here.  Make sure this does not change
 	     without notice.  */
 	  if ((sym->st_other & STO_SH5_ISA32) != 0)
-	    ((*info->callbacks->reloc_dangerous)
-	     (info,
-	      _("Unexpected STO_SH5_ISA32 on local symbol is not handled"),
-	      input_bfd, input_section, rel->r_offset));
+	    (*info->callbacks->reloc_dangerous)
+	      (info,
+	       _("Unexpected STO_SH5_ISA32 on local symbol is not handled"),
+	       input_bfd, input_section, rel->r_offset);
 
 	  if (sec != NULL && discarded_section (sec))
 	    /* Handled below.  */
@@ -1539,7 +1539,8 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 
 	      if (howto->rightshift || howto->src_mask != 0xffffffff)
 		{
-		  (*_bfd_error_handler)
+		  _bfd_error_handler
+		    /* xgettext:c-format */
 		    (_("%B(%A+0x%lx): %s relocation against SEC_MERGE section"),
 		     input_bfd, input_section,
 		     (long) rel->r_offset, howto->name);
@@ -1635,7 +1636,8 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 						    rel->r_offset)
 			   != (bfd_vma) -1))
 		{
-		  (*_bfd_error_handler)
+		  _bfd_error_handler
+		    /* xgettext:c-format */
 		    (_("%B(%A+0x%lx): unresolvable %s relocation against symbol `%s'"),
 		     input_bfd,
 		     input_section,
@@ -1650,14 +1652,11 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 		   && ELF_ST_VISIBILITY (h->other) == STV_DEFAULT)
 	    ;
 	  else if (!bfd_link_relocatable (info))
-	    {
-	      if (! ((*info->callbacks->undefined_symbol)
-		     (info, h->root.root.string, input_bfd,
-		      input_section, rel->r_offset,
-		      (info->unresolved_syms_in_objects == RM_GENERATE_ERROR
-		       || ELF_ST_VISIBILITY (h->other)))))
-		return FALSE;
-	    }
+	    (*info->callbacks->undefined_symbol)
+	      (info, h->root.root.string, input_bfd,
+	       input_section, rel->r_offset,
+	       (info->unresolved_syms_in_objects == RM_GENERATE_ERROR
+		|| ELF_ST_VISIBILITY (h->other)));
 	}
 
       if (sec != NULL && discarded_section (sec))
@@ -1681,7 +1680,8 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 	}
       if (dropped != 0)
 	{
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	    (_("%s: error: unaligned relocation type %d at %08x reloc %08x\n"),
 	     bfd_get_filename (input_bfd), (int)r_type, (unsigned)rel->r_offset, (unsigned)relocation);
 	  bfd_set_error (bfd_error_bad_value);
@@ -2081,11 +2081,9 @@ sh_elf64_relocate_section (bfd *output_bfd ATTRIBUTE_UNUSED,
 		    if (*name == '\0')
 		      name = bfd_section_name (input_bfd, sec);
 		  }
-		if (! ((*info->callbacks->reloc_overflow)
-		       (info, (h ? &h->root : NULL), name, howto->name,
-			(bfd_vma) 0, input_bfd, input_section,
-			rel->r_offset)))
-		  return FALSE;
+		(*info->callbacks->reloc_overflow)
+		  (info, (h ? &h->root : NULL), name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      }
 	      break;
 	    }
@@ -2276,11 +2274,12 @@ sh_elf64_copy_private_data (bfd *ibfd, bfd *obfd)
 }
 
 static bfd_boolean
-sh_elf64_merge_private_data (bfd *ibfd, bfd *obfd)
+sh_elf64_merge_private_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword old_flags, new_flags;
 
-  if (! _bfd_generic_verify_endian_match (ibfd, obfd))
+  if (! _bfd_generic_verify_endian_match (ibfd, info))
     return FALSE;
 
   if (   bfd_get_flavour (ibfd) != bfd_target_elf_flavour
@@ -2293,15 +2292,18 @@ sh_elf64_merge_private_data (bfd *ibfd, bfd *obfd)
 
       if (bfd_get_arch_size (ibfd) == 32
 	  && bfd_get_arch_size (obfd) == 64)
+	/* xgettext:c-format */
 	msg = _("%s: compiled as 32-bit object and %s is 64-bit");
       else if (bfd_get_arch_size (ibfd) == 64
 	       && bfd_get_arch_size (obfd) == 32)
+	/* xgettext:c-format */
 	msg = _("%s: compiled as 64-bit object and %s is 32-bit");
       else
+	/* xgettext:c-format */
 	msg = _("%s: object size does not match that of target %s");
 
-      (*_bfd_error_handler) (msg, bfd_get_filename (ibfd),
-			     bfd_get_filename (obfd));
+      _bfd_error_handler (msg, bfd_get_filename (ibfd),
+			  bfd_get_filename (obfd));
       bfd_set_error (bfd_error_wrong_format);
       return FALSE;
     }
@@ -2319,7 +2321,7 @@ sh_elf64_merge_private_data (bfd *ibfd, bfd *obfd)
      here as things change.  */
   else if ((new_flags & EF_SH_MACH_MASK) != EF_SH5)
     {
-      (*_bfd_error_handler)
+      _bfd_error_handler
 	("%s: does not use the SH64 64-bit ABI as previous modules do",
 	 bfd_get_filename (ibfd));
       bfd_set_error (bfd_error_bad_value);
@@ -2813,7 +2815,7 @@ sh64_elf64_add_symbol_hook (bfd *abfd, struct bfd_link_info *info,
 	      && h->root.type != bfd_link_hash_indirect))
 	{
 	  /* Make sure we don't get confused on invalid input.  */
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
 	    (_("%s: encountered datalabel symbol in input"),
 	     bfd_get_filename (abfd));
 	  bfd_set_error (bfd_error_bad_value);
@@ -3817,21 +3819,19 @@ sh64_elf64_finish_dynamic_sections (bfd *output_bfd,
 	      break;
 
 	    case DT_PLTGOT:
-	      name = ".got";
+	      name = ".got.plt";
 	      goto get_vma;
 
 	    case DT_JMPREL:
 	      name = ".rela.plt";
 	    get_vma:
-	      s = bfd_get_section_by_name (output_bfd, name);
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->vma;
+	      s = bfd_get_linker_section (dynobj, name);
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf64_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_PLTRELSZ:
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
-	      BFD_ASSERT (s != NULL);
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      dyn.d_un.d_val = s->size;
 	      bfd_elf64_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
@@ -3846,7 +3846,7 @@ sh64_elf64_finish_dynamic_sections (bfd *output_bfd,
 		 the linker script arranges for .rela.plt to follow all
 		 other relocation sections, we don't have to worry
 		 about changing the DT_RELA entry.  */
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      if (s != NULL)
 		dyn.d_un.d_val -= s->size;
 	      bfd_elf64_swap_dyn_out (output_bfd, &dyn, dyncon);

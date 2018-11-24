@@ -34,7 +34,7 @@
 #include "cp-abi.h"
 #include "namespace.h"
 #include <signal.h>
-
+#include "gdb_setjmp.h"
 #include "safe-ctype.h"
 
 #define d_left(dc) (dc)->u.s_binary.left
@@ -210,7 +210,6 @@ inspect_type (struct demangle_parse_info *info,
 	  int is_anon;
 	  struct type *type;
 	  struct demangle_parse_info *i;
-	  struct ui_file *buf;
 
 	  /* Get the real type of the typedef.  */
 	  type = check_typedef (otype);
@@ -246,23 +245,21 @@ inspect_type (struct demangle_parse_info *info,
 		type = last;
 	    }
 
-	  buf = mem_fileopen ();
+	  string_file buf;
 	  TRY
-	  {
-	    type_print (type, "", buf, -1);
-	  }
-
+	    {
+	      type_print (type, "", &buf, -1);
+	    }
 	  /* If type_print threw an exception, there is little point
 	     in continuing, so just bow out gracefully.  */
 	  CATCH (except, RETURN_MASK_ERROR)
 	    {
-	      ui_file_delete (buf);
 	      return 0;
 	    }
 	  END_CATCH
 
-	  name = ui_file_obsavestring (buf, &info->obstack, &len);
-	  ui_file_delete (buf);
+	  len = buf.size ();
+	  name = (char *) obstack_copy0 (&info->obstack, buf.c_str (), len);
 
 	  /* Turn the result into a new tree.  Note that this
 	     tree will contain pointers into NAME, so NAME cannot
@@ -288,14 +285,12 @@ inspect_type (struct demangle_parse_info *info,
 
 		 Canonicalize the name again, and store it in the
 		 current node (RET_COMP).  */
-	      char *canon = cp_canonicalize_string_no_typedefs (name);
+	      std::string canon = cp_canonicalize_string_no_typedefs (name);
 
-	      if (canon != NULL)
+	      if (!canon.empty ())
 		{
-		  /* Copy the canonicalization into the obstack and
-		     free CANON.  */
-		  name = copy_string_to_obstack (&info->obstack, canon, &len);
-		  xfree (canon);
+		  /* Copy the canonicalization into the obstack.  */
+		  name = copy_string_to_obstack (&info->obstack, canon.c_str (), &len);
 		}
 
 	      ret_comp->u.s_name.s = name;
@@ -321,7 +316,7 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
 {
   long len;
   char *name;
-  struct ui_file *buf = mem_fileopen ();
+  string_file buf;
   struct demangle_component *comp = ret_comp;
 
   /* Walk each node of the qualified name, reconstructing the name of
@@ -335,9 +330,9 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
 	{
 	  struct demangle_component newobj;
 
-	  ui_file_write (buf, d_left (comp)->u.s_name.s,
-			 d_left (comp)->u.s_name.len);
-	  name = ui_file_obsavestring (buf, &info->obstack, &len);
+	  buf.write (d_left (comp)->u.s_name.s, d_left (comp)->u.s_name.len);
+	  len = buf.size ();
+	  name = (char *) obstack_copy0 (&info->obstack, buf.c_str (), len);
 	  newobj.type = DEMANGLE_COMPONENT_NAME;
 	  newobj.u.s_name.s = name;
 	  newobj.u.s_name.len = len;
@@ -350,12 +345,11 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
 		 string and replace the top DEMANGLE_COMPONENT_QUAL_NAME
 		 node.  */
 
-	      ui_file_rewind (buf);
+	      buf.rewind ();
 	      n = cp_comp_to_string (&newobj, 100);
 	      if (n == NULL)
 		{
 		  /* If something went astray, abort typedef substitutions.  */
-		  ui_file_delete (buf);
 		  return;
 		}
 
@@ -380,14 +374,13 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
 	  if (name == NULL)
 	    {
 	      /* If something went astray, abort typedef substitutions.  */
-	      ui_file_delete (buf);
 	      return;
 	    }
-	  fputs_unfiltered (name, buf);
+	  buf.puts (name);
 	  xfree (name);
 	}
 
-      ui_file_write (buf, "::", 2);
+      buf.write ("::", 2);
       comp = d_right (comp);
     }
 
@@ -397,8 +390,9 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
 
   if (comp->type == DEMANGLE_COMPONENT_NAME)
     {
-      ui_file_write (buf, comp->u.s_name.s, comp->u.s_name.len);
-      name = ui_file_obsavestring (buf, &info->obstack, &len);
+      buf.write (comp->u.s_name.s, comp->u.s_name.len);
+      len = buf.size ();
+      name = (char *) obstack_copy0 (&info->obstack, buf.c_str (), len);
 
       /* Replace the top (DEMANGLE_COMPONENT_QUAL_NAME) node
 	 with a DEMANGLE_COMPONENT_NAME node containing the whole
@@ -410,8 +404,6 @@ replace_typedefs_qualified_name (struct demangle_parse_info *info,
     }
   else
     replace_typedefs (info, comp, finder, data);
-
-  ui_file_delete (buf);
 }
 
 
@@ -529,22 +521,21 @@ replace_typedefs (struct demangle_parse_info *info,
     }
 }
 
-/* Parse STRING and convert it to canonical form, resolving any typedefs.
-   If parsing fails, or if STRING is already canonical, return NULL.
-   Otherwise return the canonical form.  The return value is allocated via
-   xmalloc.  If FINDER is not NULL, then type components are passed to
-   FINDER to be looked up.  DATA is passed verbatim to FINDER.  */
+/* Parse STRING and convert it to canonical form, resolving any
+   typedefs.  If parsing fails, or if STRING is already canonical,
+   return the empty string.  Otherwise return the canonical form.  If
+   FINDER is not NULL, then type components are passed to FINDER to be
+   looked up.  DATA is passed verbatim to FINDER.  */
 
-char *
+std::string
 cp_canonicalize_string_full (const char *string,
 			     canonicalization_ftype *finder,
 			     void *data)
 {
-  char *ret;
+  std::string ret;
   unsigned int estimated_len;
   struct demangle_parse_info *info;
 
-  ret = NULL;
   estimated_len = strlen (string) * 2;
   info = cp_demangled_name_to_comp (string, NULL);
   if (info != NULL)
@@ -554,18 +545,15 @@ cp_canonicalize_string_full (const char *string,
 
       /* Convert the tree back into a string.  */
       ret = cp_comp_to_string (info->tree, estimated_len);
-      gdb_assert (ret != NULL);
+      gdb_assert (!ret.empty ());
 
       /* Free the parse information.  */
       cp_demangled_name_parse_free (info);
 
       /* Finally, compare the original string with the computed
 	 name, returning NULL if they are the same.  */
-      if (strcmp (string, ret) == 0)
-	{
-	  xfree (ret);
-	  return NULL;
-	}
+      if (ret == string)
+	return std::string ();
     }
 
   return ret;
@@ -574,46 +562,42 @@ cp_canonicalize_string_full (const char *string,
 /* Like cp_canonicalize_string_full, but always passes NULL for
    FINDER.  */
 
-char *
+std::string
 cp_canonicalize_string_no_typedefs (const char *string)
 {
   return cp_canonicalize_string_full (string, NULL, NULL);
 }
 
 /* Parse STRING and convert it to canonical form.  If parsing fails,
-   or if STRING is already canonical, return NULL.  Otherwise return
-   the canonical form.  The return value is allocated via xmalloc.  */
+   or if STRING is already canonical, return the empty string.
+   Otherwise return the canonical form.  */
 
-char *
+std::string
 cp_canonicalize_string (const char *string)
 {
   struct demangle_parse_info *info;
   unsigned int estimated_len;
-  char *ret;
 
   if (cp_already_canonical (string))
-    return NULL;
+    return std::string ();
 
   info = cp_demangled_name_to_comp (string, NULL);
   if (info == NULL)
-    return NULL;
+    return std::string ();
 
   estimated_len = strlen (string) * 2;
-  ret = cp_comp_to_string (info->tree, estimated_len);
+  std::string ret = cp_comp_to_string (info->tree, estimated_len);
   cp_demangled_name_parse_free (info);
 
-  if (ret == NULL)
+  if (ret.empty ())
     {
       warning (_("internal error: string \"%s\" failed to be canonicalized"),
 	       string);
-      return NULL;
+      return std::string ();
     }
 
-  if (strcmp (string, ret) == 0)
-    {
-      xfree (ret);
-      return NULL;
-    }
+  if (ret == string)
+    return std::string ();
 
   return ret;
 }
@@ -1037,8 +1021,13 @@ cp_find_first_component_aux (const char *name, int permissive)
 	      return strlen (name);
 	    }
 	case '\0':
-	case ':':
 	  return index;
+	case ':':
+	  /* ':' marks a component iff the next character is also a ':'.
+	     Otherwise it is probably malformed input.  */
+	  if (name[index + 1] == ':')
+	    return index;
+	  break;
 	case 'o':
 	  /* Operator names can screw up the recursion.  */
 	  if (operator_possible
@@ -1596,7 +1585,9 @@ gdb_demangle (const char *name, int options)
 				    "demangler-warning", short_msg);
 	      make_cleanup (xfree, long_msg);
 
-	      target_terminal_ours ();
+	      make_cleanup_restore_target_terminal ();
+	      target_terminal_ours_for_output ();
+
 	      begin_line ();
 	      if (core_dump_allowed)
 		fprintf_unfiltered (gdb_stderr,
@@ -1618,6 +1609,15 @@ gdb_demangle (const char *name, int options)
 #endif
 
   return result;
+}
+
+/* See cp-support.h.  */
+
+int
+gdb_sniff_from_mangled_name (const char *mangled, char **demangled)
+{
+  *demangled = gdb_demangle (mangled, DMGL_PARAMS | DMGL_ANSI);
+  return *demangled != NULL;
 }
 
 /* Don't allow just "maintenance cplus".  */

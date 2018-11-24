@@ -103,7 +103,7 @@ bfin_pcrel24_reloc (bfd *abfd,
   /* if rightshift is 1 and the number odd, return error.  */
   if (howto->rightshift && (relocation & 0x01))
     {
-      (*_bfd_error_handler) (_("relocation should be even number"));
+      _bfd_error_handler (_("relocation should be even number"));
       return bfd_reloc_overflow;
     }
 
@@ -359,7 +359,7 @@ bfin_bfd_reloc (bfd *abfd,
   /* If rightshift is 1 and the number odd, return error.  */
   if (howto->rightshift && (relocation & 0x01))
     {
-      (*_bfd_error_handler) (_("relocation should be even number"));
+      _bfd_error_handler (_("relocation should be even number"));
       return bfd_reloc_overflow;
     }
 
@@ -1598,7 +1598,8 @@ bfin_relocate_section (bfd * output_bfd,
 	  && _bfd_elf_section_offset (output_bfd, info, input_section,
 				      rel->r_offset) != (bfd_vma) -1)
 	{
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	    (_("%B(%A+0x%lx): unresolvable relocation against symbol `%s'"),
 	     input_bfd,
 	     input_section, (long) rel->r_offset, h->root.root.string);
@@ -1623,15 +1624,13 @@ bfin_relocate_section (bfd * output_bfd,
 	    }
 
 	  if (r == bfd_reloc_overflow)
-	    {
-	      if (!(info->callbacks->reloc_overflow
-		    (info, (h ? &h->root : NULL), name, howto->name,
-		     (bfd_vma) 0, input_bfd, input_section, rel->r_offset)))
-		return FALSE;
-	    }
+	    (*info->callbacks->reloc_overflow)
+	      (info, (h ? &h->root : NULL), name, howto->name,
+	       (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	  else
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B(%A+0x%lx): reloc against `%s': error %d"),
 		 input_bfd, input_section,
 		 (long) rel->r_offset, name, (int) r);
@@ -2698,6 +2697,7 @@ bfinfdpic_relocate_section (bfd * output_bfd,
 	case R_BFIN_BYTE4_DATA:
 	  if (! IS_FDPIC (output_bfd))
 	    goto non_fdpic;
+	  /* Fall through.  */
 
 	case R_BFIN_GOT17M4:
 	case R_BFIN_GOTHI:
@@ -2731,7 +2731,8 @@ bfinfdpic_relocate_section (bfd * output_bfd,
 						       osec, sym,
 						       rel->r_addend))
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B: relocation at `%A+0x%x' references symbol `%s' with nonzero addend"),
 		 input_bfd, input_section, rel->r_offset, name);
 	      return FALSE;
@@ -3209,13 +3210,13 @@ bfinfdpic_relocate_section (bfd * output_bfd,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      r = info->callbacks->reloc_overflow
+	      (*info->callbacks->reloc_overflow)
 		(info, (h ? &h->root : NULL), name, howto->name,
 		 (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      r = info->callbacks->undefined_symbol
+	      (*info->callbacks->undefined_symbol)
 		(info, name, input_bfd, input_section, rel->r_offset, TRUE);
 	      break;
 
@@ -3237,11 +3238,8 @@ bfinfdpic_relocate_section (bfd * output_bfd,
 	    }
 
 	  if (msg)
-	    r = info->callbacks->warning
-	      (info, msg, name, input_bfd, input_section, rel->r_offset);
-
-	  if (! r)
-	    return FALSE;
+	    (*info->callbacks->warning) (info, msg, name, input_bfd,
+					 input_section, rel->r_offset);
 	}
     }
 
@@ -4457,7 +4455,13 @@ elf32_bfinfdpic_finish_dynamic_sections (bfd *output_bfd,
   if (bfinfdpic_got_section (info))
     {
       BFD_ASSERT (bfinfdpic_gotrel_section (info)->size
-		  == (bfinfdpic_gotrel_section (info)->reloc_count
+		  /* PR 17334: It appears that the GOT section can end up
+		     being bigger than the number of relocs.  Presumably
+		     because some relocs have been deleted.  A test case has
+		     yet to be generated for verify this, but in the meantime
+		     the test below has been changed from == to >= so that
+		     applications can continue to be built.  */
+		  >= (bfinfdpic_gotrel_section (info)->reloc_count
 		      * sizeof (Elf32_External_Rel)));
 
       if (bfinfdpic_gotfixup_section (info))
@@ -4473,7 +4477,7 @@ elf32_bfinfdpic_finish_dynamic_sections (bfd *output_bfd,
 	  if (bfinfdpic_gotfixup_section (info)->size
 	      != (bfinfdpic_gotfixup_section (info)->reloc_count * 4))
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
 		("LINKER BUG: .rofixup section size mismatch");
 	      return FALSE;
 	    }
@@ -4906,7 +4910,8 @@ bfinfdpic_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
 	default:
 	bad_reloc:
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	    (_("%B: unsupported relocation type %i"),
 	     abfd, ELF32_R_TYPE (rel->r_info));
 	  return FALSE;
@@ -4966,8 +4971,9 @@ elf32_bfin_print_private_bfd_data (bfd * abfd, void * ptr)
    object file when linking.  */
 
 static bfd_boolean
-elf32_bfin_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+elf32_bfin_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword old_flags, new_flags;
   bfd_boolean error = FALSE;
 
@@ -4980,9 +4986,10 @@ elf32_bfin_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
 #ifndef DEBUG
   if (0)
 #endif
-  (*_bfd_error_handler) ("old_flags = 0x%.8lx, new_flags = 0x%.8lx, init = %s, filename = %s",
-			 old_flags, new_flags, elf_flags_init (obfd) ? "yes" : "no",
-			 bfd_get_filename (ibfd));
+  _bfd_error_handler
+    ("old_flags = 0x%.8lx, new_flags = 0x%.8lx, init = %s, filename = %s",
+     old_flags, new_flags, elf_flags_init (obfd) ? "yes" : "no",
+     bfd_get_filename (ibfd));
 
   if (!elf_flags_init (obfd))			/* First call, no flags set.  */
     {
@@ -4994,11 +5001,11 @@ elf32_bfin_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
     {
       error = TRUE;
       if (IS_FDPIC (obfd))
-	(*_bfd_error_handler)
+	_bfd_error_handler
 	  (_("%s: cannot link non-fdpic object file into fdpic executable"),
 	   bfd_get_filename (ibfd));
       else
-	(*_bfd_error_handler)
+	_bfd_error_handler
 	  (_("%s: cannot link fdpic object file into non-fdpic executable"),
 	   bfd_get_filename (ibfd));
     }
@@ -5153,8 +5160,8 @@ bfin_finish_dynamic_symbol (bfd * output_bfd,
 	  && (info->symbolic
 	      || h->dynindx == -1 || h->forced_local) && h->def_regular)
 	{
-	  (*_bfd_error_handler) (_("*** check this relocation %s"),
-				 __FUNCTION__);
+	  _bfd_error_handler (_("*** check this relocation %s"),
+			      __FUNCTION__);
 	  rela.r_info = ELF32_R_INFO (0, R_BFIN_PCREL24);
 	  rela.r_addend = bfd_get_signed_32 (output_bfd,
 					     (sgot->contents
@@ -5252,7 +5259,8 @@ bfin_adjust_dynamic_symbol (struct bfd_link_info *info,
   s = bfd_get_linker_section (dynobj, ".dynbss");
   BFD_ASSERT (s != NULL);
 
-  /* We must generate a R_68K_COPY reloc to tell the dynamic linker to
+#if 0 /* Bfin does not currently have a COPY reloc.  */
+  /* We must generate a R_BFIN_COPY reloc to tell the dynamic linker to
      copy the initial value out of the dynamic object and into the
      runtime process image.  We need to remember the offset into the
      .rela.bss section we are going to use.  */
@@ -5265,7 +5273,13 @@ bfin_adjust_dynamic_symbol (struct bfd_link_info *info,
       srel->size += sizeof (Elf32_External_Rela);
       h->needs_copy = 1;
     }
-
+#else
+  if ((h->root.u.def.section->flags & SEC_ALLOC) != 0)
+    {
+      _bfd_error_handler (_("the bfin target does not currently support the generation of copy relocations"));
+      return FALSE;
+    }
+#endif
   /* We need to figure out the alignment required for this symbol.  I
      have no idea how ELF linkers handle this.  */
   power_of_two = bfd_log2 (h->size);

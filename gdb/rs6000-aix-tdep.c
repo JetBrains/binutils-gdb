@@ -290,8 +290,6 @@ rs6000_push_dummy_call (struct gdbarch *gdbarch, struct value *function,
       else
 	{
 	  /* Argument can fit in one register.  No problem.  */
-	  int adj = gdbarch_byte_order (gdbarch)
-		    == BFD_ENDIAN_BIG ? reg_size - len : 0;
 	  gdb_byte word[MAX_REGISTER_SIZE];
 
 	  memset (word, 0, reg_size);
@@ -671,7 +669,7 @@ branch_dest (struct frame_info *frame, int opcode, int instr,
 
 /* AIX does not support PT_STEP.  Simulate it.  */
 
-static int
+static VEC (CORE_ADDR) *
 rs6000_software_single_step (struct frame_info *frame)
 {
   struct gdbarch *gdbarch = get_frame_arch (frame);
@@ -681,13 +679,15 @@ rs6000_software_single_step (struct frame_info *frame)
   CORE_ADDR loc;
   CORE_ADDR breaks[2];
   int opcode;
+  VEC (CORE_ADDR) *next_pcs;
 
   loc = get_frame_pc (frame);
 
   insn = read_memory_integer (loc, 4, byte_order);
 
-  if (ppc_deal_with_atomic_sequence (frame))
-    return 1;
+  next_pcs = ppc_deal_with_atomic_sequence (frame);
+  if (next_pcs != NULL)
+    return next_pcs;
   
   breaks[0] = loc + PPC_INSN_SIZE;
   opcode = insn >> 26;
@@ -702,12 +702,12 @@ rs6000_software_single_step (struct frame_info *frame)
       /* ignore invalid breakpoint.  */
       if (breaks[ii] == -1)
 	continue;
-      insert_single_step_breakpoint (gdbarch, aspace, breaks[ii]);
+      VEC_safe_push (CORE_ADDR, next_pcs, breaks[ii]);
     }
 
   errno = 0;			/* FIXME, don't ignore errors!  */
   /* What errors?  {read,write}_memory call error().  */
-  return 1;
+  return next_pcs;
 }
 
 /* Implement the "auto_wide_charset" gdbarch method for this platform.  */

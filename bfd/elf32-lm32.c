@@ -590,6 +590,7 @@ lm32_info_to_howto_rela (bfd *abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= (unsigned int) R_LM32_max)
     {
+      /* xgettext:c-format */
       _bfd_error_handler (_("%B: invalid LM32 reloc number: %d"), abfd, r_type);
       r_type = 0;
     }
@@ -1052,7 +1053,7 @@ lm32_elf_relocate_section (bfd *output_bfd,
 
               /* Addend should be zero.  */
               if (rel->r_addend != 0)
-                (*_bfd_error_handler) (_("internal error: addend should be zero for R_LM32_16_GOT"));
+		_bfd_error_handler (_("internal error: addend should be zero for R_LM32_16_GOT"));
 
               r = _bfd_final_link_relocate (howto,
                                             input_bfd,
@@ -1149,17 +1150,14 @@ lm32_elf_relocate_section (bfd *output_bfd,
 	      if ((h != NULL)
                  && (h->root.type == bfd_link_hash_undefweak))
 	        break;
-	      if (! ((*info->callbacks->reloc_overflow)
-		     (info, (h ? &h->root : NULL), name, howto->name,
-		      (bfd_vma) 0, input_bfd, input_section, rel->r_offset)))
-		return FALSE;
+	      (*info->callbacks->reloc_overflow)
+		(info, (h ? &h->root : NULL), name, howto->name,
+		 (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      break;
 
             case bfd_reloc_undefined:
-              if (! ((*info->callbacks->undefined_symbol)
-                     (info, name, input_bfd, input_section,
-                      rel->r_offset, TRUE)))
-                return FALSE;
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, rel->r_offset, TRUE);
               break;
 
             case bfd_reloc_outofrange:
@@ -1179,10 +1177,8 @@ lm32_elf_relocate_section (bfd *output_bfd,
               /* fall through */
 
             common_error:
-              if (!((*info->callbacks->warning)
-                    (info, msg, name, input_bfd, input_section,
-                     rel->r_offset)))
-                return FALSE;
+	      (*info->callbacks->warning) (info, msg, name, input_bfd,
+					   input_section, rel->r_offset);
               break;
             }
         }
@@ -1456,19 +1452,17 @@ lm32_elf_finish_dynamic_sections (bfd *output_bfd,
               break;
 
             case DT_PLTGOT:
-              s = htab->sgot->output_section;
+              s = htab->sgotplt;
               goto get_vma;
             case DT_JMPREL:
-              s = htab->srelplt->output_section;
+              s = htab->srelplt;
             get_vma:
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
 
             case DT_PLTRELSZ:
-              s = htab->srelplt->output_section;
-              BFD_ASSERT (s != NULL);
+              s = htab->srelplt;
 	      dyn.d_un.d_val = s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
@@ -1485,7 +1479,7 @@ lm32_elf_finish_dynamic_sections (bfd *output_bfd,
                  about changing the DT_RELA entry.  */
               if (htab->srelplt != NULL)
                 {
-                  s = htab->srelplt->output_section;
+                  s = htab->srelplt;
 		  dyn.d_un.d_val -= s->size;
                 }
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
@@ -1558,7 +1552,7 @@ lm32_elf_finish_dynamic_sections (bfd *output_bfd,
       if (lm32fdpic_fixup32_section (info)->size
               != (lm32fdpic_fixup32_section (info)->reloc_count * 4))
         {
-          (*_bfd_error_handler)
+	  _bfd_error_handler
             ("LINKER BUG: .rofixup section size mismatch: size/4 %d != relocs %d",
             lm32fdpic_fixup32_section (info)->size/4,
             lm32fdpic_fixup32_section (info)->reloc_count);
@@ -1580,7 +1574,7 @@ lm32_elf_finish_dynamic_sections (bfd *output_bfd,
           BFD_ASSERT (hend->u.def.value == value);
           if (hend->u.def.value != value)
             {
-              (*_bfd_error_handler)
+	      _bfd_error_handler
                 ("LINKER BUG: .rofixup section hend->u.def.value != value: %ld != %ld", hend->u.def.value, value);
               return FALSE;
             }

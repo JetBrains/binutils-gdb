@@ -49,17 +49,19 @@ static const struct generic_val_print_decorations p_decorations =
   " * I",
   "true",
   "false",
-  "void"
+  "void",
+  "{",
+  "}"
 };
 
 /* See val_print for a description of the various parameters of this
    function; they are identical.  */
 
 void
-pascal_val_print (struct type *type, const gdb_byte *valaddr,
+pascal_val_print (struct type *type,
 		  int embedded_offset, CORE_ADDR address,
 		  struct ui_file *stream, int recurse,
-		  const struct value *original_value,
+		  struct value *original_value,
 		  const struct value_print_options *options)
 {
   struct gdbarch *gdbarch = get_type_arch (type);
@@ -73,6 +75,7 @@ pascal_val_print (struct type *type, const gdb_byte *valaddr,
   struct type *char_type;
   CORE_ADDR addr;
   int want_space = 0;
+  const gdb_byte *valaddr = value_contents_for_printing (original_value);
 
   type = check_typedef (type);
   switch (TYPE_CODE (type))
@@ -130,7 +133,7 @@ pascal_val_print (struct type *type, const gdb_byte *valaddr,
 		{
 		  i = 0;
 		}
-	      val_print_array_elements (type, valaddr, embedded_offset,
+	      val_print_array_elements (type, embedded_offset,
 					address, stream, recurse,
 					original_value, options, i);
 	      fprintf_filtered (stream, "}");
@@ -144,7 +147,7 @@ pascal_val_print (struct type *type, const gdb_byte *valaddr,
     case TYPE_CODE_PTR:
       if (options->format && options->format != 's')
 	{
-	  val_print_scalar_formatted (type, valaddr, embedded_offset,
+	  val_print_scalar_formatted (type, embedded_offset,
 				      original_value, options, 0, stream);
 	  break;
 	}
@@ -285,7 +288,7 @@ pascal_val_print (struct type *type, const gdb_byte *valaddr,
     case TYPE_CODE_UNDEF:
     case TYPE_CODE_BOOL:
     case TYPE_CODE_CHAR:
-      generic_val_print (type, valaddr, embedded_offset, address,
+      generic_val_print (type, embedded_offset, address,
 			 stream, recurse, original_value, options,
 			 &p_decorations);
       break;
@@ -467,9 +470,9 @@ static void pascal_object_print_static_field (struct value *,
 					      const struct value_print_options *);
 
 static void pascal_object_print_value (struct type *, const gdb_byte *,
-				       int,
+				       LONGEST,
 				       CORE_ADDR, struct ui_file *, int,
-				       const struct value *,
+				       struct value *,
 				       const struct value_print_options *,
 				       struct type **);
 
@@ -526,10 +529,10 @@ pascal_object_is_vtbl_member (struct type *type)
 
 void
 pascal_object_print_value_fields (struct type *type, const gdb_byte *valaddr,
-				  int offset,
+				  LONGEST offset,
 				  CORE_ADDR address, struct ui_file *stream,
 				  int recurse,
-				  const struct value *val,
+				  struct value *val,
 				  const struct value_print_options *options,
 				  struct type **dont_print_vb,
 				  int dont_print_statmem)
@@ -668,7 +671,7 @@ pascal_object_print_value_fields (struct type *type, const gdb_byte *valaddr,
 		     address + TYPE_FIELD_BITPOS (type, i) / 8, 0,
 		     stream, format, 0, recurse + 1, pretty); */
 		  val_print (TYPE_FIELD_TYPE (type, i),
-			     valaddr, offset + TYPE_FIELD_BITPOS (type, i) / 8,
+			     offset + TYPE_FIELD_BITPOS (type, i) / 8,
 			     address, stream, recurse + 1, val, &opts,
 			     current_language);
 		}
@@ -698,10 +701,10 @@ pascal_object_print_value_fields (struct type *type, const gdb_byte *valaddr,
 
 static void
 pascal_object_print_value (struct type *type, const gdb_byte *valaddr,
-			   int offset,
+			   LONGEST offset,
 			   CORE_ADDR address, struct ui_file *stream,
 			   int recurse,
-			   const struct value *val,
+			   struct value *val,
 			   const struct value_print_options *options,
 			   struct type **dont_print_vb)
 {
@@ -721,11 +724,11 @@ pascal_object_print_value (struct type *type, const gdb_byte *valaddr,
 
   for (i = 0; i < n_baseclasses; i++)
     {
-      int boffset = 0;
+      LONGEST boffset = 0;
       struct type *baseclass = check_typedef (TYPE_BASECLASS (type, i));
       const char *basename = type_name_no_tag (baseclass);
       const gdb_byte *base_valaddr = NULL;
-      int thisoffset;
+      LONGEST thisoffset;
       int skip = 0;
 
       if (BASETYPE_VIA_VIRTUAL (type, i))

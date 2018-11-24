@@ -68,6 +68,15 @@ AC_ARG_ENABLE(targets,
   *)        enable_targets=$enableval ;;
 esac])dnl
 
+AC_ARG_ENABLE(64_bit_archive,
+	      AS_HELP_STRING([--enable-64-bit-archive],
+	      [force 64-bit archives]),
+[case "${enableval}" in
+  yes)  want_64_bit_archive=true  ;;
+  no)   want_64_bit_archive=false ;;
+  *)    AC_MSG_ERROR(bad value ${enableval} for 64-bit-archive option) ;;
+esac],[want_64_bit_archive=unset])dnl
+
 AC_ARG_WITH(mmap,
 [  --with-mmap             try using mmap for BFD input files if available],
 [case "${withval}" in
@@ -103,26 +112,6 @@ AC_ARG_WITH(separate-debug-dir,
 [DEBUGDIR="${withval}"])
 AC_SUBST(DEBUGDIR)
 
-# Check to see if we should allow the generation of
-# symbols with the ELF standard's STT_COMMON type.
-AC_ARG_ENABLE(elf-stt-common,
-[  --enable-elf-stt-common Allow the generation of ELF symbols with the STT_COMMON type],
-[case "${enableval}" in
-  yes) want_elf_stt_common=true ;;
-  no)  want_elf_stt_common=false ;;
-  *)   AC_MSG_ERROR(bad value ${enableval} for ELF STT_COMMON option) ;;
- esac],
-# We have to choose a default behaviour.  For native builds we could
-# test whether the loader supports the STT_COMMON type, but that would
-# mean that built binaries could not be exported to older systems where
-# the loader does not support it. So by default we always choose to
-# disable this feature.
-  want_elf_stt_common=false)dnl
-if test $want_elf_stt_common = true; then
-  AC_DEFINE(USE_STT_COMMON, 1,
-    [Define if we may generate symbols with ELF's STT_COMMON type])
-fi
-
 ACX_PKGVERSION([GNU Binutils])
 ACX_BUGURL([http://www.sourceware.org/bugzilla/])
 
@@ -154,7 +143,7 @@ bfd_default_target_size=32
 
 # host stuff:
 
-ALL_LINGUAS="fr tr ja es sv da zh_CN ro rw vi fi id ru uk"
+ALL_LINGUAS="fr tr ja es sv da zh_CN ro rw vi fi id ru uk sr"
 ZW_GNU_GETTEXT_SISTER_DIR
 AM_PO_SUBDIRS
 
@@ -617,6 +606,8 @@ do
     powerpc_pei_vec)		 tb="$tb pei-ppc.lo peigen.lo $coff" ;;
     powerpc_pei_le_vec)		 tb="$tb pei-ppc.lo peigen.lo $coff" ;;
     powerpc_xcoff_vec)		 tb="$tb coff-rs6000.lo $xcoff" ;;
+    riscv_elf32_vec)		 tb="$tb elf32-riscv.lo elfxx-riscv.lo elf32.lo $elf" ;;
+    riscv_elf64_vec)		 tb="$tb elf64-riscv.lo elf64.lo elfxx-riscv.lo elf32.lo $elf"; target_size=64 ;;
     rl78_elf32_vec)		 tb="$tb elf32-rl78.lo elf32.lo $elf" ;;
     rs6000_xcoff64_vec)		 tb="$tb coff64-rs6000.lo aix5ppc-core.lo $xcoff"; target_size=64 ;;
     rs6000_xcoff64_aix_vec)	 tb="$tb coff64-rs6000.lo aix5ppc-core.lo $xcoff"; target_size=64 ;;
@@ -794,6 +785,22 @@ else	# all_targets is true
   test -n "$selarchs" &&
     selarchs=`echo $selarchs | sed -e 's/^/\&/' -e 's/ \(.\)/,\&\1/g'`
 fi	# all_targets is true
+
+if test "x$want_64_bit_archive" = xunset; then
+  # 64-bit MIPS and s390 ELF targets use 64-bit archives.
+  case "${bfd_backends}" in
+    *elf64-mips* | *elf64-s390*)
+      want_64_bit_archive=true
+      ;;
+  esac
+fi
+
+# 64-bit archives need a 64-bit bfd_vma.
+if test "x$want_64_bit_archive" = xtrue; then
+  want64=true
+  AC_DEFINE(USE_64_BIT_ARCHIVE, 1,
+    [Define if we should use 64-bit archives.])
+fi
 
 case ${host64}-${target64}-${want64} in
   *true*)

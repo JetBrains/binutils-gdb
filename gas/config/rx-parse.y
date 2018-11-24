@@ -274,6 +274,15 @@ statement :
 
 /* ---------------------------------------------------------------------- */
 
+	| MOV DOT_B '#' EXPR ',' '[' REG ']'
+	  { B2 (0xf8, 0x04); F ($7, 8, 4); IMMB ($4, 12);}
+
+	| MOV DOT_W '#' EXPR ',' '[' REG ']'
+          { B2 (0xf8, 0x01); F ($7, 8, 4); IMMW ($4, 12);}
+
+	| MOV DOT_L '#' EXPR ',' '[' REG ']'
+	  { B2 (0xf8, 0x02); F ($7, 8, 4); IMM ($4, 12);}
+
 	| MOV DOT_B '#' EXPR ',' disp '[' REG ']'
 	  /* rx_disp5op changes the value if it succeeds, so keep it last.  */
 	  { if ($8 <= 7 && rx_uintop ($4, 8) && rx_disp5op0 (&$6, BSIZE))
@@ -1268,7 +1277,7 @@ token_table[] =
 
 static struct
 {
-  char * string;
+  const char * string;
   int    token;
 }
 condition_opcode_table[] =
@@ -1282,7 +1291,7 @@ condition_opcode_table[] =
 
 static struct
 {
-  char * string;
+  const char * string;
   int    val;
 }
 condition_table[] =
@@ -1324,7 +1333,7 @@ rx_lex_init (char * beginning, char * ending)
 }
 
 static int
-check_condition (char * base)
+check_condition (const char * base)
 {
   char * cp;
   unsigned int i;
@@ -1485,9 +1494,14 @@ rx_intop (expressionS exp, int nbits, int opbits)
   long v;
   long mask, msb;
 
-  if (exp.X_op == O_big && nbits == 32)
-      return 1;
-  if (exp.X_op != O_constant)
+  if (exp.X_op == O_big)
+    {
+      if (nbits == 32)
+	return 1;
+      if (exp.X_add_number == -1)
+	return 0;
+    }
+  else if (exp.X_op != O_constant)
     return 0;
   v = exp.X_add_number;
 

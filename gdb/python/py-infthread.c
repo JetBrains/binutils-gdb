@@ -80,7 +80,7 @@ static int
 thpy_set_name (PyObject *self, PyObject *newvalue, void *ignore)
 {
   thread_object *thread_obj = (thread_object *) self;
-  char *name;
+  gdb::unique_xmalloc_ptr<char> name;
 
   if (! thread_obj->thread)
     {
@@ -95,7 +95,9 @@ thpy_set_name (PyObject *self, PyObject *newvalue, void *ignore)
       return -1;
     }
   else if (newvalue == Py_None)
-    name = NULL;
+    {
+      /* Nothing.  */
+    }
   else if (! gdbpy_is_string (newvalue))
     {
       PyErr_SetString (PyExc_TypeError,
@@ -110,7 +112,7 @@ thpy_set_name (PyObject *self, PyObject *newvalue, void *ignore)
     }
 
   xfree (thread_obj->thread->name);
-  thread_obj->thread->name = name;
+  thread_obj->thread->name = name.release ();
 
   return 0;
 }
@@ -145,8 +147,6 @@ thpy_get_global_num (PyObject *self, void *closure)
 static PyObject *
 thpy_get_ptid (PyObject *self, void *closure)
 {
-  int pid;
-  long tid, lwp;
   thread_object *thread_obj = (thread_object *) self;
 
   THPY_REQUIRE_VALID (thread_obj);

@@ -244,10 +244,10 @@ Memory_region::attributes_compatible(elfcpp::Elf_Xword flags,
       attrs &= ~ (attrs & - attrs);
     }
   while (attrs != 0);
-  
+
   return match;
 }
-  
+
 // Print a memory region.
 
 void
@@ -1503,7 +1503,7 @@ class Input_section_info
  private:
   // Input section, can be a relaxed section.
   Output_section::Input_section input_section_;
-  // Name of the section. 
+  // Name of the section.
   std::string section_name_;
   // Section size.
   uint64_t size_;
@@ -1524,18 +1524,69 @@ class Input_section_sorter
   operator()(const Input_section_info&, const Input_section_info&) const;
 
  private:
+  static unsigned long
+  get_init_priority(const char*);
+
   Sort_wildcard filename_sort_;
   Sort_wildcard section_sort_;
 };
+
+// Return a relative priority of the section with the specified NAME
+// (a lower value meand a higher priority), or 0 if it should be compared
+// with others as strings.
+// The implementation of this function is copied from ld/ldlang.c.
+
+unsigned long
+Input_section_sorter::get_init_priority(const char* name)
+{
+  char* end;
+  unsigned long init_priority;
+
+  // GCC uses the following section names for the init_priority
+  // attribute with numerical values 101 and 65535 inclusive. A
+  // lower value means a higher priority.
+  //
+  // 1: .init_array.NNNN/.fini_array.NNNN: Where NNNN is the
+  //    decimal numerical value of the init_priority attribute.
+  //    The order of execution in .init_array is forward and
+  //    .fini_array is backward.
+  // 2: .ctors.NNNN/.dtors.NNNN: Where NNNN is 65535 minus the
+  //    decimal numerical value of the init_priority attribute.
+  //    The order of execution in .ctors is backward and .dtors
+  //    is forward.
+
+  if (strncmp(name, ".init_array.", 12) == 0
+      || strncmp(name, ".fini_array.", 12) == 0)
+    {
+      init_priority = strtoul(name + 12, &end, 10);
+      return *end ? 0 : init_priority;
+    }
+  else if (strncmp(name, ".ctors.", 7) == 0
+	   || strncmp(name, ".dtors.", 7) == 0)
+    {
+      init_priority = strtoul(name + 7, &end, 10);
+      return *end ? 0 : 65535 - init_priority;
+    }
+
+  return 0;
+}
 
 bool
 Input_section_sorter::operator()(const Input_section_info& isi1,
 				 const Input_section_info& isi2) const
 {
+  if (this->section_sort_ == SORT_WILDCARD_BY_INIT_PRIORITY)
+    {
+      unsigned long ip1 = get_init_priority(isi1.section_name().c_str());
+      unsigned long ip2 = get_init_priority(isi2.section_name().c_str());
+      if (ip1 != 0 && ip2 != 0 && ip1 != ip2)
+	return ip1 < ip2;
+    }
   if (this->section_sort_ == SORT_WILDCARD_BY_NAME
       || this->section_sort_ == SORT_WILDCARD_BY_NAME_BY_ALIGNMENT
       || (this->section_sort_ == SORT_WILDCARD_BY_ALIGNMENT_BY_NAME
-	  && isi1.addralign() == isi2.addralign()))
+	  && isi1.addralign() == isi2.addralign())
+      || this->section_sort_ == SORT_WILDCARD_BY_INIT_PRIORITY)
     {
       if (isi1.section_name() != isi2.section_name())
 	return isi1.section_name() < isi2.section_name();
@@ -1595,6 +1646,7 @@ Output_section_element_input::set_section_addresses(
 
   typedef std::vector<std::vector<Input_section_info> > Matching_sections;
   size_t input_pattern_count = this->input_section_patterns_.size();
+  size_t bin_count = 1;
   bool any_patterns_with_sort = false;
   for (size_t i = 0; i < input_pattern_count; ++i)
     {
@@ -1602,9 +1654,9 @@ Output_section_element_input::set_section_addresses(
       if (isp.sort != SORT_WILDCARD_NONE)
 	any_patterns_with_sort = true;
     }
-  if (input_pattern_count == 0 || !any_patterns_with_sort)
-    input_pattern_count = 1;
-  Matching_sections matching_sections(input_pattern_count);
+  if (any_patterns_with_sort)
+    bin_count = input_pattern_count;
+  Matching_sections matching_sections(bin_count);
 
   // Look through the list of sections for this output section.  Add
   // each one which matches to one of the elements of
@@ -1614,7 +1666,7 @@ Output_section_element_input::set_section_addresses(
   while (p != input_sections->end())
     {
       Relobj* relobj = p->relobj();
-      unsigned int shndx = p->shndx();      
+      unsigned int shndx = p->shndx();
       Input_section_info isi(*p);
 
       // Calling section_name and section_addralign is not very
@@ -1661,11 +1713,11 @@ Output_section_element_input::set_section_addresses(
 		break;
 	    }
 
-	  if (i >= this->input_section_patterns_.size())
+	  if (i >= input_pattern_count)
 	    ++p;
 	  else
 	    {
-	      if (!any_patterns_with_sort)
+	      if (i >= bin_count)
 		i = 0;
 	      matching_sections[i].push_back(isi);
 	      p = input_sections->erase(p);
@@ -1679,7 +1731,7 @@ Output_section_element_input::set_section_addresses(
   // output section.
 
   uint64_t dot = *dot_value;
-  for (size_t i = 0; i < input_pattern_count; ++i)
+  for (size_t i = 0; i < bin_count; ++i)
     {
       if (matching_sections[i].empty())
 	continue;
@@ -1706,7 +1758,7 @@ Output_section_element_input::set_section_addresses(
 
 	  uint64_t this_subalign = sis.addralign();
 	  if (!sis.is_input_section())
-	    sis.output_section_data()->finalize_data_size();	
+	    sis.output_section_data()->finalize_data_size();
 	  uint64_t data_size = sis.data_size();
 	  if (this_subalign < subalign)
 	    {
@@ -1825,6 +1877,10 @@ Output_section_element_input::print(FILE* f) const
 	    case SORT_WILDCARD_BY_ALIGNMENT_BY_NAME:
 	      fprintf(f, "SORT_BY_ALIGNMENT(SORT_BY_NAME(");
 	      close_parens = 2;
+	      break;
+	    case SORT_WILDCARD_BY_INIT_PRIORITY:
+	      fprintf(f, "SORT_BY_INIT_PRIORITY(");
+	      close_parens = 1;
 	      break;
 	    default:
 	      gold_unreachable();
@@ -1973,7 +2029,7 @@ class Output_section_definition : public Sections_element
   void
   set_section_vma(Expression* address)
   { this->address_ = address; }
-  
+
   void
   set_section_lma(Expression* address)
   { this->load_address_ = address; }
@@ -1981,7 +2037,7 @@ class Output_section_definition : public Sections_element
   const std::string&
   get_section_name() const
   { return this->name_; }
-  
+
  private:
   static const char*
   script_section_type_name(Script_section_type);
@@ -2346,9 +2402,9 @@ Output_section_definition::set_section_addresses(Symbol_table* symtab,
   uint64_t old_load_address = *load_address;
 
   // If input section sorting is requested via --section-ordering-file or
-  // linker plugins, then do it here.  This is important because we want 
+  // linker plugins, then do it here.  This is important because we want
   // any sorting specified in the linker scripts, which will be done after
-  // this, to take precedence.  The final order of input sections is then 
+  // this, to take precedence.  The final order of input sections is then
   // guaranteed to be according to the linker script specification.
   if (this->output_section_ != NULL
       && this->output_section_->input_section_order_specified())
@@ -2439,7 +2495,7 @@ Output_section_definition::set_section_addresses(Symbol_table* symtab,
 	    // The LMA address was explicitly set to the given region.
 	    laddr = lma_region->get_current_address()->eval(symtab, layout,
 							    false);
-	  else 
+	  else
 	    {
 	      // We are not going to use the discovered lma_region, so
 	      // make sure that we do not update it in the code below.
@@ -2931,9 +2987,9 @@ Orphan_output_section::set_section_addresses(Symbol_table*, Layout*,
   address = align_address(address, this->os_->addralign());
 
   // If input section sorting is requested via --section-ordering-file or
-  // linker plugins, then do it here.  This is important because we want 
+  // linker plugins, then do it here.  This is important because we want
   // any sorting specified in the linker scripts, which will be done after
-  // this, to take precedence.  The final order of input sections is then 
+  // this, to take precedence.  The final order of input sections is then
   // guaranteed to be according to the linker script specification.
   if (this->os_ != NULL
       && this->os_->input_section_order_specified())
@@ -2967,7 +3023,7 @@ Orphan_output_section::set_section_addresses(Symbol_table*, Layout*,
     {
       uint64_t addralign = p->addralign();
       if (!p->is_input_section())
-	p->output_section_data()->finalize_data_size();	
+	p->output_section_data()->finalize_data_size();
       uint64_t size = p->data_size();
       address = align_address(address, addralign);
       this->os_->add_script_input_section(*p);
@@ -3549,7 +3605,7 @@ Output_segment*
 Script_sections::set_section_addresses(Symbol_table* symtab, Layout* layout)
 {
   gold_assert(this->saw_sections_clause_);
-	 
+
   // Implement ONLY_IF_RO/ONLY_IF_RW constraints.  These are a pain
   // for our representation.
   for (Sections_elements::iterator p = this->sections_elements_->begin();
@@ -3618,7 +3674,7 @@ Script_sections::set_section_addresses(Symbol_table* symtab, Layout* layout)
       Output_section* os = (*p)->get_output_section();
 
       // Handle -Ttext, -Tdata and -Tbss options.  We do this by looking for
-      // the special sections by names and doing dot assignments. 
+      // the special sections by names and doing dot assignments.
       if (use_tsection_options
 	  && os != NULL
 	  && (os->flags() & elfcpp::SHF_ALLOC) != 0)
@@ -3647,7 +3703,7 @@ Script_sections::set_section_addresses(Symbol_table* symtab, Layout* layout)
 
       (*p)->set_section_addresses(symtab, layout, &dot_value, &dot_alignment,
 				  &load_address);
-    } 
+    }
 
   if (this->phdrs_elements_ != NULL)
     {
@@ -3834,7 +3890,7 @@ Script_sections::create_segments(Layout* layout, uint64_t dot_alignment)
   layout->get_allocated_sections(&sections);
 
   // Sort the sections by address.
-  std::stable_sort(sections.begin(), sections.end(), 
+  std::stable_sort(sections.begin(), sections.end(),
 		   Sort_output_sections(this->sections_elements_));
 
   this->create_note_and_tls_segments(layout, &sections);
@@ -4161,7 +4217,7 @@ Script_sections::attach_sections_using_phdrs_clause(Layout* layout)
   // Output sections in the script which do not list segments are
   // attached to the same set of segments as the immediately preceding
   // output section.
-  
+
   String_list* phdr_names = NULL;
   bool load_segments_only = false;
   for (Sections_elements::const_iterator p = this->sections_elements_->begin();
@@ -4206,7 +4262,7 @@ Script_sections::attach_sections_using_phdrs_clause(Layout* layout)
       // filtering.
       if (old_phdr_names != phdr_names)
 	load_segments_only = false;
-		
+
       // If this is an orphan section--one that was not explicitly
       // mentioned in the linker script--then it should not inherit
       // any segment type other than PT_LOAD.  Otherwise, e.g., the
@@ -4403,6 +4459,7 @@ Script_sections::release_segments()
 	   ++p)
 	(*p)->release_segment();
     }
+  this->segments_created_ = false;
 }
 
 // Print the SECTIONS clause to F for debugging.

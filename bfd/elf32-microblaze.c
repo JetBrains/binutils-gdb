@@ -652,8 +652,9 @@ microblaze_elf_info_to_howto (bfd * abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= R_MICROBLAZE_max)
     {
-      (*_bfd_error_handler) (_("%B: unrecognised MicroBlaze reloc number: %d"),
-			     abfd, r_type);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: unrecognised MicroBlaze reloc number: %d"),
+			  abfd, r_type);
       bfd_set_error (bfd_error_bad_value);
       r_type = R_MICROBLAZE_NONE;
     }
@@ -956,8 +957,9 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 
       if (r_type < 0 || r_type >= (int) R_MICROBLAZE_max)
 	{
-	  (*_bfd_error_handler) (_("%s: unknown relocation type %d"),
-				 bfd_get_filename (input_bfd), (int) r_type);
+	  /* xgettext:c-format */
+	  _bfd_error_handler (_("%s: unknown relocation type %d"),
+			      bfd_get_filename (input_bfd), (int) r_type);
 	  bfd_set_error (bfd_error_bad_value);
 	  ret = FALSE;
 	  continue;
@@ -1082,11 +1084,14 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 		      }
 		    else
 		      {
-			(*_bfd_error_handler) (_("%s: The target (%s) of an %s relocation is in the wrong section (%s)"),
-					       bfd_get_filename (input_bfd),
-					       sym_name,
-					       microblaze_elf_howto_table[(int) r_type]->name,
-					       bfd_get_section_name (sec->owner, sec));
+			_bfd_error_handler
+			  /* xgettext:c-format */
+			  (_("%s: The target (%s) of an %s relocation "
+			     "is in the wrong section (%s)"),
+			   bfd_get_filename (input_bfd),
+			   sym_name,
+			   microblaze_elf_howto_table[(int) r_type]->name,
+			   bfd_get_section_name (sec->owner, sec));
 			/*bfd_set_error (bfd_error_bad_value); ??? why? */
 			ret = FALSE;
 			continue;
@@ -1127,11 +1132,14 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 		      }
 		    else
 		      {
-			(*_bfd_error_handler) (_("%s: The target (%s) of an %s relocation is in the wrong section (%s)"),
-					       bfd_get_filename (input_bfd),
-					       sym_name,
-					       microblaze_elf_howto_table[(int) r_type]->name,
-					       bfd_get_section_name (sec->owner, sec));
+			_bfd_error_handler
+			  /* xgettext:c-format */
+			  (_("%s: The target (%s) of an %s relocation "
+			     "is in the wrong section (%s)"),
+			   bfd_get_filename (input_bfd),
+			   sym_name,
+			   microblaze_elf_howto_table[(int) r_type]->name,
+			   bfd_get_section_name (sec->owner, sec));
 			/*bfd_set_error (bfd_error_bad_value); ??? why? */
 			ret = FALSE;
 			continue;
@@ -1193,6 +1201,7 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 	      goto dogot;
 	    case (int) R_MICROBLAZE_TLSLD:
 	      tls_type = (TLS_TLS | TLS_LD);
+	      /* Fall through.  */
 	    dogot:
 	    case (int) R_MICROBLAZE_GOT_64:
 	      {
@@ -1492,7 +1501,7 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 			else
 			  {
 			    BFD_FAIL ();
-			    (*_bfd_error_handler)
+			    _bfd_error_handler
 			      (_("%B: probably compiled without -fPIC?"),
 			       input_bfd);
 			    bfd_set_error (bfd_error_bad_value);
@@ -1556,16 +1565,14 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      if (!((*info->callbacks->reloc_overflow)
-		    (info, (h ? &h->root : NULL), name, howto->name,
-		     (bfd_vma) 0, input_bfd, input_section, offset)))
-		return FALSE;
+	      (*info->callbacks->reloc_overflow)
+		(info, (h ? &h->root : NULL), name, howto->name,
+		 (bfd_vma) 0, input_bfd, input_section, offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      if (!((*info->callbacks->undefined_symbol)
-		    (info, name, input_bfd, input_section, offset, TRUE)))
-	        return FALSE;
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, offset, TRUE);
 	      break;
 
 	    case bfd_reloc_outofrange:
@@ -1584,9 +1591,8 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 	      errmsg = _("internal error: unknown error");
 	      /* Fall through.  */
 	    common_error:
-	      if (!((*info->callbacks->warning)
-		    (info, errmsg, name, input_bfd, input_section, offset)))
-	        return FALSE;
+	      (*info->callbacks->warning) (info, errmsg, name, input_bfd,
+					   input_section, offset);
 	      break;
 	    }
 	}
@@ -1594,21 +1600,6 @@ microblaze_elf_relocate_section (bfd *output_bfd,
 
   return ret;
 }
-
-/* Merge backend specific data from an object file to the output
-   object file when linking.
-
-   Note: We only use this hook to catch endian mismatches.  */
-static bfd_boolean
-microblaze_elf_merge_private_bfd_data (bfd * ibfd, bfd * obfd)
-{
-  /* Check if we have the same endianess.  */
-  if (! _bfd_generic_verify_endian_match (ibfd, obfd))
-    return FALSE;
-
-  return TRUE;
-}
-
 
 /* Calculate fixup value for reference.  */
 
@@ -2400,8 +2391,10 @@ microblaze_elf_check_relocs (bfd * abfd,
           goto dogottls;
         case R_MICROBLAZE_TLSLD:
           tls_type |= (TLS_TLS | TLS_LD);
+	  /* Fall through.  */
         dogottls:
           sec->has_tls_reloc = 1;
+	  /* Fall through.  */
         case R_MICROBLAZE_GOT_64:
           if (htab->sgot == NULL)
             {
@@ -3288,7 +3281,7 @@ microblaze_elf_finish_dynamic_symbol (bfd *output_bfd,
       BFD_ASSERT (sgot != NULL && srela != NULL);
 
       offset = (sgot->output_section->vma + sgot->output_offset
-                       + (h->got.offset &~ (bfd_vma) 1));
+		+ (h->got.offset &~ (bfd_vma) 1));
 
       /* If this is a -Bsymbolic link, and the symbol is defined
          locally, we just want to emit a RELATIVE reloc.  Likewise if
@@ -3296,8 +3289,8 @@ microblaze_elf_finish_dynamic_symbol (bfd *output_bfd,
          The entry in the global offset table will already have been
          initialized in the relocate_section function.  */
       if (bfd_link_pic (info)
-          && (info->symbolic || h->dynindx == -1)
-          && h->def_regular)
+          && ((info->symbolic && h->def_regular)
+	      || h->dynindx == -1))
         {
           asection *sec = h->root.u.def.section;
           microblaze_elf_output_dynamic_relocation (output_bfd,
@@ -3496,7 +3489,7 @@ microblaze_elf_add_symbol_hook (bfd *abfd,
 #define bfd_elf32_bfd_is_local_label_name       microblaze_elf_is_local_label_name
 #define elf_backend_relocate_section		microblaze_elf_relocate_section
 #define bfd_elf32_bfd_relax_section             microblaze_elf_relax_section
-#define bfd_elf32_bfd_merge_private_bfd_data    microblaze_elf_merge_private_bfd_data
+#define bfd_elf32_bfd_merge_private_bfd_data    _bfd_generic_verify_endian_match
 #define bfd_elf32_bfd_reloc_name_lookup		microblaze_elf_reloc_name_lookup
 
 #define elf_backend_gc_mark_hook		microblaze_elf_gc_mark_hook

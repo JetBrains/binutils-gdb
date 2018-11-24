@@ -471,6 +471,9 @@ struct target_ops
   /* Return 1 if the target supports catch syscall, 0 (or leave the
      callback NULL) otherwise.  */
   int (*supports_catch_syscall) (void);
+
+  /* Return tdesc index for IPA.  */
+  int (*get_ipa_tdesc_idx) (void);
 };
 
 extern struct target_ops *the_target;
@@ -514,9 +517,6 @@ int kill_inferior (int);
 #define detach_inferior(pid) \
   (*the_target->detach) (pid)
 
-#define mourn_inferior(PROC) \
-  (*the_target->mourn) (PROC)
-
 #define mythread_alive(pid) \
   (*the_target->thread_alive) (pid)
 
@@ -535,10 +535,6 @@ int kill_inferior (int);
 #define target_async(enable) \
   (the_target->async ? (*the_target->async) (enable) : 0)
 
-#define target_supports_multi_process() \
-  (the_target->supports_multi_process ? \
-   (*the_target->supports_multi_process) () : 0)
-
 #define target_process_qsupported(features, count)	\
   do							\
     {							\
@@ -549,6 +545,10 @@ int kill_inferior (int);
 #define target_supports_catch_syscall()              	\
   (the_target->supports_catch_syscall ?			\
    (*the_target->supports_catch_syscall) () : 0)
+
+#define target_get_ipa_tdesc_idx()			\
+  (the_target->get_ipa_tdesc_idx			\
+   ? (*the_target->get_ipa_tdesc_idx) () : 0)
 
 #define target_supports_tracepoints()			\
   (the_target->supports_tracepoints			\

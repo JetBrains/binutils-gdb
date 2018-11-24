@@ -113,6 +113,10 @@ SECTIONS
     ${RELOCATING+ *(.trampolines*)}
     ${CONSTRUCTING+ __trampolines_end = . ; }
 
+    /* avr-libc expects these data to reside in lower 64K. */
+    ${RELOCATING+ *libprintf_flt.a:*(.progmem.data)}
+    ${RELOCATING+ *libc.a:*(.progmem.data)}
+
     ${RELOCATING+ *(.progmem*)}
     
     ${RELOCATING+. = ALIGN(2);}
@@ -210,7 +214,7 @@ SECTIONS
   ${RELOCATING+ __data_load_end = __data_load_start + SIZEOF(.data); }
 
   /* Global data not cleared after reset.  */
-  .noinit ${RELOCATING-0}:
+  .noinit ${RELOCATING+ ADDR(.bss) + SIZEOF (.bss)} ${RELOCATING-0}: ${RELOCATING+ AT (ADDR (.noinit))}
   {
     ${RELOCATING+ PROVIDE (__noinit_start = .) ; }
     *(.noinit*)

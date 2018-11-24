@@ -19,6 +19,10 @@
    Free Software Foundation, 51 Franklin Street - Fifth Floor, Boston,
    MA 02110-1301, USA.  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum metag_unit
 {
   UNIT_CT,
@@ -683,7 +687,7 @@ typedef struct
   enum scond_code code;
 } split_condition;
 
-static const split_condition metag_scondtab[] =
+static const split_condition metag_scondtab[] ATTRIBUTE_UNUSED =
   {
     { "LEQ",   SCOND_LEQ },
     { "LEZ",   SCOND_LEQ },
@@ -2077,3 +2081,7 @@ static const insn_template metag_optab[] =
 unsigned int metag_get_set_size_bytes (unsigned int opcode);
 unsigned int metag_get_set_ext_size_bytes (unsigned int opcode);
 unsigned int metag_cond_set_size_bytes (unsigned int opcode);
+
+#ifdef __cplusplus
+}
+#endif

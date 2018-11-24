@@ -18,7 +18,6 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
-#include "dyn-string.h"
 #include <ctype.h>
 #include "gdb_wait.h"
 #include "event-top.h"
@@ -38,7 +37,6 @@
 #endif
 
 #include <signal.h>
-#include "timeval-utils.h"
 #include "gdbcmd.h"
 #include "serial.h"
 #include "bfd.h"
@@ -62,8 +60,7 @@
 
 #include "readline/readline.h"
 
-#include "gdb_sys_time.h"
-#include <time.h>
+#include <chrono>
 
 #include "gdb_usleep.h"
 #include "interps.h"
@@ -99,7 +96,7 @@ static void set_width (void);
    Modified in prompt_for_continue and defaulted_query.
    Used in report_command_stats.  */
 
-static struct timeval prompt_for_continue_wait_time;
+static std::chrono::steady_clock::duration prompt_for_continue_wait_time;
 
 /* A flag indicating whether to timestamp debugging messages.  */
 
@@ -108,19 +105,6 @@ static int debug_timestamp = 0;
 /* Nonzero if we have job control.  */
 
 int job_control;
-
-/* Nonzero means quit immediately if Control-C is typed now, rather
-   than waiting until QUIT is executed.  Be careful in setting this;
-   code which executes with immediate_quit set has to be very careful
-   about being able to deal with being interrupted at any time.  It is
-   almost always better to use QUIT; the only exception I can think of
-   is being able to quit out of a system call (using EINTR loses if
-   the SIGINT happens between the previous QUIT and the system call).
-   To immediately quit in the case in which a SIGINT happens between
-   the previous QUIT and setting immediate_quit (desirable anytime we
-   expect to block), call QUIT after setting immediate_quit.  */
-
-int immediate_quit;
 
 /* Nonzero means that strings with character values >0x7F should be printed
    as octal escapes.  Zero means just print the value (e.g. it's an
@@ -165,18 +149,6 @@ struct cleanup *
 make_cleanup_freeargv (char **arg)
 {
   return make_cleanup (do_freeargv, arg);
-}
-
-static void
-do_dyn_string_delete (void *arg)
-{
-  dyn_string_delete ((dyn_string_t) arg);
-}
-
-struct cleanup *
-make_cleanup_dyn_string_delete (dyn_string_t arg)
-{
-  return make_cleanup (do_dyn_string_delete, arg);
 }
 
 static void
@@ -225,18 +197,6 @@ struct cleanup *
 make_cleanup_obstack_free (struct obstack *obstack)
 {
   return make_cleanup (do_obstack_free, obstack);
-}
-
-static void
-do_ui_file_delete (void *arg)
-{
-  ui_file_delete ((struct ui_file *) arg);
-}
-
-struct cleanup *
-make_cleanup_ui_file_delete (struct ui_file *arg)
-{
-  return make_cleanup (do_ui_file_delete, arg);
 }
 
 /* Helper function for make_cleanup_ui_out_redirect_pop.  */
@@ -343,35 +303,6 @@ struct cleanup *
 make_cleanup_htab_delete (htab_t htab)
 {
   return make_cleanup (do_htab_delete_cleanup, htab);
-}
-
-struct restore_ui_file_closure
-{
-  struct ui_file **variable;
-  struct ui_file *value;
-};
-
-static void
-do_restore_ui_file (void *p)
-{
-  struct restore_ui_file_closure *closure
-    = (struct restore_ui_file_closure *) p;
-
-  *(closure->variable) = closure->value;
-}
-
-/* Remember the current value of *VARIABLE and make it restored when
-   the cleanup is run.  */
-
-struct cleanup *
-make_cleanup_restore_ui_file (struct ui_file **variable)
-{
-  struct restore_ui_file_closure *c = XNEW (struct restore_ui_file_closure);
-
-  c->variable = variable;
-  c->value = *variable;
-
-  return make_cleanup_dtor (do_restore_ui_file, (void *) c, xfree);
 }
 
 /* Helper for make_cleanup_value_free_to_mark.  */
@@ -503,8 +434,13 @@ vwarning (const char *string, va_list args)
     (*deprecated_warning_hook) (string, args);
   else
     {
+      struct cleanup *old_chain = make_cleanup (null_cleanup, NULL);
+
       if (target_supports_terminal_ours ())
-	target_terminal_ours ();
+	{
+	  make_cleanup_restore_target_terminal ();
+	  target_terminal_ours_for_output ();
+	}
       if (filtered_printing_initialized ())
 	wrap_here ("");		/* Force out any buffered output.  */
       gdb_flush (gdb_stdout);
@@ -512,6 +448,8 @@ vwarning (const char *string, va_list args)
 	fputs_unfiltered (warning_pre_print, gdb_stderr);
       vfprintf_unfiltered (gdb_stderr, string, args);
       fprintf_unfiltered (gdb_stderr, "\n");
+
+      do_cleanups (old_chain);
     }
 }
 
@@ -526,12 +464,9 @@ verror (const char *string, va_list args)
 }
 
 void
-error_stream (struct ui_file *stream)
+error_stream (const string_file &stream)
 {
-  char *message = ui_file_xstrdup (stream, NULL);
-
-  make_cleanup (xfree, message);
-  error (("%s"), message);
+  error (("%s"), stream.c_str ());
 }
 
 /* Emit a message and abort.  */
@@ -540,7 +475,7 @@ static void ATTRIBUTE_NORETURN
 abort_with_message (const char *msg)
 {
   if (gdb_stderr == NULL)
-    fputs (msg, stderr);
+    gnulib::fputs (msg, stderr);
   else
     fputs_unfiltered (msg, gdb_stderr);
 
@@ -703,13 +638,16 @@ internal_vproblem (struct internal_problem *problem,
   /* Fall back to abort_with_message if gdb_stderr is not set up.  */
   if (gdb_stderr == NULL)
     {
-      fputs (reason, stderr);
+      gnulib::fputs (reason, stderr);
       abort_with_message ("\n");
     }
 
   /* Try to get the message out and at the start of a new line.  */
   if (target_supports_terminal_ours ())
-    target_terminal_ours ();
+    {
+      make_cleanup_restore_target_terminal ();
+      target_terminal_ours_for_output ();
+    }
   if (filtered_printing_initialized ())
     begin_line ();
 
@@ -1021,10 +959,12 @@ print_sys_errmsg (const char *string, int errcode)
 void
 quit (void)
 {
+  struct ui *ui = current_ui;
+
   if (sync_quit_force_run)
     {
       sync_quit_force_run = 0;
-      quit_force (NULL, stdin == instream);
+      quit_force (NULL, 0);
     }
 
 #ifdef __MSDOS__
@@ -1047,11 +987,13 @@ quit (void)
 void
 maybe_quit (void)
 {
-  if (check_quit_flag () || sync_quit_force_run)
+  if (sync_quit_force_run)
     quit ();
+
+  quit_handler ();
+
   if (deprecated_interactive_hook)
     deprecated_interactive_hook ();
-  target_check_pending_interrupt ();
 }
 
 
@@ -1179,6 +1121,33 @@ compile_rx_or_error (regex_t *pattern, const char *rx, const char *message)
   return make_regfree_cleanup (pattern);
 }
 
+/* A cleanup that simply calls ui_unregister_input_event_handler.  */
+
+static void
+ui_unregister_input_event_handler_cleanup (void *ui)
+{
+  ui_unregister_input_event_handler ((struct ui *) ui);
+}
+
+/* Set up to handle input.  */
+
+static struct cleanup *
+prepare_to_handle_input (void)
+{
+  struct cleanup *old_chain;
+
+  old_chain = make_cleanup_restore_target_terminal ();
+  target_terminal_ours ();
+
+  ui_register_input_event_handler (current_ui);
+  if (current_ui->prompt_state == PROMPT_BLOCKED)
+    make_cleanup (ui_unregister_input_event_handler_cleanup, current_ui);
+
+  make_cleanup_override_quit_handler (default_quit_handler);
+
+  return old_chain;
+}
+
 
 
 /* This function supports the query, nquery, and yquery functions.
@@ -1199,9 +1168,7 @@ defaulted_query (const char *ctlstr, const char defchar, va_list args)
   int def_value;
   char def_answer, not_def_answer;
   char *y_string, *n_string, *question, *prompt;
-  /* Used to add duration we waited for user to respond to
-     prompt_for_continue_wait_time.  */
-  struct timeval prompt_started, prompt_ended, prompt_delta;
+  struct cleanup *old_chain;
 
   /* Set up according to which answer is the default.  */
   if (defchar == '\0')
@@ -1238,8 +1205,12 @@ defaulted_query (const char *ctlstr, const char defchar, va_list args)
      question we're asking, and then answer the default automatically.  This
      way, important error messages don't get lost when talking to GDB
      over a pipe.  */
-  if (! input_from_terminal_p ())
+  if (current_ui->instream != current_ui->stdin_stream
+      || !input_interactive_p (current_ui))
     {
+      old_chain = make_cleanup_restore_target_terminal ();
+
+      target_terminal_ours_for_output ();
       wrap_here ("");
       vfprintf_filtered (gdb_stdout, ctlstr, args);
 
@@ -1248,24 +1219,35 @@ defaulted_query (const char *ctlstr, const char defchar, va_list args)
 		       y_string, n_string, def_answer);
       gdb_flush (gdb_stdout);
 
+      do_cleanups (old_chain);
       return def_value;
     }
 
   if (deprecated_query_hook)
     {
-      return deprecated_query_hook (ctlstr, args);
+      int res;
+
+      old_chain = make_cleanup_restore_target_terminal ();
+      res = deprecated_query_hook (ctlstr, args);
+      do_cleanups (old_chain);
+      return res;
     }
 
   /* Format the question outside of the loop, to avoid reusing args.  */
   question = xstrvprintf (ctlstr, args);
+  old_chain = make_cleanup (xfree, question);
   prompt = xstrprintf (_("%s%s(%s or %s) %s"),
 		      annotation_level > 1 ? "\n\032\032pre-query\n" : "",
 		      question, y_string, n_string,
 		      annotation_level > 1 ? "\n\032\032query\n" : "");
-  xfree (question);
+  make_cleanup (xfree, prompt);
 
-  /* Used for calculating time spend waiting for user.  */
-  gettimeofday (&prompt_started, NULL);
+  /* Used to add duration we waited for user to respond to
+     prompt_for_continue_wait_time.  */
+  using namespace std::chrono;
+  steady_clock::time_point prompt_started = steady_clock::now ();
+
+  prepare_to_handle_input ();
 
   while (1)
     {
@@ -1308,14 +1290,11 @@ defaulted_query (const char *ctlstr, const char defchar, va_list args)
     }
 
   /* Add time spend in this routine to prompt_for_continue_wait_time.  */
-  gettimeofday (&prompt_ended, NULL);
-  timeval_sub (&prompt_delta, &prompt_ended, &prompt_started);
-  timeval_add (&prompt_for_continue_wait_time,
-               &prompt_for_continue_wait_time, &prompt_delta);
+  prompt_for_continue_wait_time += steady_clock::now () - prompt_started;
 
-  xfree (prompt);
   if (annotation_level > 1)
     printf_filtered (("\n\032\032post-query\n"));
+  do_cleanups (old_chain);
   return retval;
 }
 
@@ -1642,7 +1621,7 @@ static char *wrap_indent;
 static int wrap_column;
 
 
-/* Inialize the number of lines per page and chars per line.  */
+/* Initialize the number of lines per page and chars per line.  */
 
 void
 init_page_info (void)
@@ -1808,18 +1787,20 @@ set_screen_width_and_height (int width, int height)
 }
 
 /* Wait, so the user can read what's on the screen.  Prompt the user
-   to continue by pressing RETURN.  */
+   to continue by pressing RETURN.  'q' is also provided because
+   telling users what to do in the prompt is more user-friendly than
+   expecting them to think of Ctrl-C/SIGINT.  */
 
 static void
 prompt_for_continue (void)
 {
   char *ignore;
   char cont_prompt[120];
+  struct cleanup *old_chain = make_cleanup (null_cleanup, NULL);
   /* Used to add duration we waited for user to respond to
      prompt_for_continue_wait_time.  */
-  struct timeval prompt_started, prompt_ended, prompt_delta;
-
-  gettimeofday (&prompt_started, NULL);
+  using namespace std::chrono;
+  steady_clock::time_point prompt_started = steady_clock::now ();
 
   if (annotation_level > 1)
     printf_unfiltered (("\n\032\032pre-prompt-for-continue\n"));
@@ -1829,39 +1810,25 @@ prompt_for_continue (void)
   if (annotation_level > 1)
     strcat (cont_prompt, "\n\032\032prompt-for-continue\n");
 
-  /* We must do this *before* we call gdb_readline, else it will eventually
-     call us -- thinking that we're trying to print beyond the end of the 
-     screen.  */
+  /* We must do this *before* we call gdb_readline_wrapper, else it
+     will eventually call us -- thinking that we're trying to print
+     beyond the end of the screen.  */
   reinitialize_more_filter ();
 
-  immediate_quit++;
-  QUIT;
+  prepare_to_handle_input ();
 
-  /* We'll need to handle input.  */
-  target_terminal_ours ();
-
-  /* On a real operating system, the user can quit with SIGINT.
-     But not on GO32.
-
-     'q' is provided on all systems so users don't have to change habits
-     from system to system, and because telling them what to do in
-     the prompt is more user-friendly than expecting them to think of
-     SIGINT.  */
-  /* Call readline, not gdb_readline, because GO32 readline handles control-C
-     whereas control-C to gdb_readline will cause the user to get dumped
-     out to DOS.  */
+  /* Call gdb_readline_wrapper, not readline, in order to keep an
+     event loop running.  */
   ignore = gdb_readline_wrapper (cont_prompt);
+  make_cleanup (xfree, ignore);
 
   /* Add time spend in this routine to prompt_for_continue_wait_time.  */
-  gettimeofday (&prompt_ended, NULL);
-  timeval_sub (&prompt_delta, &prompt_ended, &prompt_started);
-  timeval_add (&prompt_for_continue_wait_time,
-               &prompt_for_continue_wait_time, &prompt_delta);
+  prompt_for_continue_wait_time += steady_clock::now () - prompt_started;
 
   if (annotation_level > 1)
     printf_unfiltered (("\n\032\032post-prompt-for-continue\n"));
 
-  if (ignore)
+  if (ignore != NULL)
     {
       char *p = ignore;
 
@@ -1870,31 +1837,31 @@ prompt_for_continue (void)
       if (p[0] == 'q')
 	/* Do not call quit here; there is no possibility of SIGINT.  */
 	throw_quit ("Quit");
-      xfree (ignore);
     }
-  immediate_quit--;
 
   /* Now we have to do this again, so that GDB will know that it doesn't
      need to save the ---Type <return>--- line at the top of the screen.  */
   reinitialize_more_filter ();
 
   dont_repeat ();		/* Forget prev cmd -- CR won't repeat it.  */
+
+  do_cleanups (old_chain);
 }
 
-/* Initalize timer to keep track of how long we waited for the user.  */
+/* Initialize timer to keep track of how long we waited for the user.  */
 
 void
 reset_prompt_for_continue_wait_time (void)
 {
-  static const struct timeval zero_timeval = { 0 };
+  using namespace std::chrono;
 
-  prompt_for_continue_wait_time = zero_timeval;
+  prompt_for_continue_wait_time = steady_clock::duration::zero ();
 }
 
 /* Fetch the cumulative time spent in prompt_for_continue.  */
 
-struct timeval
-get_prompt_for_continue_wait_time (void)
+std::chrono::steady_clock::duration
+get_prompt_for_continue_wait_time ()
 {
   return prompt_for_continue_wait_time;
 }
@@ -2317,21 +2284,20 @@ vfprintf_unfiltered (struct ui_file *stream, const char *format, va_list args)
   old_cleanups = make_cleanup (xfree, linebuffer);
   if (debug_timestamp && stream == gdb_stdlog)
     {
-      struct timeval tm;
-      char *timestamp;
+      using namespace std::chrono;
       int len, need_nl;
 
-      gettimeofday (&tm, NULL);
+      steady_clock::time_point now = steady_clock::now ();
+      seconds s = duration_cast<seconds> (now.time_since_epoch ());
+      microseconds us = duration_cast<microseconds> (now.time_since_epoch () - s);
 
       len = strlen (linebuffer);
       need_nl = (len > 0 && linebuffer[len - 1] != '\n');
 
-      timestamp = xstrprintf ("%ld:%ld %s%s",
-			      (long) tm.tv_sec, (long) tm.tv_usec,
-			      linebuffer,
-			      need_nl ? "\n": "");
-      make_cleanup (xfree, timestamp);
-      fputs_unfiltered (timestamp, stream);
+      std::string timestamp = string_printf ("%ld:%ld %s%s",
+					     s.count (), us.count (),
+					     linebuffer, need_nl ? "\n": "");
+      fputs_unfiltered (timestamp.c_str (), stream);
     }
   else
     fputs_unfiltered (linebuffer, stream);
@@ -2879,7 +2845,7 @@ gdb_realpath (const char *filename)
   }
 #else
   {
-    char *rp = canonicalize_file_name (filename);
+    char *rp = gnulib::canonicalize_file_name (filename);
 
     if (rp != NULL)
       return rp;
@@ -3178,7 +3144,7 @@ producer_is_gcc (const char *producer, int *major, int *minor)
       if (minor == NULL)
 	minor = &min;
 
-      /* Skip any identifier after "GNU " - such as "C11" "C++" or "Java".
+      /* Skip any identifier after "GNU " - such as "C11" or "C++".
 	 A full producer string might look like:
 	 "GNU C 4.7.2"
 	 "GNU Fortran 4.8.2 20140120 (Red Hat 4.8.2-16) -mtune=generic ..."
@@ -3234,7 +3200,7 @@ substitute_path_component (char **stringp, const char *from, const char *to)
 
   for (s = string;;)
     {
-      s = strstr (s, from);
+      s = gnulib::strstr (s, from);
       if (s == NULL)
 	break;
 
@@ -3378,6 +3344,83 @@ gdb_filename_fnmatch (const char *pattern, const char *string, int flags)
 #endif /* HAVE_CASE_INSENSITIVE_FILE_SYSTEM */
 
   return fnmatch (pattern, string, flags);
+}
+
+/* Return the number of path elements in PATH.
+   / = 1
+   /foo = 2
+   /foo/ = 2
+   foo/bar = 2
+   foo/ = 1  */
+
+int
+count_path_elements (const char *path)
+{
+  int count = 0;
+  const char *p = path;
+
+  if (HAS_DRIVE_SPEC (p))
+    {
+      p = STRIP_DRIVE_SPEC (p);
+      ++count;
+    }
+
+  while (*p != '\0')
+    {
+      if (IS_DIR_SEPARATOR (*p))
+	++count;
+      ++p;
+    }
+
+  /* Backup one if last character is /, unless it's the only one.  */
+  if (p > path + 1 && IS_DIR_SEPARATOR (p[-1]))
+    --count;
+
+  /* Add one for the file name, if present.  */
+  if (p > path && !IS_DIR_SEPARATOR (p[-1]))
+    ++count;
+
+  return count;
+}
+
+/* Remove N leading path elements from PATH.
+   N must be non-negative.
+   If PATH has more than N path elements then return NULL.
+   If PATH has exactly N path elements then return "".
+   See count_path_elements for a description of how we do the counting.  */
+
+const char *
+strip_leading_path_elements (const char *path, int n)
+{
+  int i = 0;
+  const char *p = path;
+
+  gdb_assert (n >= 0);
+
+  if (n == 0)
+    return p;
+
+  if (HAS_DRIVE_SPEC (p))
+    {
+      p = STRIP_DRIVE_SPEC (p);
+      ++i;
+    }
+
+  while (i < n)
+    {
+      while (*p != '\0' && !IS_DIR_SEPARATOR (*p))
+	++p;
+      if (*p == '\0')
+	{
+	  if (i + 1 == n)
+	    return "";
+	  return NULL;
+	}
+      ++p;
+      ++i;
+    }
+
+  return p;
 }
 
 /* Provide a prototype to silence -Wmissing-prototypes.  */

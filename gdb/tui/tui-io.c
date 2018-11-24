@@ -172,9 +172,9 @@ tui_puts (const char *string)
 	  /* Expand TABs, since ncurses on MS-Windows doesn't.  */
 	  if (c == '\t')
 	    {
-	      int line, col;
+	      int col;
 
-	      getyx (w, line, col);
+	      col = getcurx (w);
 	      do
 		{
 		  waddch (w, ' ');
@@ -198,7 +198,7 @@ tui_redisplay_readline (void)
 {
   int prev_col;
   int height;
-  int col, line;
+  int col;
   int c_pos;
   int c_line;
   int in;
@@ -212,7 +212,7 @@ tui_redisplay_readline (void)
      The command could call prompt_for_continue and we must not
      restore SingleKey so that the prompt and normal keymap are used.  */
   if (tui_current_key_mode == TUI_ONE_COMMAND_MODE && rl_end == 0
-      && immediate_quit == 0)
+      && !gdb_in_secondary_prompt_p (current_ui))
     tui_set_key_mode (TUI_SINGLE_KEY_MODE);
 
   if (tui_current_key_mode == TUI_SINGLE_KEY_MODE)
@@ -230,7 +230,7 @@ tui_redisplay_readline (void)
   for (in = 0; prompt && prompt[in]; in++)
     {
       waddch (w, prompt[in]);
-      getyx (w, line, col);
+      col = getcurx (w);
       if (col <= prev_col)
         height++;
       prev_col = col;
@@ -256,7 +256,7 @@ tui_redisplay_readline (void)
       else if (c == '\t')
 	{
 	  /* Expand TABs, since ncurses on MS-Windows doesn't.  */
-	  getyx (w, line, col);
+	  col = getcurx (w);
 	  do
 	    {
 	      waddch (w, ' ');
@@ -269,7 +269,7 @@ tui_redisplay_readline (void)
 	}
       if (c == '\n')
 	TUI_CMD_WIN->detail.command_info.start_line = getcury (w);
-      getyx (w, line, col);
+      col = getcurx (w);
       if (col < prev_col)
         height++;
       prev_col = col;
@@ -526,8 +526,8 @@ tui_initialize_io (void)
 #endif
 
   /* Create tui output streams.  */
-  tui_stdout = tui_fileopen (stdout);
-  tui_stderr = tui_fileopen (stderr);
+  tui_stdout = new tui_file (stdout);
+  tui_stderr = new tui_file (stderr);
   tui_out = tui_out_new (tui_stdout);
 
   /* Create the default UI.  */
@@ -585,7 +585,7 @@ tui_getc (FILE *fp)
          with empty lines with gdb prompt at beginning.  Instead of that,
          stay on the same line but provide a visual effect to show the
          user we recognized the command.  */
-      if (rl_end == 0 && !gdb_in_secondary_prompt_p ())
+      if (rl_end == 0 && !gdb_in_secondary_prompt_p (current_ui))
         {
 	  wmove (w, getcury (w), 0);
 
@@ -616,7 +616,7 @@ tui_getc (FILE *fp)
   if (ch == KEY_BACKSPACE)
     return '\b';
 
-  if (async_command_editing_p && key_is_start_sequence (ch))
+  if (current_ui->command_editing && key_is_start_sequence (ch))
     {
       int ch_pending;
 

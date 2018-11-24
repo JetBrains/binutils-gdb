@@ -121,7 +121,8 @@ aout_adobe_callback (bfd *abfd)
 	  goto no_more_sections;
 
 	default:
-	  (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	    (_("%B: Unknown section type in a.out.adobe file: %x\n"),
 	     abfd, ext->e_type[0]);
 	  goto no_more_sections;
@@ -472,6 +473,7 @@ aout_adobe_sizeof_headers (bfd *ignore_abfd ATTRIBUTE_UNUSED,
   _bfd_generic_copy_link_hash_symbol_type
 #define aout_32_bfd_final_link		            _bfd_generic_final_link
 #define aout_32_bfd_link_split_section	            _bfd_generic_link_split_section
+#define aout_32_bfd_link_check_relocs               _bfd_generic_link_check_relocs
 
 const bfd_target aout_adobe_vec =
 {

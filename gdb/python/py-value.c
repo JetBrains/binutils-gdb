@@ -667,7 +667,7 @@ valpy_getitem (PyObject *self, PyObject *key)
 {
   struct gdb_exception except = exception_none;
   value_object *self_value = (value_object *) self;
-  char *field = NULL;
+  gdb::unique_xmalloc_ptr<char> field;
   struct type *base_class_type = NULL, *field_type = NULL;
   long bitpos = -1;
   PyObject *result = NULL;
@@ -754,7 +754,8 @@ valpy_getitem (PyObject *self, PyObject *key)
       struct value *res_val = NULL;
 
       if (field)
-	res_val = value_struct_elt (&tmp, NULL, field, 0, NULL);
+	res_val = value_struct_elt (&tmp, NULL, field.get (), NULL,
+				    "struct/class/union");
       else if (bitpos >= 0)
 	res_val = value_struct_elt_bitpos (&tmp, bitpos, field_type,
 					   "struct/class/union");
@@ -803,7 +804,6 @@ valpy_getitem (PyObject *self, PyObject *key)
     }
   END_CATCH
 
-  xfree (field);
   GDB_PY_HANDLE_EXCEPTION (except);
 
   return result;
@@ -895,23 +895,17 @@ valpy_call (PyObject *self, PyObject *args, PyObject *keywords)
 static PyObject *
 valpy_str (PyObject *self)
 {
-  char *s = NULL;
-  PyObject *result;
   struct value_print_options opts;
 
   get_user_print_options (&opts);
   opts.deref_ref = 0;
 
+  string_file stb;
+
   TRY
     {
-      struct ui_file *stb = mem_fileopen ();
-      struct cleanup *old_chain = make_cleanup_ui_file_delete (stb);
-
-      common_val_print (((value_object *) self)->value, stb, 0,
+      common_val_print (((value_object *) self)->value, &stb, 0,
 			&opts, python_language);
-      s = ui_file_xstrdup (stb, NULL);
-
-      do_cleanups (old_chain);
     }
   CATCH (except, RETURN_MASK_ALL)
     {
@@ -919,10 +913,7 @@ valpy_str (PyObject *self)
     }
   END_CATCH
 
-  result = PyUnicode_Decode (s, strlen (s), host_charset (), NULL);
-  xfree (s);
-
-  return result;
+  return PyUnicode_Decode (stb.c_str (), stb.size (), host_charset (), NULL);
 }
 
 /* Implements gdb.Value.is_optimized_out.  */
@@ -1518,7 +1509,10 @@ valpy_long (PyObject *self)
     }
   END_CATCH
 
-  return gdb_py_long_from_longest (l);
+  if (TYPE_UNSIGNED (type))
+    return gdb_py_long_from_ulongest (l);
+  else
+    return gdb_py_long_from_longest (l);
 }
 
 /* Implements conversion to float.  */
@@ -1642,6 +1636,7 @@ convert_value_from_python (PyObject *obj)
 	  else
 	    value = value_from_longest (builtin_type_pylong, l);
 	}
+#if PY_MAJOR_VERSION == 2
       else if (PyInt_Check (obj))
 	{
 	  long l = PyInt_AsLong (obj);
@@ -1649,6 +1644,7 @@ convert_value_from_python (PyObject *obj)
 	  if (! PyErr_Occurred ())
 	    value = value_from_longest (builtin_type_pyint, l);
 	}
+#endif
       else if (PyFloat_Check (obj))
 	{
 	  double d = PyFloat_AsDouble (obj);
@@ -1658,17 +1654,11 @@ convert_value_from_python (PyObject *obj)
 	}
       else if (gdbpy_is_string (obj))
 	{
-	  char *s;
-
-	  s = python_string_to_target_string (obj);
+	  gdb::unique_xmalloc_ptr<char> s
+	    = python_string_to_target_string (obj);
 	  if (s != NULL)
-	    {
-	      struct cleanup *old;
-
-	      old = make_cleanup (xfree, s);
-	      value = value_cstring (s, strlen (s), builtin_type_pychar);
-	      do_cleanups (old);
-	    }
+	    value = value_cstring (s.get (), strlen (s.get ()),
+				   builtin_type_pychar);
 	}
       else if (PyObject_TypeCheck (obj, &value_object_type))
 	value = value_copy (((value_object *) obj)->value);
@@ -1827,6 +1817,9 @@ static PyNumberMethods value_object_as_number = {
   NULL,                       /* nb_inplace_add */
   NULL,                       /* nb_inplace_subtract */
   NULL,                       /* nb_inplace_multiply */
+#ifndef IS_PY3K
+  NULL,                       /* nb_inplace_divide */
+#endif
   NULL,                       /* nb_inplace_remainder */
   NULL,                       /* nb_inplace_power */
   NULL,                       /* nb_inplace_lshift */
@@ -1835,7 +1828,13 @@ static PyNumberMethods value_object_as_number = {
   NULL,                       /* nb_inplace_xor */
   NULL,                       /* nb_inplace_or */
   NULL,                       /* nb_floor_divide */
-  valpy_divide                /* nb_true_divide */
+  valpy_divide,               /* nb_true_divide */
+  NULL,			      /* nb_inplace_floor_divide */
+  NULL,			      /* nb_inplace_true_divide */
+#ifndef HAVE_LIBPYTHON2_4
+  /* This was added in Python 2.5.  */
+  valpy_long,		      /* nb_index */
+#endif /* HAVE_LIBPYTHON2_4 */
 };
 
 static PyMappingMethods value_object_as_mapping = {

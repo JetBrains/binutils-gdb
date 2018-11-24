@@ -31,6 +31,7 @@
 #include "compile.h"
 #include "block.h"
 #include "arch-utils.h"
+#include <algorithm>
 
 /* Track inferior memory reserved by inferior mmap.  */
 
@@ -186,7 +187,7 @@ setup_sections (bfd *abfd, asection *sect, void *data_voidp)
     return;
 
   alignment = ((CORE_ADDR) 1) << bfd_get_section_alignment (abfd, sect);
-  data->last_max_alignment = max (data->last_max_alignment, alignment);
+  data->last_max_alignment = std::max (data->last_max_alignment, alignment);
 
   data->last_size = (data->last_size + alignment - 1) & -alignment;
 
@@ -198,7 +199,7 @@ setup_sections (bfd *abfd, asection *sect, void *data_voidp)
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_multiple_definition (struct bfd_link_info *link_info,
 				    struct bfd_link_hash_entry *h, bfd *nbfd,
 				    asection *nsec, bfd_vma nval)
@@ -206,15 +207,14 @@ link_callbacks_multiple_definition (struct bfd_link_info *link_info,
   bfd *abfd = link_info->input_bfds;
 
   if (link_info->allow_multiple_definition)
-    return TRUE;
+    return;
   warning (_("Compiled module \"%s\": multiple symbol definitions: %s"),
 	   bfd_get_filename (abfd), h->root.string);
-  return FALSE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_warning (struct bfd_link_info *link_info, const char *xwarning,
                         const char *symbol, bfd *abfd, asection *section,
 			bfd_vma address)
@@ -222,13 +222,11 @@ link_callbacks_warning (struct bfd_link_info *link_info, const char *xwarning,
   warning (_("Compiled module \"%s\" section \"%s\": warning: %s"),
 	   bfd_get_filename (abfd), bfd_get_section_name (abfd, section),
 	   xwarning);
-  /* Maybe permit running as a module?  */
-  return FALSE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_undefined_symbol (struct bfd_link_info *link_info,
 				 const char *name, bfd *abfd, asection *section,
 				 bfd_vma address, bfd_boolean is_fatal)
@@ -236,25 +234,22 @@ link_callbacks_undefined_symbol (struct bfd_link_info *link_info,
   warning (_("Cannot resolve relocation to \"%s\" "
 	     "from compiled module \"%s\" section \"%s\"."),
 	   name, bfd_get_filename (abfd), bfd_get_section_name (abfd, section));
-  return FALSE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_reloc_overflow (struct bfd_link_info *link_info,
 			       struct bfd_link_hash_entry *entry,
 			       const char *name, const char *reloc_name,
 			       bfd_vma addend, bfd *abfd, asection *section,
 			       bfd_vma address)
 {
-  /* TRUE is required for intra-module relocations.  */
-  return TRUE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_reloc_dangerous (struct bfd_link_info *link_info,
 				const char *message, bfd *abfd,
 				asection *section, bfd_vma address)
@@ -263,12 +258,11 @@ link_callbacks_reloc_dangerous (struct bfd_link_info *link_info,
 	     "relocation: %s\n"),
 	   bfd_get_filename (abfd), bfd_get_section_name (abfd, section),
 	   message);
-  return FALSE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
 
-static bfd_boolean
+static void
 link_callbacks_unattached_reloc (struct bfd_link_info *link_info,
 				 const char *name, bfd *abfd, asection *section,
 				 bfd_vma address)
@@ -277,7 +271,6 @@ link_callbacks_unattached_reloc (struct bfd_link_info *link_info,
 	     "relocation: %s\n"),
 	   bfd_get_filename (abfd), bfd_get_section_name (abfd, section),
 	   name);
-  return FALSE;
 }
 
 /* Helper for link_callbacks callbacks vector.  */
@@ -608,16 +601,14 @@ store_regs (struct type *regs_type, CORE_ADDR regs_base)
     }
 }
 
-/* Load OBJECT_FILE into inferior memory.  Throw an error otherwise.
-   Caller must fully dispose the return value by calling compile_object_run.
-   SOURCE_FILE's copy is stored into the returned object.
-   Caller should free both OBJECT_FILE and SOURCE_FILE immediatelly after this
-   function returns.
-   Function returns NULL only for COMPILE_I_PRINT_ADDRESS_SCOPE when
-   COMPILE_I_PRINT_VALUE_SCOPE should have been used instead.  */
+/* Load the object file specified in FILE_NAMES into inferior memory.
+   Throw an error otherwise.  Caller must fully dispose the return
+   value by calling compile_object_run.  Returns NULL only for
+   COMPILE_I_PRINT_ADDRESS_SCOPE when COMPILE_I_PRINT_VALUE_SCOPE
+   should have been used instead.  */
 
 struct compile_module *
-compile_object_load (const char *object_file, const char *source_file,
+compile_object_load (const compile_file_names &file_names,
 		     enum compile_i_scope_types scope, void *scope_data)
 {
   struct cleanup *cleanups, *cleanups_free_objfile;
@@ -640,7 +631,7 @@ compile_object_load (const char *object_file, const char *source_file,
   struct type *expect_return_type;
   struct munmap_list *munmap_list_head = NULL;
 
-  filename = tilde_expand (object_file);
+  filename = tilde_expand (file_names.object_file ());
   cleanups = make_cleanup (xfree, filename);
 
   abfd = gdb_bfd_open (filename, gnutarget, -1);
@@ -831,7 +822,7 @@ compile_object_load (const char *object_file, const char *source_file,
 
   retval = XNEW (struct compile_module);
   retval->objfile = objfile;
-  retval->source_file = xstrdup (source_file);
+  retval->source_file = xstrdup (file_names.source_file ());
   retval->func_sym = func_sym;
   retval->regs_addr = regs_addr;
   retval->scope = scope;

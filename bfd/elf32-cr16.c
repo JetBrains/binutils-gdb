@@ -647,7 +647,7 @@ elf_cr16_reloc_type_lookup (bfd *abfd ATTRIBUTE_UNUSED,
     if (code == cr16_reloc_map[i].bfd_reloc_enum)
       return &cr16_elf_howto_table[cr16_reloc_map[i].cr16_reloc_type];
 
-  _bfd_error_handler ("Unsupported CR16 relocation type: 0x%x\n", code);
+  _bfd_error_handler (_("Unsupported CR16 relocation type: 0x%x\n"), code);
   return NULL;
 }
 
@@ -675,8 +675,9 @@ elf_cr16_info_to_howto (bfd *abfd ATTRIBUTE_UNUSED, arelent *cache_ptr,
 
   if (r_type >= R_CR16_MAX)
     {
-      (*_bfd_error_handler) (_("%B: unrecognised CR16 reloc number: %d"),
-			     abfd, r_type);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: unrecognised CR16 reloc number: %d"),
+			  abfd, r_type);
       bfd_set_error (bfd_error_bad_value);
       r_type = R_CR16_NONE;
     }
@@ -1472,18 +1473,14 @@ elf32_cr16_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
           switch (r)
             {
              case bfd_reloc_overflow:
-               if (!((*info->callbacks->reloc_overflow)
-                     (info, (h ? &h->root : NULL), name, howto->name,
-                      (bfd_vma) 0, input_bfd, input_section,
-                      rel->r_offset)))
-                 return FALSE;
+	       (*info->callbacks->reloc_overflow)
+		 (info, (h ? &h->root : NULL), name, howto->name,
+		  (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
                break;
 
              case bfd_reloc_undefined:
-               if (!((*info->callbacks->undefined_symbol)
-                     (info, name, input_bfd, input_section,
-                      rel->r_offset, TRUE)))
-                 return FALSE;
+	       (*info->callbacks->undefined_symbol)
+		 (info, name, input_bfd, input_section, rel->r_offset, TRUE);
                break;
 
              case bfd_reloc_outofrange:
@@ -1503,10 +1500,8 @@ elf32_cr16_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
                /* Fall through.  */
 
              common_error:
-               if (!((*info->callbacks->warning)
-                     (info, msg, name, input_bfd, input_section,
-                      rel->r_offset)))
-                 return FALSE;
+	       (*info->callbacks->warning) (info, msg, name, input_bfd,
+					    input_section, rel->r_offset);
                break;
             }
         }
@@ -1731,8 +1726,10 @@ _bfd_cr16_elf_object_p (bfd *abfd)
    object file when linking.  */
 
 static bfd_boolean
-_bfd_cr16_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+_bfd_cr16_elf_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
+
   if (bfd_get_flavour (ibfd) != bfd_target_elf_flavour
       || bfd_get_flavour (obfd) != bfd_target_elf_flavour)
     return TRUE;
@@ -2743,21 +2740,19 @@ _bfd_cr16_elf_finish_dynamic_sections (bfd * output_bfd,
               break;
 
             case DT_PLTGOT:
-              name = ".got";
+              name = ".got.plt";
               goto get_vma;
 
             case DT_JMPREL:
               name = ".rela.plt";
             get_vma:
-              s = bfd_get_section_by_name (output_bfd, name);
-              BFD_ASSERT (s != NULL);
-              dyn.d_un.d_ptr = s->vma;
+              s = bfd_get_linker_section (dynobj, name);
+              dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
 
             case DT_PLTRELSZ:
-              s = bfd_get_section_by_name (output_bfd, ".rela.plt");
-              BFD_ASSERT (s != NULL);
+              s = bfd_get_linker_section (dynobj, ".rela.plt");
               dyn.d_un.d_val = s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
               break;
@@ -2772,7 +2767,7 @@ _bfd_cr16_elf_finish_dynamic_sections (bfd * output_bfd,
                  the linker script arranges for .rela.plt to follow all
                  other relocation sections, we don't have to worry
                  about changing the DT_RELA entry.  */
-              s = bfd_get_section_by_name (output_bfd, ".rela.plt");
+              s = bfd_get_linker_section (dynobj, ".rela.plt");
               if (s != NULL)
                 dyn.d_un.d_val -= s->size;
               bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);

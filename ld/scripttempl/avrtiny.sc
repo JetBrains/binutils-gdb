@@ -96,7 +96,7 @@ SECTIONS
   .rela.plt    ${RELOCATING-0} : { *(.rela.plt)	}
 
   /* Internal text space or external memory.  */
-  .text ${RELOCATING-0} : ${RELOCATING+ AT (0x0)}
+  .text ${RELOCATING-0} : 
   {
     *(.vectors)
     KEEP(*(.vectors))
@@ -112,6 +112,10 @@ SECTIONS
     *(.trampolines)
     ${RELOCATING+ *(.trampolines*)}
     ${CONSTRUCTING+ __trampolines_end = . ; }
+
+    /* avr-libc expects these data to reside in lower 64K. */
+    ${RELOCATING+ *libprintf_flt.a:*(.progmem.data)}
+    ${RELOCATING+ *libc.a:*(.progmem.data)}
 
     ${RELOCATING+ *(.progmem*)}
 
@@ -210,7 +214,7 @@ SECTIONS
   ${RELOCATING+ __data_load_end = __data_load_start + SIZEOF(.data); }
 
   /* Global data not cleared after reset.  */
-  .noinit ${RELOCATING-0}:
+  .noinit ${RELOCATING+ ADDR(.bss) + SIZEOF (.bss)} ${RELOCATING-0} : ${RELOCATING+ AT (ADDR (.noinit))}
   {
     ${RELOCATING+ PROVIDE (__noinit_start = .) ; }
     *(.noinit*)

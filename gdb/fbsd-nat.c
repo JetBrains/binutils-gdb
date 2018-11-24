@@ -206,9 +206,85 @@ fbsd_find_memory_regions (struct target_ops *self,
 }
 #endif
 
+#ifdef KERN_PROC_AUXV
+static enum target_xfer_status (*super_xfer_partial) (struct target_ops *ops,
+						      enum target_object object,
+						      const char *annex,
+						      gdb_byte *readbuf,
+						      const gdb_byte *writebuf,
+						      ULONGEST offset,
+						      ULONGEST len,
+						      ULONGEST *xfered_len);
+
+/* Implement the "to_xfer_partial target_ops" method.  */
+
+static enum target_xfer_status
+fbsd_xfer_partial (struct target_ops *ops, enum target_object object,
+		   const char *annex, gdb_byte *readbuf,
+		   const gdb_byte *writebuf,
+		   ULONGEST offset, ULONGEST len, ULONGEST *xfered_len)
+{
+  pid_t pid = ptid_get_pid (inferior_ptid);
+
+  switch (object)
+    {
+    case TARGET_OBJECT_AUXV:
+      {
+	struct cleanup *cleanup = make_cleanup (null_cleanup, NULL);
+	unsigned char *buf;
+	size_t buflen;
+	int mib[4];
+
+	if (writebuf != NULL)
+	  return TARGET_XFER_E_IO;
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_PROC;
+	mib[2] = KERN_PROC_AUXV;
+	mib[3] = pid;
+	if (offset == 0)
+	  {
+	    buf = readbuf;
+	    buflen = len;
+	  }
+	else
+	  {
+	    buflen = offset + len;
+	    buf = XCNEWVEC (unsigned char, buflen);
+	    cleanup = make_cleanup (xfree, buf);
+	  }
+	if (sysctl (mib, 4, buf, &buflen, NULL, 0) == 0)
+	  {
+	    if (offset != 0)
+	      {
+		if (buflen > offset)
+		  {
+		    buflen -= offset;
+		    memcpy (readbuf, buf + offset, buflen);
+		  }
+		else
+		  buflen = 0;
+	      }
+	    do_cleanups (cleanup);
+	    *xfered_len = buflen;
+	    return (buflen == 0) ? TARGET_XFER_EOF : TARGET_XFER_OK;
+	  }
+	do_cleanups (cleanup);
+	return TARGET_XFER_E_IO;
+      }
+    default:
+      return super_xfer_partial (ops, object, annex, readbuf, writebuf, offset,
+				 len, xfered_len);
+    }
+}
+#endif
+
 #ifdef PT_LWPINFO
 static int debug_fbsd_lwp;
 
+static void (*super_resume) (struct target_ops *,
+			     ptid_t,
+			     int,
+			     enum gdb_signal);
 static ptid_t (*super_wait) (struct target_ops *,
 			     ptid_t,
 			     struct target_waitstatus *,
@@ -303,7 +379,7 @@ fbsd_pid_to_str (struct target_ops *ops, ptid_t ptid)
       static char buf[64];
       int pid = ptid_get_pid (ptid);
 
-      xsnprintf (buf, sizeof buf, "process %d, LWP %d", pid, lwp);
+      xsnprintf (buf, sizeof buf, "LWP %d of process %d", lwp, pid);
       return buf;
     }
 
@@ -336,22 +412,46 @@ fbsd_thread_name (struct target_ops *self, struct thread_info *thr)
 }
 #endif
 
-#ifdef PT_LWP_EVENTS
-/* Enable LWP events for a specific process.
+/* Enable additional event reporting on new processes.
 
-   To catch LWP events, PT_LWP_EVENTS is set on every traced process.
+   To catch fork events, PTRACE_FORK is set on every traced process
+   to enable stops on returns from fork or vfork.  Note that both the
+   parent and child will always stop, even if system call stops are
+   not enabled.
+
+   To catch LWP events, PTRACE_EVENTS is set on every traced process.
    This enables stops on the birth for new LWPs (excluding the "main" LWP)
    and the death of LWPs (excluding the last LWP in a process).  Note
    that unlike fork events, the LWP that creates a new LWP does not
    report an event.  */
 
 static void
-fbsd_enable_lwp_events (pid_t pid)
+fbsd_enable_proc_events (pid_t pid)
 {
+#ifdef PT_GET_EVENT_MASK
+  int events;
+
+  if (ptrace (PT_GET_EVENT_MASK, pid, (PTRACE_TYPE_ARG3)&events,
+	      sizeof (events)) == -1)
+    perror_with_name (("ptrace"));
+  events |= PTRACE_FORK | PTRACE_LWP;
+#ifdef PTRACE_VFORK
+  events |= PTRACE_VFORK;
+#endif
+  if (ptrace (PT_SET_EVENT_MASK, pid, (PTRACE_TYPE_ARG3)&events,
+	      sizeof (events)) == -1)
+    perror_with_name (("ptrace"));
+#else
+#ifdef TDP_RFPPWAIT
+  if (ptrace (PT_FOLLOW_FORK, pid, (PTRACE_TYPE_ARG3)0, 1) == -1)
+    perror_with_name (("ptrace"));
+#endif
+#ifdef PT_LWP_EVENTS
   if (ptrace (PT_LWP_EVENTS, pid, (PTRACE_TYPE_ARG3)0, 1) == -1)
     perror_with_name (("ptrace"));
-}
 #endif
+#endif
+}
 
 /* Add threads for any new LWPs in a process.
 
@@ -420,70 +520,6 @@ fbsd_update_thread_list (struct target_ops *ops)
 #endif
 }
 
-static void (*super_resume) (struct target_ops *,
-			     ptid_t,
-			     int,
-			     enum gdb_signal);
-
-static int
-resume_one_thread_cb (struct thread_info *tp, void *data)
-{
-  ptid_t *ptid = data;
-  int request;
-
-  if (ptid_get_pid (tp->ptid) != ptid_get_pid (*ptid))
-    return 0;
-
-  if (ptid_get_lwp (tp->ptid) == ptid_get_lwp (*ptid))
-    request = PT_RESUME;
-  else
-    request = PT_SUSPEND;
-
-  if (ptrace (request, ptid_get_lwp (tp->ptid), NULL, 0) == -1)
-    perror_with_name (("ptrace"));
-  return 0;
-}
-
-static int
-resume_all_threads_cb (struct thread_info *tp, void *data)
-{
-  ptid_t *filter = data;
-
-  if (!ptid_match (tp->ptid, *filter))
-    return 0;
-
-  if (ptrace (PT_RESUME, ptid_get_lwp (tp->ptid), NULL, 0) == -1)
-    perror_with_name (("ptrace"));
-  return 0;
-}
-
-/* Implement the "to_resume" target_ops method.  */
-
-static void
-fbsd_resume (struct target_ops *ops,
-	     ptid_t ptid, int step, enum gdb_signal signo)
-{
-
-  if (debug_fbsd_lwp)
-    fprintf_unfiltered (gdb_stdlog,
-			"FLWP: fbsd_resume for ptid (%d, %ld, %ld)\n",
-			ptid_get_pid (ptid), ptid_get_lwp (ptid),
-			ptid_get_tid (ptid));
-  if (ptid_lwp_p (ptid))
-    {
-      /* If ptid is a specific LWP, suspend all other LWPs in the process.  */
-      iterate_over_threads (resume_one_thread_cb, &ptid);
-    }
-  else
-    {
-      /* If ptid is a wildcard, resume all matching threads (they won't run
-	 until the process is continued however).  */
-      iterate_over_threads (resume_all_threads_cb, &ptid);
-      ptid = inferior_ptid;
-    }
-  super_resume (ops, ptid, step, signo);
-}
-
 #ifdef TDP_RFPPWAIT
 /*
   To catch fork events, PT_FOLLOW_FORK is set on every traced process
@@ -518,13 +554,13 @@ fbsd_resume (struct target_ops *ops,
   sake.  FreeBSD versions newer than 9.1 contain both fixes.
 */
 
-struct fbsd_fork_child_info
+struct fbsd_fork_info
 {
-  struct fbsd_fork_child_info *next;
-  ptid_t child;			/* Pid of new child.  */
+  struct fbsd_fork_info *next;
+  ptid_t ptid;
 };
 
-static struct fbsd_fork_child_info *fbsd_pending_children;
+static struct fbsd_fork_info *fbsd_pending_children;
 
 /* Record a new child process event that is reported before the
    corresponding fork event in the parent.  */
@@ -532,9 +568,9 @@ static struct fbsd_fork_child_info *fbsd_pending_children;
 static void
 fbsd_remember_child (ptid_t pid)
 {
-  struct fbsd_fork_child_info *info = XCNEW (struct fbsd_fork_child_info);
+  struct fbsd_fork_info *info = XCNEW (struct fbsd_fork_info);
 
-  info->child = pid;
+  info->ptid = pid;
   info->next = fbsd_pending_children;
   fbsd_pending_children = info;
 }
@@ -545,26 +581,147 @@ fbsd_remember_child (ptid_t pid)
 static ptid_t
 fbsd_is_child_pending (pid_t pid)
 {
-  struct fbsd_fork_child_info *info, *prev;
+  struct fbsd_fork_info *info, *prev;
   ptid_t ptid;
 
   prev = NULL;
   for (info = fbsd_pending_children; info; prev = info, info = info->next)
     {
-      if (ptid_get_pid (info->child) == pid)
+      if (ptid_get_pid (info->ptid) == pid)
 	{
 	  if (prev == NULL)
 	    fbsd_pending_children = info->next;
 	  else
 	    prev->next = info->next;
-	  ptid = info->child;
+	  ptid = info->ptid;
 	  xfree (info);
 	  return ptid;
 	}
     }
   return null_ptid;
 }
+
+#ifndef PTRACE_VFORK
+static struct fbsd_fork_info *fbsd_pending_vfork_done;
+
+/* Record a pending vfork done event.  */
+
+static void
+fbsd_add_vfork_done (ptid_t pid)
+{
+  struct fbsd_fork_info *info = XCNEW (struct fbsd_fork_info);
+
+  info->ptid = pid;
+  info->next = fbsd_pending_vfork_done;
+  fbsd_pending_vfork_done = info;
+}
+
+/* Check for a pending vfork done event for a specific PID.  */
+
+static int
+fbsd_is_vfork_done_pending (pid_t pid)
+{
+  struct fbsd_fork_info *info;
+
+  for (info = fbsd_pending_vfork_done; info != NULL; info = info->next)
+    {
+      if (ptid_get_pid (info->ptid) == pid)
+	return 1;
+    }
+  return 0;
+}
+
+/* Check for a pending vfork done event.  If one is found, remove it
+   from the list and return the PTID.  */
+
+static ptid_t
+fbsd_next_vfork_done (void)
+{
+  struct fbsd_fork_info *info;
+  ptid_t ptid;
+
+  if (fbsd_pending_vfork_done != NULL)
+    {
+      info = fbsd_pending_vfork_done;
+      fbsd_pending_vfork_done = info->next;
+      ptid = info->ptid;
+      xfree (info);
+      return ptid;
+    }
+  return null_ptid;
+}
 #endif
+#endif
+
+static int
+resume_one_thread_cb (struct thread_info *tp, void *data)
+{
+  ptid_t *ptid = (ptid_t *) data;
+  int request;
+
+  if (ptid_get_pid (tp->ptid) != ptid_get_pid (*ptid))
+    return 0;
+
+  if (ptid_get_lwp (tp->ptid) == ptid_get_lwp (*ptid))
+    request = PT_RESUME;
+  else
+    request = PT_SUSPEND;
+
+  if (ptrace (request, ptid_get_lwp (tp->ptid), NULL, 0) == -1)
+    perror_with_name (("ptrace"));
+  return 0;
+}
+
+static int
+resume_all_threads_cb (struct thread_info *tp, void *data)
+{
+  ptid_t *filter = (ptid_t *) data;
+
+  if (!ptid_match (tp->ptid, *filter))
+    return 0;
+
+  if (ptrace (PT_RESUME, ptid_get_lwp (tp->ptid), NULL, 0) == -1)
+    perror_with_name (("ptrace"));
+  return 0;
+}
+
+/* Implement the "to_resume" target_ops method.  */
+
+static void
+fbsd_resume (struct target_ops *ops,
+	     ptid_t ptid, int step, enum gdb_signal signo)
+{
+#if defined(TDP_RFPPWAIT) && !defined(PTRACE_VFORK)
+  pid_t pid;
+
+  /* Don't PT_CONTINUE a process which has a pending vfork done event.  */
+  if (ptid_equal (minus_one_ptid, ptid))
+    pid = ptid_get_pid (inferior_ptid);
+  else
+    pid = ptid_get_pid (ptid);
+  if (fbsd_is_vfork_done_pending (pid))
+    return;
+#endif
+
+  if (debug_fbsd_lwp)
+    fprintf_unfiltered (gdb_stdlog,
+			"FLWP: fbsd_resume for ptid (%d, %ld, %ld)\n",
+			ptid_get_pid (ptid), ptid_get_lwp (ptid),
+			ptid_get_tid (ptid));
+  if (ptid_lwp_p (ptid))
+    {
+      /* If ptid is a specific LWP, suspend all other LWPs in the process.  */
+      iterate_over_threads (resume_one_thread_cb, &ptid);
+    }
+  else
+    {
+      /* If ptid is a wildcard, resume all matching threads (they won't run
+	 until the process is continued however).  */
+      iterate_over_threads (resume_all_threads_cb, &ptid);
+      ptid = inferior_ptid;
+    }
+  super_resume (ops, ptid, step, signo);
+}
 
 /* Wait for the child specified by PTID to do something.  Return the
    process ID of the child, or MINUS_ONE_PTID in case of error; store
@@ -579,6 +736,14 @@ fbsd_wait (struct target_ops *ops,
 
   while (1)
     {
+#ifndef PTRACE_VFORK
+      wptid = fbsd_next_vfork_done ();
+      if (!ptid_equal (wptid, null_ptid))
+	{
+	  ourstatus->kind = TARGET_WAITKIND_VFORK_DONE;
+	  return wptid;
+	}
+#endif
       wptid = super_wait (ops, ptid, ourstatus, target_options);
       if (ourstatus->kind == TARGET_WAITKIND_STOPPED)
 	{
@@ -654,12 +819,18 @@ fbsd_wait (struct target_ops *ops,
 #ifdef TDP_RFPPWAIT
 	  if (pl.pl_flags & PL_FLAG_FORKED)
 	    {
+#ifndef PTRACE_VFORK
 	      struct kinfo_proc kp;
+#endif
 	      ptid_t child_ptid;
 	      pid_t child;
 
 	      child = pl.pl_child_pid;
 	      ourstatus->kind = TARGET_WAITKIND_FORKED;
+#ifdef PTRACE_VFORK
+	      if (pl.pl_flags & PL_FLAG_VFORKED)
+		ourstatus->kind = TARGET_WAITKIND_VFORKED;
+#endif
 
 	      /* Make sure the other end of the fork is stopped too.  */
 	      child_ptid = fbsd_is_child_pending (child);
@@ -678,11 +849,16 @@ fbsd_wait (struct target_ops *ops,
 		  child_ptid = ptid_build (child, pl.pl_lwpid, 0);
 		}
 
+	      /* Enable additional events on the child process.  */
+	      fbsd_enable_proc_events (ptid_get_pid (child_ptid));
+
+#ifndef PTRACE_VFORK
 	      /* For vfork, the child process will have the P_PPWAIT
 		 flag set.  */
 	      fbsd_fetch_kinfo_proc (child, &kp);
 	      if (kp.ki_flag & P_PPWAIT)
 		ourstatus->kind = TARGET_WAITKIND_VFORKED;
+#endif
 	      ourstatus->value.related_pid = child_ptid;
 
 	      return wptid;
@@ -696,6 +872,14 @@ fbsd_wait (struct target_ops *ops,
 	      fbsd_remember_child (wptid);
 	      continue;
 	    }
+
+#ifdef PTRACE_VFORK
+	  if (pl.pl_flags & PL_FLAG_VFORK_DONE)
+	    {
+	      ourstatus->kind = TARGET_WAITKIND_VFORK_DONE;
+	      return wptid;
+	    }
+#endif
 #endif
 
 #ifdef PL_FLAG_EXEC
@@ -707,6 +891,40 @@ fbsd_wait (struct target_ops *ops,
 	      return wptid;
 	    }
 #endif
+
+	  /* Note that PL_FLAG_SCE is set for any event reported while
+	     a thread is executing a system call in the kernel.  In
+	     particular, signals that interrupt a sleep in a system
+	     call will report this flag as part of their event.  Stops
+	     explicitly for system call entry and exit always use
+	     SIGTRAP, so only treat SIGTRAP events as system call
+	     entry/exit events.  */
+	  if (pl.pl_flags & (PL_FLAG_SCE | PL_FLAG_SCX)
+	      && ourstatus->value.sig == SIGTRAP)
+	    {
+#ifdef HAVE_STRUCT_PTRACE_LWPINFO_PL_SYSCALL_CODE
+	      if (catch_syscall_enabled ())
+		{
+		  if (catching_syscall_number (pl.pl_syscall_code))
+		    {
+		      if (pl.pl_flags & PL_FLAG_SCE)
+			ourstatus->kind = TARGET_WAITKIND_SYSCALL_ENTRY;
+		      else
+			ourstatus->kind = TARGET_WAITKIND_SYSCALL_RETURN;
+		      ourstatus->value.syscall_number = pl.pl_syscall_code;
+		      return wptid;
+		    }
+		}
+#endif
+	      /* If the core isn't interested in this event, just
+		 continue the process explicitly and wait for another
+		 event.  Note that PT_SYSCALL is "sticky" on FreeBSD
+		 and once system call stops are enabled on a process
+		 it stops for all system call entries and exits.  */
+	      if (ptrace (PT_CONTINUE, pid, (caddr_t) 1, 0) == -1)
+		perror_with_name (("ptrace"));
+	      continue;
+	    }
 	}
       return wptid;
     }
@@ -720,7 +938,7 @@ static int
 fbsd_follow_fork (struct target_ops *ops, int follow_child,
 			int detach_fork)
 {
-  if (!follow_child)
+  if (!follow_child && detach_fork)
     {
       struct thread_info *tp = inferior_thread ();
       pid_t child_pid = ptid_get_pid (tp->pending_follow.value.related_pid);
@@ -730,6 +948,35 @@ fbsd_follow_fork (struct target_ops *ops, int follow_child,
 
       if (ptrace (PT_DETACH, child_pid, (PTRACE_TYPE_ARG3)1, 0) == -1)
 	perror_with_name (("ptrace"));
+
+#ifndef PTRACE_VFORK
+      if (tp->pending_follow.kind == TARGET_WAITKIND_VFORKED)
+	{
+	  /* We can't insert breakpoints until the child process has
+	     finished with the shared memory region.  The parent
+	     process doesn't wait for the child process to exit or
+	     exec until after it has been resumed from the ptrace stop
+	     to report the fork.  Once it has been resumed it doesn't
+	     stop again before returning to userland, so there is no
+	     reliable way to wait on the parent.
+
+	     We can't stay attached to the child to wait for an exec
+	     or exit because it may invoke ptrace(PT_TRACE_ME)
+	     (e.g. if the parent process is a debugger forking a new
+	     child process).
+
+	     In the end, the best we can do is to make sure it runs
+	     for a little while.  Hopefully it will be out of range of
+	     any breakpoints we reinsert.  Usually this is only the
+	     single-step breakpoint at vfork's return point.  */
+
+	  usleep (10000);
+
+	  /* Schedule a fake VFORK_DONE event to report on the next
+	     wait.  */
+	  fbsd_add_vfork_done (inferior_ptid);
+	}
+#endif
     }
 
   return 0;
@@ -758,20 +1005,6 @@ fbsd_remove_vfork_catchpoint (struct target_ops *self, int pid)
 {
   return 0;
 }
-
-/* Enable fork tracing for a specific process.
-   
-   To catch fork events, PT_FOLLOW_FORK is set on every traced process
-   to enable stops on returns from fork or vfork.  Note that both the
-   parent and child will always stop, even if system call stops are
-   not enabled.  */
-
-static void
-fbsd_enable_follow_fork (pid_t pid)
-{
-  if (ptrace (PT_FOLLOW_FORK, pid, (PTRACE_TYPE_ARG3)0, 1) == -1)
-    perror_with_name (("ptrace"));
-}
 #endif
 
 /* Implement the "to_post_startup_inferior" target_ops method.  */
@@ -779,12 +1012,7 @@ fbsd_enable_follow_fork (pid_t pid)
 static void
 fbsd_post_startup_inferior (struct target_ops *self, ptid_t pid)
 {
-#ifdef TDP_RFPPWAIT
-  fbsd_enable_follow_fork (ptid_get_pid (pid));
-#endif
-#ifdef PT_LWP_EVENTS
-  fbsd_enable_lwp_events (ptid_get_pid (pid));
-#endif
+  fbsd_enable_proc_events (ptid_get_pid (pid));
 }
 
 /* Implement the "to_post_attach" target_ops method.  */
@@ -792,12 +1020,7 @@ fbsd_post_startup_inferior (struct target_ops *self, ptid_t pid)
 static void
 fbsd_post_attach (struct target_ops *self, int pid)
 {
-#ifdef TDP_RFPPWAIT
-  fbsd_enable_follow_fork (pid);
-#endif
-#ifdef PT_LWP_EVENTS
-  fbsd_enable_lwp_events (pid);
-#endif
+  fbsd_enable_proc_events (pid);
   fbsd_add_threads (pid);
 }
 
@@ -817,6 +1040,19 @@ fbsd_remove_exec_catchpoint (struct target_ops *self, int pid)
   return 0;
 }
 #endif
+
+#ifdef HAVE_STRUCT_PTRACE_LWPINFO_PL_SYSCALL_CODE
+static int
+fbsd_set_syscall_catchpoint (struct target_ops *self, int pid, int needed,
+			     int any_count, int table_size, int *table)
+{
+
+  /* Ignore the arguments.  inf-ptrace.c will use PT_SYSCALL which
+     will catch all system call entries and exits.  The system calls
+     are filtered by GDB rather than the kernel.  */
+  return 0;
+}
+#endif
 #endif
 
 void
@@ -824,6 +1060,10 @@ fbsd_nat_add_target (struct target_ops *t)
 {
   t->to_pid_to_exec_file = fbsd_pid_to_exec_file;
   t->to_find_memory_regions = fbsd_find_memory_regions;
+#ifdef KERN_PROC_AUXV
+  super_xfer_partial = t->to_xfer_partial;
+  t->to_xfer_partial = fbsd_xfer_partial;
+#endif
 #ifdef PT_LWPINFO
   t->to_thread_alive = fbsd_thread_alive;
   t->to_pid_to_str = fbsd_pid_to_str;
@@ -848,6 +1088,9 @@ fbsd_nat_add_target (struct target_ops *t)
 #ifdef PL_FLAG_EXEC
   t->to_insert_exec_catchpoint = fbsd_insert_exec_catchpoint;
   t->to_remove_exec_catchpoint = fbsd_remove_exec_catchpoint;
+#endif
+#ifdef HAVE_STRUCT_PTRACE_LWPINFO_PL_SYSCALL_CODE
+  t->to_set_syscall_catchpoint = fbsd_set_syscall_catchpoint;
 #endif
 #endif
   add_target (t);

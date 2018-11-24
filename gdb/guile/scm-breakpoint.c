@@ -425,8 +425,8 @@ gdbscm_register_breakpoint_x (SCM self)
 
   pending_breakpoint_scm = self;
   location = bp_smob->spec.location;
-  copy = location;
-  eloc = new_linespec_location (&copy);
+  copy = skip_spaces (location);
+  eloc = string_to_event_location_basic (&copy, current_language);
   cleanup = make_cleanup_delete_event_location (eloc);
 
   TRY
@@ -978,20 +978,16 @@ gdbscm_breakpoint_commands (SCM self)
     = bpscm_get_valid_breakpoint_smob_arg_unsafe (self, SCM_ARG1, FUNC_NAME);
   struct breakpoint *bp;
   long length;
-  struct ui_file *string_file;
-  struct cleanup *chain;
   SCM result;
-  char *cmdstr;
 
   bp = bp_smob->bp;
 
   if (bp->commands == NULL)
     return SCM_BOOL_F;
 
-  string_file = mem_fileopen ();
-  chain = make_cleanup_ui_file_delete (string_file);
+  string_file buf;
 
-  ui_out_redirect (current_uiout, string_file);
+  ui_out_redirect (current_uiout, &buf);
   TRY
     {
       print_command_lines (current_uiout, breakpoint_commands (bp), 0);
@@ -999,16 +995,12 @@ gdbscm_breakpoint_commands (SCM self)
   ui_out_redirect (current_uiout, NULL);
   CATCH (except, RETURN_MASK_ALL)
     {
-      do_cleanups (chain);
       gdbscm_throw_gdb_exception (except);
     }
   END_CATCH
 
-  cmdstr = ui_file_xstrdup (string_file, &length);
-  make_cleanup (xfree, cmdstr);
-  result = gdbscm_scm_from_c_string (cmdstr);
+  result = gdbscm_scm_from_c_string (buf.c_str ());
 
-  do_cleanups (chain);
   return result;
 }
 

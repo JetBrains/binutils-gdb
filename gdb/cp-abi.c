@@ -66,7 +66,7 @@ is_operator_name (const char *name)
 
 int
 baseclass_offset (struct type *type, int index, const gdb_byte *valaddr,
-		  int embedded_offset, CORE_ADDR address,
+		  LONGEST embedded_offset, CORE_ADDR address,
 		  const struct value *val)
 {
   int res = 0;
@@ -106,7 +106,7 @@ value_virtual_fn_field (struct value **arg1p,
 
 struct type *
 value_rtti_type (struct value *v, int *full,
-		 int *top, int *using_enc)
+		 LONGEST *top, int *using_enc)
 {
   struct type *ret = NULL;
 
@@ -212,7 +212,7 @@ cplus_type_from_type_info (struct value *value)
 
 /* See cp-abi.h.  */
 
-char *
+std::string
 cplus_typename_from_type_info (struct value *value)
 {
   if (current_cp_abi.get_typename_from_type_info == NULL)

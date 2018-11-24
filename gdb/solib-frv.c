@@ -517,8 +517,6 @@ static int
 enable_break2 (void)
 {
   enum bfd_endian byte_order = gdbarch_byte_order (target_gdbarch ());
-  int success = 0;
-  char **bkpt_namep;
   asection *interp_sect;
 
   if (enable_break2_done)
@@ -764,14 +762,6 @@ enable_break (void)
   return 1;
 }
 
-/* Implement the "special_symbol_handling" target_so_ops method.  */
-
-static void
-frv_special_symbol_handling (void)
-{
-  /* Nothing needed for FRV.  */
-}
-
 static void
 frv_relocate_main_executable (void)
 {
@@ -975,7 +965,6 @@ frv_fdpic_find_canonical_descriptor (CORE_ADDR entry_point)
   const char *name;
   CORE_ADDR addr;
   CORE_ADDR got_value;
-  struct int_elf32_fdpic_loadmap *ldm = 0;
   struct symbol *sym;
 
   /* Fetch the corresponding global pointer for the entry point.  */
@@ -1178,7 +1167,6 @@ _initialize_frv_solib (void)
   frv_so_ops.free_so = frv_free_so;
   frv_so_ops.clear_solib = frv_clear_solib;
   frv_so_ops.solib_create_inferior_hook = frv_solib_create_inferior_hook;
-  frv_so_ops.special_symbol_handling = frv_special_symbol_handling;
   frv_so_ops.current_sos = frv_current_sos;
   frv_so_ops.open_symbol_file_object = open_symbol_file_object;
   frv_so_ops.in_dynsym_resolve_code = frv_in_dynsym_resolve_code;

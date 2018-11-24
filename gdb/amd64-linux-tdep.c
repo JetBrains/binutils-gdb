@@ -44,6 +44,7 @@
 #include "features/i386/amd64-linux.c"
 #include "features/i386/amd64-avx-linux.c"
 #include "features/i386/amd64-mpx-linux.c"
+#include "features/i386/amd64-avx-mpx-linux.c"
 #include "features/i386/amd64-avx512-linux.c"
 
 #include "features/i386/x32-linux.c"
@@ -191,7 +192,7 @@ amd64_linux_sigtramp_p (struct frame_info *this_frame)
      the preceding function.  This should always be sigaction,
      __sigaction, or __libc_sigaction (all aliases to the same
      function).  */
-  if (name == NULL || strstr (name, "sigaction") != NULL)
+  if (name == NULL || gnulib::strstr (name, "sigaction") != NULL)
     return (amd64_linux_sigtramp_start (this_frame) != 0);
 
   return (strcmp ("__restore_rt", name) == 0);
@@ -1591,6 +1592,11 @@ amd64_linux_core_read_description (struct gdbarch *gdbarch,
 	return tdesc_x32_avx_linux;  /* No x32 MPX falling back to AVX.  */
       else
 	return tdesc_amd64_mpx_linux;
+    case X86_XSTATE_AVX_MPX_MASK:
+      if (gdbarch_ptr_bit (gdbarch) == 32)
+	return tdesc_x32_avx_linux;  /* No x32 MPX falling back to AVX.  */
+      else
+	return tdesc_amd64_avx_mpx_linux;
     case X86_XSTATE_AVX_MASK:
       if (gdbarch_ptr_bit (gdbarch) == 32)
 	return tdesc_x32_avx_linux;
@@ -1747,8 +1753,6 @@ amd64_dtrace_parse_probe_argument (struct gdbarch *gdbarch,
 				   struct parser_state *pstate,
 				   int narg)
 {
-  enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
-  struct frame_info *this_frame = get_selected_frame (NULL);
   struct stoken str;
 
   /* DTrace probe arguments can be found on the ABI-defined places for
@@ -1778,7 +1782,6 @@ amd64_dtrace_parse_probe_argument (struct gdbarch *gdbarch,
   else
     {
       /* Additional arguments are passed on the stack.  */
-      CORE_ADDR sp;
       const char *regname = user_reg_map_regnum_to_name (gdbarch, AMD64_RSP_REGNUM);
 
       /* Displacement.  */
@@ -1858,6 +1861,10 @@ amd64_linux_init_abi_common(struct gdbarch_info info, struct gdbarch *gdbarch)
 
   set_gdbarch_process_record (gdbarch, i386_process_record);
   set_gdbarch_process_record_signal (gdbarch, amd64_linux_record_signal);
+
+  set_gdbarch_get_siginfo_type (gdbarch, x86_linux_get_siginfo_type);
+  set_gdbarch_handle_segmentation_fault (gdbarch,
+					 i386_linux_handle_segmentation_fault);
 }
 
 static void
@@ -2307,6 +2314,7 @@ _initialize_amd64_linux_tdep (void)
   initialize_tdesc_amd64_linux ();
   initialize_tdesc_amd64_avx_linux ();
   initialize_tdesc_amd64_mpx_linux ();
+  initialize_tdesc_amd64_avx_mpx_linux ();
   initialize_tdesc_amd64_avx512_linux ();
 
   initialize_tdesc_x32_linux ();

@@ -23,7 +23,6 @@
 * ARM Opcodes::              Opcodes
 * ARM Mapping Symbols::      Mapping Symbols
 * ARM Unwinding Tutorial::   Unwinding
-* ARM Section Attribute::    Section Attribute
 @end menu
 
 @node ARM Options
@@ -120,14 +119,20 @@ recognized:
 @code{cortex-a8},
 @code{cortex-a9},
 @code{cortex-a15},
+@code{cortex-a17},
+@code{cortex-a32},
 @code{cortex-a35},
 @code{cortex-a53},
 @code{cortex-a57},
 @code{cortex-a72},
+@code{cortex-a73},
 @code{cortex-r4},
 @code{cortex-r4f},
 @code{cortex-r5},
 @code{cortex-r7},
+@code{cortex-r8},
+@code{cortex-m33},
+@code{cortex-m23},
 @code{cortex-m7},
 @code{cortex-m4},
 @code{cortex-m3},
@@ -137,6 +142,7 @@ recognized:
 @code{exynos-m1},
 @code{marvell-pj4},
 @code{marvell-whitney},
+@code{falkor},
 @code{qdf24xx},
 @code{xgene1},
 @code{xgene2},
@@ -183,6 +189,8 @@ architectures),
 @code{virt} (Virtualization Extensions for v7-A architecture, implies
 @code{idiv}),
 @code{pan} (Priviliged Access Never Extensions for v8-A architecture),
+@code{ras} (Reliability, Availability and Serviceability extensions
+for v8-A architecture),
 @code{rdma} (ARMv8.1 Advanced SIMD extensions for v8-A architecture, implies
 @code{simd})
 and
@@ -1239,14 +1247,3 @@ know more about the object-file format used to represent unwind
 information, you may consult the @cite{Exception Handling ABI for the
 ARM Architecture} available from @uref{http://infocenter.arm.com}.
 
-@node ARM Section Attribute
-@section Section Attribute
-
-@cindex ARM section attribute
-@table @code
-@item y
-This letter specifies a text section with NOREAD attribute for
-hardware that supports execute-only memory region.  If not supported
-by hardware a section with this attribute will be treated as normal
-text section.
-@end table

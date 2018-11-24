@@ -37,12 +37,6 @@ struct ui_out_hdr
     struct ui_out_hdr *next;
   };
 
-/* Maintain a stack so that the info applicable to the inner most list
-   is always available.  Stack/nested level 0 is reserved for the
-   top-level result.  */
-
-enum { MAX_UI_OUT_LEVELS = 8 };
-
 struct ui_out_level
   {
     /* Count each field; the first element is for non-list fields.  */
@@ -123,8 +117,7 @@ current_level (struct ui_out *uiout)
 /* Create a new level, of TYPE.  Return the new level's index.  */
 static int
 push_level (struct ui_out *uiout,
-	    enum ui_out_type type,
-	    const char *id)
+	    enum ui_out_type type)
 {
   struct ui_out_level *current;
 
@@ -152,85 +145,6 @@ pop_level (struct ui_out *uiout,
   uiout->level--;
   return uiout->level + 1;
 }
-
-
-/* These are the default implementation functions.  */
-
-static void default_table_begin (struct ui_out *uiout, int nbrofcols,
-				 int nr_rows, const char *tblid);
-static void default_table_body (struct ui_out *uiout);
-static void default_table_end (struct ui_out *uiout);
-static void default_table_header (struct ui_out *uiout, int width,
-				  enum ui_align alig, const char *col_name,
-				  const char *colhdr);
-static void default_begin (struct ui_out *uiout,
-			   enum ui_out_type type,
-			   int level, const char *id);
-static void default_end (struct ui_out *uiout,
-			 enum ui_out_type type,
-			 int level);
-static void default_field_int (struct ui_out *uiout, int fldno, int width,
-			       enum ui_align alig,
-			       const char *fldname,
-			       int value);
-static void default_field_skip (struct ui_out *uiout, int fldno, int width,
-				enum ui_align alig,
-				const char *fldname);
-static void default_field_string (struct ui_out *uiout, int fldno, int width,
-				  enum ui_align align,
-				  const char *fldname,
-				  const char *string);
-static void default_field_fmt (struct ui_out *uiout, int fldno,
-			       int width, enum ui_align align,
-			       const char *fldname,
-			       const char *format,
-			       va_list args) ATTRIBUTE_PRINTF (6, 0);
-static void default_spaces (struct ui_out *uiout, int numspaces);
-static void default_text (struct ui_out *uiout, const char *string);
-static void default_message (struct ui_out *uiout, int verbosity,
-			     const char *format,
-			     va_list args) ATTRIBUTE_PRINTF (3, 0);
-static void default_wrap_hint (struct ui_out *uiout, char *identstring);
-static void default_flush (struct ui_out *uiout);
-static void default_data_destroy (struct ui_out *uiout);
-
-/* This is the default ui-out implementation functions vector.  */
-
-const struct ui_out_impl default_ui_out_impl =
-{
-  default_table_begin,
-  default_table_body,
-  default_table_end,
-  default_table_header,
-  default_begin,
-  default_end,
-  default_field_int,
-  default_field_skip,
-  default_field_string,
-  default_field_fmt,
-  default_spaces,
-  default_text,
-  default_message,
-  default_wrap_hint,
-  default_flush,
-  NULL, /* redirect */
-  default_data_destroy,
-  0, /* Does not need MI hacks.  */
-};
-
-/* The default ui_out */
-
-struct ui_out def_uiout =
-{
-  0,				/* flags */
-  &default_ui_out_impl,		/* impl */
-};
-
-/* Pointer to current ui_out */
-/* FIXME: This should not be a global, but something passed down from main.c
-   or top.c.  */
-
-struct ui_out *current_uiout = &def_uiout;
 
 /* These are the interfaces to implementation functions.  */
 
@@ -400,7 +314,7 @@ specified after table_body."));
     verify_field (uiout, &fldno, &width, &align);
   }
 
-  new_level = push_level (uiout, type, id);
+  new_level = push_level (uiout, type);
 
   /* If the push puts us at the same level as a table row entry, we've
      got a new table row.  Put the header pointer back to the start.  */
@@ -509,18 +423,13 @@ ui_out_field_core_addr (struct ui_out *uiout,
 void
 ui_out_field_stream (struct ui_out *uiout,
 		     const char *fldname,
-		     struct ui_file *stream)
+		     string_file &stream)
 {
-  long length;
-  char *buffer = ui_file_xstrdup (stream, &length);
-  struct cleanup *old_cleanup = make_cleanup (xfree, buffer);
-
-  if (length > 0)
-    ui_out_field_string (uiout, fldname, buffer);
+  if (!stream.empty ())
+    ui_out_field_string (uiout, fldname, stream.c_str ());
   else
     ui_out_field_skip (uiout, fldname);
-  ui_file_rewind (stream);
-  do_cleanups (old_cleanup);
+  stream.rewind ();
 }
 
 /* Used to omit a field.  */
@@ -656,111 +565,6 @@ int
 ui_out_is_mi_like_p (struct ui_out *uiout)
 {
   return uiout->impl->is_mi_like_p;
-}
-
-/* Default gdb-out hook functions.  */
-
-static void
-default_table_begin (struct ui_out *uiout, int nbrofcols,
-		     int nr_rows,
-		     const char *tblid)
-{
-}
-
-static void
-default_table_body (struct ui_out *uiout)
-{
-}
-
-static void
-default_table_end (struct ui_out *uiout)
-{
-}
-
-static void
-default_table_header (struct ui_out *uiout, int width, enum ui_align alignment,
-		      const char *col_name,
-		      const char *colhdr)
-{
-}
-
-static void
-default_begin (struct ui_out *uiout,
-	       enum ui_out_type type,
-	       int level,
-	       const char *id)
-{
-}
-
-static void
-default_end (struct ui_out *uiout,
-	     enum ui_out_type type,
-	     int level)
-{
-}
-
-static void
-default_field_int (struct ui_out *uiout, int fldno, int width,
-		   enum ui_align align,
-		   const char *fldname, int value)
-{
-}
-
-static void
-default_field_skip (struct ui_out *uiout, int fldno, int width,
-		    enum ui_align align, const char *fldname)
-{
-}
-
-static void
-default_field_string (struct ui_out *uiout,
-		      int fldno,
-		      int width,
-		      enum ui_align align,
-		      const char *fldname,
-		      const char *string)
-{
-}
-
-static void
-default_field_fmt (struct ui_out *uiout, int fldno, int width,
-		   enum ui_align align,
-		   const char *fldname,
-		   const char *format,
-		   va_list args)
-{
-}
-
-static void
-default_spaces (struct ui_out *uiout, int numspaces)
-{
-}
-
-static void
-default_text (struct ui_out *uiout, const char *string)
-{
-}
-
-static void
-default_message (struct ui_out *uiout, int verbosity,
-		 const char *format,
-		 va_list args)
-{
-}
-
-static void
-default_wrap_hint (struct ui_out *uiout, char *identstring)
-{
-}
-
-static void
-default_flush (struct ui_out *uiout)
-{
-}
-
-static void
-default_data_destroy (struct ui_out *uiout)
-{
 }
 
 /* Interface to the implementation functions.  */
@@ -1092,7 +896,7 @@ ui_out_query_field (struct ui_out *uiout, int colno,
   return 0;
 }
 
-/* Initalize private members at startup.  */
+/* Initialize private members at startup.  */
 
 struct ui_out *
 ui_out_new (const struct ui_out_impl *impl, void *data,

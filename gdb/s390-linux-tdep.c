@@ -58,6 +58,7 @@
 #include "elf/common.h"
 #include "elf/s390.h"
 #include "elf-bfd.h"
+#include <algorithm>
 
 #include "features/s390-linux32.c"
 #include "features/s390-linux32v1.c"
@@ -165,6 +166,40 @@ s390_write_pc (struct regcache *regcache, CORE_ADDR pc)
      continues to restart the system call at this point.  */
   if (register_size (gdbarch, S390_SYSTEM_CALL_REGNUM) > 0)
     regcache_cooked_write_unsigned (regcache, S390_SYSTEM_CALL_REGNUM, 0);
+}
+
+/* The "guess_tracepoint_registers" gdbarch method.  */
+
+static void
+s390_guess_tracepoint_registers (struct gdbarch *gdbarch,
+				 struct regcache *regcache,
+				 CORE_ADDR addr)
+{
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  int sz = register_size (gdbarch, S390_PSWA_REGNUM);
+  gdb_byte *reg = (gdb_byte *) alloca (sz);
+  ULONGEST pswm, pswa;
+
+  /* Set PSWA from the location and a default PSWM (the only part we're
+     unlikely to get right is the CC).  */
+  if (tdep->abi == ABI_LINUX_S390)
+    {
+      /* 31-bit PSWA needs high bit set (it's very unlikely the target
+	 was in 24-bit mode).  */
+      pswa = addr | 0x80000000UL;
+      pswm = 0x070d0000UL;
+    }
+  else
+    {
+      pswa = addr;
+      pswm = 0x0705000180000000ULL;
+    }
+
+  store_unsigned_integer (reg, sz, gdbarch_byte_order (gdbarch), pswa);
+  regcache_raw_supply (regcache, S390_PSWA_REGNUM, reg);
+
+  store_unsigned_integer (reg, sz, gdbarch_byte_order (gdbarch), pswm);
+  regcache_raw_supply (regcache, S390_PSWM_REGNUM, reg);
 }
 
 
@@ -525,6 +560,100 @@ s390_pseudo_register_reggroup_p (struct gdbarch *gdbarch, int regnum,
   return default_register_reggroup_p (gdbarch, regnum, group);
 }
 
+/* The "ax_pseudo_register_collect" gdbarch method.  */
+
+static int
+s390_ax_pseudo_register_collect (struct gdbarch *gdbarch,
+				 struct agent_expr *ax, int regnum)
+{
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  if (regnum == tdep->pc_regnum)
+    {
+      ax_reg_mask (ax, S390_PSWA_REGNUM);
+    }
+  else if (regnum == tdep->cc_regnum)
+    {
+      ax_reg_mask (ax, S390_PSWM_REGNUM);
+    }
+  else if (regnum_is_gpr_full (tdep, regnum))
+    {
+      regnum -= tdep->gpr_full_regnum;
+      ax_reg_mask (ax, S390_R0_REGNUM + regnum);
+      ax_reg_mask (ax, S390_R0_UPPER_REGNUM + regnum);
+    }
+  else if (regnum_is_vxr_full (tdep, regnum))
+    {
+      regnum -= tdep->v0_full_regnum;
+      ax_reg_mask (ax, S390_F0_REGNUM + regnum);
+      ax_reg_mask (ax, S390_V0_LOWER_REGNUM + regnum);
+    }
+  else
+    {
+      internal_error (__FILE__, __LINE__, _("invalid regnum"));
+    }
+  return 0;
+}
+
+/* The "ax_pseudo_register_push_stack" gdbarch method.  */
+
+static int
+s390_ax_pseudo_register_push_stack (struct gdbarch *gdbarch,
+				    struct agent_expr *ax, int regnum)
+{
+  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  if (regnum == tdep->pc_regnum)
+    {
+      ax_reg (ax, S390_PSWA_REGNUM);
+      if (register_size (gdbarch, S390_PSWA_REGNUM) == 4)
+	{
+	  ax_zero_ext (ax, 31);
+	}
+    }
+  else if (regnum == tdep->cc_regnum)
+    {
+      ax_reg (ax, S390_PSWM_REGNUM);
+      if (register_size (gdbarch, S390_PSWA_REGNUM) == 4)
+	ax_const_l (ax, 12);
+      else
+	ax_const_l (ax, 44);
+      ax_simple (ax, aop_rsh_unsigned);
+      ax_zero_ext (ax, 2);
+    }
+  else if (regnum_is_gpr_full (tdep, regnum))
+    {
+      regnum -= tdep->gpr_full_regnum;
+      ax_reg (ax, S390_R0_REGNUM + regnum);
+      ax_reg (ax, S390_R0_UPPER_REGNUM + regnum);
+      ax_const_l (ax, 32);
+      ax_simple (ax, aop_lsh);
+      ax_simple (ax, aop_bit_or);
+    }
+  else if (regnum_is_vxr_full (tdep, regnum))
+    {
+      /* Too large to stuff on the stack.  */
+      return 1;
+    }
+  else
+    {
+      internal_error (__FILE__, __LINE__, _("invalid regnum"));
+    }
+  return 0;
+}
+
+/* The "gen_return_address" gdbarch method.  Since this is supposed to be
+   just a best-effort method, and we don't really have the means to run
+   the full unwinder here, just collect the link register.  */
+
+static void
+s390_gen_return_address (struct gdbarch *gdbarch,
+			 struct agent_expr *ax, struct axs_value *value,
+			 CORE_ADDR scope)
+{
+  value->type = register_type (gdbarch, S390_R14_REGNUM);
+  value->kind = axs_lvalue_register;
+  value->u.reg = S390_R14_REGNUM;
+}
+
 
 /* A helper for s390_software_single_step, decides if an instruction
    is a partial-execution instruction that needs to be executed until
@@ -593,7 +722,7 @@ s390_is_partial_instruction (struct gdbarch *gdbarch, CORE_ADDR loc, int *len)
    process about 4kiB of it each time, leading to O(n**2) memory and time
    complexity.  */
 
-static int
+static VEC (CORE_ADDR) *
 s390_software_single_step (struct frame_info *frame)
 {
   struct gdbarch *gdbarch = get_frame_arch (frame);
@@ -602,33 +731,33 @@ s390_software_single_step (struct frame_info *frame)
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   int len;
   uint16_t insn;
+  VEC (CORE_ADDR) *next_pcs = NULL;
 
   /* Special handling only if recording.  */
   if (!record_full_is_used ())
-    return 0;
+    return NULL;
 
   /* First, match a partial instruction.  */
   if (!s390_is_partial_instruction (gdbarch, loc, &len))
-    return 0;
+    return NULL;
 
   loc += len;
 
   /* Second, look for a branch back to it.  */
   insn = read_memory_integer (loc, 2, byte_order);
   if (insn != 0xa714) /* BRC with mask 1 */
-    return 0;
+    return NULL;
 
   insn = read_memory_integer (loc + 2, 2, byte_order);
   if (insn != (uint16_t) -(len / 2))
-    return 0;
+    return NULL;
 
   loc += 4;
 
   /* Found it, step past the whole thing.  */
+  VEC_safe_push (CORE_ADDR, next_pcs, loc);
 
-  insert_single_step_breakpoint (gdbarch, aspace, loc);
-
-  return 1;
+  return next_pcs;
 }
 
 static int
@@ -716,7 +845,6 @@ s390_supply_tdb_regset (const struct regset *regset, struct regcache *regcache,
 {
   ULONGEST tdw;
   enum register_status ret;
-  int i;
 
   regcache_supply_regset (regset, regcache, regnum, regs, len);
   ret = regcache_cooked_read_unsigned (regcache, S390_TDB_DWORD0_REGNUM, &tdw);
@@ -801,7 +929,7 @@ s390_iterate_over_regset_sections (struct gdbarch *gdbarch,
     cb (".reg-s390-last-break", 8,
 	(gdbarch_ptr_bit (gdbarch) == 32
 	 ? &s390_last_break_regset : &s390x_last_break_regset),
-	"s930 last-break address", cb_data);
+	"s390 last-break address", cb_data);
 
   if (tdep->have_linux_v2)
     cb (".reg-s390-system-call", 4, &s390_system_call_regset,
@@ -1533,13 +1661,25 @@ s390_analyze_prologue (struct gdbarch *gdbarch,
 	    break;
 	}
 
+      /* BRC/BRCL -- branch relative on condition.  Ignore "branch
+	 never", branch to following instruction, and "conditional
+	 trap" (BRC +2).  Otherwise terminate search.  */
+      else if (is_ri (insn, op1_brc, op2_brc, &r1, &i2))
+	{
+	  if (r1 != 0 && i2 != 1 && i2 != 2)
+	    break;
+	}
+      else if (is_ril (insn, op1_brcl, op2_brcl, &r1, &i2))
+	{
+	  if (r1 != 0 && i2 != 3)
+	    break;
+	}
+
       /* Terminate search when hitting any other branch instruction.  */
       else if (is_rr (insn, op_basr, &r1, &r2)
 	       || is_rx (insn, op_bas, &r1, &d2, &x2, &b2)
 	       || is_rr (insn, op_bcr, &r1, &r2)
 	       || is_rx (insn, op_bc, &r1, &d2, &x2, &b2)
-	       || is_ri (insn, op1_brc, op2_brc, &r1, &i2)
-	       || is_ril (insn, op1_brcl, op2_brcl, &r1, &i2)
 	       || is_ril (insn, op1_brasl, op2_brasl, &r2, &i2))
 	break;
 
@@ -1595,7 +1735,7 @@ s390_skip_prologue (struct gdbarch *gdbarch, CORE_ADDR pc)
       CORE_ADDR post_prologue_pc
 	= skip_prologue_using_sal (gdbarch, func_addr);
       if (post_prologue_pc != 0)
-	return max (pc, post_prologue_pc);
+	return std::max (pc, post_prologue_pc);
     }
 
   skip_pc = s390_analyze_prologue (gdbarch, pc, (CORE_ADDR)-1, &data);
@@ -1977,9 +2117,12 @@ s390_prologue_frame_unwind_cache (struct frame_info *this_frame,
      bother searching for it -- with modern compilers this would be mostly
      pointless anyway.  Trust that we'll either have valid DWARF-2 CFI data
      or else a valid backchain ...  */
-  func = get_frame_func (this_frame);
-  if (!func)
-    return 0;
+  if (!get_frame_func_if_available (this_frame, &info->func))
+    {
+      info->func = -1;
+      return 0;
+    }
+  func = info->func;
 
   /* Try to analyze the prologue.  */
   result = s390_analyze_prologue (gdbarch, func,
@@ -2133,7 +2276,6 @@ s390_prologue_frame_unwind_cache (struct frame_info *this_frame,
       info->local_base = prev_sp - size;
     }
 
-  info->func = func;
   return 1;
 }
 
@@ -2146,7 +2288,7 @@ s390_backchain_frame_unwind_cache (struct frame_info *this_frame,
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   CORE_ADDR backchain;
   ULONGEST reg;
-  LONGEST sp;
+  LONGEST sp, tmp;
   int i;
 
   /* Set up ABI call-saved/call-clobbered registers.  */
@@ -2159,7 +2301,9 @@ s390_backchain_frame_unwind_cache (struct frame_info *this_frame,
 
   /* Get the backchain.  */
   reg = get_frame_register_unsigned (this_frame, S390_SP_REGNUM);
-  backchain = read_memory_unsigned_integer (reg, word_size, byte_order);
+  if (!safe_read_memory_integer (reg, word_size, byte_order, &tmp))
+    tmp = 0;
+  backchain = (CORE_ADDR) tmp;
 
   /* A zero backchain terminates the frame chain.  As additional
      sanity check, let's verify that the spill slot for SP in the
@@ -2231,7 +2375,11 @@ s390_frame_this_id (struct frame_info *this_frame,
     = s390_frame_unwind_cache (this_frame, this_prologue_cache);
 
   if (info->frame_base == -1)
-    return;
+    {
+      if (info->func != -1)
+	*this_id = frame_id_build_unavailable_stack (info->func);
+      return;
+    }
 
   *this_id = frame_id_build (info->frame_base, info->func);
 }
@@ -2240,7 +2388,6 @@ static struct value *
 s390_frame_prev_register (struct frame_info *this_frame,
 			  void **this_prologue_cache, int regnum)
 {
-  struct gdbarch *gdbarch = get_frame_arch (this_frame);
   struct s390_unwind_cache *info
     = s390_frame_unwind_cache (this_frame, this_prologue_cache);
 
@@ -2887,8 +3034,6 @@ s390_dwarf2_frame_init_reg (struct gdbarch *gdbarch, int regnum,
 			    struct dwarf2_frame_state_reg *reg,
 			    struct frame_info *this_frame)
 {
-  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
-
   /* The condition code (and thus PSW mask) is call-clobbered.  */
   if (regnum == S390_PSWM_REGNUM)
     reg->how = DWARF2_FRAME_REG_UNDEFINED;
@@ -3405,17 +3550,9 @@ s390_return_value (struct gdbarch *gdbarch, struct value *function,
 
 
 /* Breakpoints.  */
+constexpr gdb_byte s390_break_insn[] = { 0x0, 0x1 };
 
-static const gdb_byte *
-s390_breakpoint_from_pc (struct gdbarch *gdbarch,
-			 CORE_ADDR *pcptr, int *lenptr)
-{
-  static const gdb_byte breakpoint[] = { 0x0, 0x1 };
-
-  *lenptr = sizeof (breakpoint);
-  return breakpoint;
-}
-
+typedef BP_MANIPULATION (s390_break_insn) s390_breakpoint;
 
 /* Address handling.  */
 
@@ -3640,7 +3777,6 @@ s390_record_gpr_h (struct gdbarch *gdbarch, struct regcache *regcache, int i)
 static int
 s390_record_vr (struct gdbarch *gdbarch, struct regcache *regcache, int i)
 {
-  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
   if (i < 16)
     {
       if (record_full_arch_list_add_reg (regcache, S390_F0_REGNUM + i))
@@ -3660,7 +3796,6 @@ static int
 s390_process_record (struct gdbarch *gdbarch, struct regcache *regcache,
                     CORE_ADDR addr)
 {
-  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
   uint16_t insn[3] = {0};
   /* Instruction as bytes.  */
   uint8_t ibyte[6];
@@ -7840,7 +7975,8 @@ s390_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
   set_gdbarch_decr_pc_after_break (gdbarch, 2);
   /* Stack grows downward.  */
   set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
-  set_gdbarch_breakpoint_from_pc (gdbarch, s390_breakpoint_from_pc);
+  set_gdbarch_breakpoint_kind_from_pc (gdbarch, s390_breakpoint::kind_from_pc);
+  set_gdbarch_sw_breakpoint_from_kind (gdbarch, s390_breakpoint::bp_from_kind);
   set_gdbarch_software_single_step (gdbarch, s390_software_single_step);
   set_gdbarch_displaced_step_hw_singlestep (gdbarch, s390_displaced_step_hw_singlestep);
   set_gdbarch_skip_prologue (gdbarch, s390_skip_prologue);
@@ -7857,12 +7993,18 @@ s390_gdbarch_init (struct gdbarch_info info, struct gdbarch_list *arches)
 					    s390_iterate_over_regset_sections);
   set_gdbarch_cannot_store_register (gdbarch, s390_cannot_store_register);
   set_gdbarch_write_pc (gdbarch, s390_write_pc);
+  set_gdbarch_guess_tracepoint_registers (gdbarch, s390_guess_tracepoint_registers);
   set_gdbarch_pseudo_register_read (gdbarch, s390_pseudo_register_read);
   set_gdbarch_pseudo_register_write (gdbarch, s390_pseudo_register_write);
   set_tdesc_pseudo_register_name (gdbarch, s390_pseudo_register_name);
   set_tdesc_pseudo_register_type (gdbarch, s390_pseudo_register_type);
   set_tdesc_pseudo_register_reggroup_p (gdbarch,
 					s390_pseudo_register_reggroup_p);
+  set_gdbarch_ax_pseudo_register_collect (gdbarch,
+					  s390_ax_pseudo_register_collect);
+  set_gdbarch_ax_pseudo_register_push_stack
+      (gdbarch, s390_ax_pseudo_register_push_stack);
+  set_gdbarch_gen_return_address (gdbarch, s390_gen_return_address);
   tdesc_use_registers (gdbarch, tdesc, tdesc_data);
   set_gdbarch_register_name (gdbarch, s390_register_name);
 

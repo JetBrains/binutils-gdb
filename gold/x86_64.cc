@@ -403,6 +403,33 @@ class Output_data_plt_x86_64_standard : public Output_data_plt_x86_64<size>
   static const unsigned char plt_eh_frame_fde[plt_eh_frame_fde_size];
 };
 
+template<int size>
+class Lazy_view
+{
+ public:
+  Lazy_view(Sized_relobj_file<size, false>* object, unsigned int data_shndx)
+    : object_(object), data_shndx_(data_shndx), view_(NULL), view_size_(0)
+  { }
+
+  inline unsigned char
+  operator[](size_t offset)
+  {
+    if (this->view_ == NULL)
+      this->view_ = this->object_->section_contents(this->data_shndx_,
+                                                    &this->view_size_,
+                                                    true);
+    if (offset >= this->view_size_)
+      return 0;
+    return this->view_[offset];
+  }
+
+ private:
+  Sized_relobj_file<size, false>* object_;
+  unsigned int data_shndx_;
+  const unsigned char* view_;
+  section_size_type view_size_;
+};
+
 // The x86_64 target class.
 // See the ABI at
 //   http://www.x86-64.org/documentation/abi.pdf
@@ -876,19 +903,62 @@ class Target_x86_64 : public Sized_target<size, false>
   // conversion from
   // mov foo@GOTPCREL(%rip), %reg
   // to lea foo(%rip), %reg.
-  static bool
-  can_convert_mov_to_lea(const Symbol* gsym)
+  template<class View_type>
+  static inline bool
+  can_convert_mov_to_lea(const Symbol* gsym, unsigned int r_type,
+                         size_t r_offset, View_type* view)
   {
     gold_assert(gsym != NULL);
-    return (gsym->type() != elfcpp::STT_GNU_IFUNC
-	    && !gsym->is_undefined ()
-	    && !gsym->is_from_dynobj()
-	    && !gsym->is_preemptible()
-	    && (!parameters->options().shared()
-		|| (gsym->visibility() != elfcpp::STV_DEFAULT
-		    && gsym->visibility() != elfcpp::STV_PROTECTED)
-		|| parameters->options().Bsymbolic())
-	    && strcmp(gsym->name(), "_DYNAMIC") != 0);
+    // We cannot do the conversion unless it's one of these relocations.
+    if (r_type != elfcpp::R_X86_64_GOTPCREL
+        && r_type != elfcpp::R_X86_64_GOTPCRELX
+        && r_type != elfcpp::R_X86_64_REX_GOTPCRELX)
+      return false;
+    // We cannot convert references to IFUNC symbols, or to symbols that
+    // are not local to the current module.
+    if (gsym->type() == elfcpp::STT_GNU_IFUNC
+        || gsym->is_undefined ()
+        || gsym->is_from_dynobj()
+        || gsym->is_preemptible())
+      return false;
+    // If we are building a shared object and the symbol is protected, we may
+    // need to go through the GOT.
+    if (parameters->options().shared()
+        && gsym->visibility() == elfcpp::STV_PROTECTED)
+      return false;
+    // We cannot convert references to the _DYNAMIC symbol.
+    if (strcmp(gsym->name(), "_DYNAMIC") == 0)
+      return false;
+    // Check for a MOV opcode.
+    return (*view)[r_offset - 2] == 0x8b;
+  }
+
+  // Convert
+  // callq *foo@GOTPCRELX(%rip) to
+  // addr32 callq foo
+  // and jmpq *foo@GOTPCRELX(%rip) to
+  // jmpq foo
+  // nop
+  template<class View_type>
+  static inline bool
+  can_convert_callq_to_direct(const Symbol* gsym, unsigned int r_type,
+			      size_t r_offset, View_type* view)
+  {
+    gold_assert(gsym != NULL);
+    // We cannot do the conversion unless it's a GOTPCRELX relocation.
+    if (r_type != elfcpp::R_X86_64_GOTPCRELX)
+      return false;
+    // We cannot convert references to IFUNC symbols, or to symbols that
+    // are not local to the current module.
+    if (gsym->type() == elfcpp::STT_GNU_IFUNC
+        || gsym->is_undefined ()
+        || gsym->is_from_dynobj()
+        || gsym->is_preemptible())
+      return false;
+    // Check for a CALLQ or JMPQ opcode.
+    return ((*view)[r_offset - 2] == 0xff
+            && ((*view)[r_offset - 1] == 0x15
+                || (*view)[r_offset - 1] == 0x25));
   }
 
   // Adjust TLS relocation type based on the options and whether this
@@ -1822,6 +1892,8 @@ template<int size>
 unsigned int
 Target_x86_64<size>::first_plt_entry_offset() const
 {
+  if (this->plt_ == NULL)
+    return 0;
   return this->plt_->first_plt_entry_offset();
 }
 
@@ -1831,6 +1903,8 @@ template<int size>
 unsigned int
 Target_x86_64<size>::plt_entry_size() const
 {
+  if (this->plt_ == NULL)
+    return 0;
   return this->plt_->get_plt_entry_size();
 }
 
@@ -2287,7 +2361,7 @@ Target_x86_64<size>::Scan::check_non_pic(Relobj* object, unsigned int r_type,
 	      && !gsym->is_undefined()
 	      && !gsym->is_preemptible()))
 	return;
-      /* Fall through.  */
+      // Fall through.
     case elfcpp::R_X86_64_32:
       // R_X86_64_32 is OK for x32.
       if (size == 32 && r_type == elfcpp::R_X86_64_32)
@@ -2931,19 +3005,24 @@ Target_x86_64<size>::Scan::global(Symbol_table* symtab,
 	// If we convert this from
 	// mov foo@GOTPCREL(%rip), %reg
 	// to lea foo(%rip), %reg.
+	// OR
+	// if we convert
+	// (callq|jmpq) *foo@GOTPCRELX(%rip) to
+	// (callq|jmpq) foo
 	// in Relocate::relocate, then there is nothing to do here.
-	if ((r_type == elfcpp::R_X86_64_GOTPCREL
-	     || r_type == elfcpp::R_X86_64_GOTPCRELX
-	     || r_type == elfcpp::R_X86_64_REX_GOTPCRELX)
-	    && reloc.get_r_offset() >= 2
-	    && Target_x86_64<size>::can_convert_mov_to_lea(gsym))
-	  {
-	    section_size_type stype;
-	    const unsigned char* view = object->section_contents(data_shndx,
-								 &stype, true);
-	    if (view[reloc.get_r_offset() - 2] == 0x8b)
-	      break;
-	  }
+
+        Lazy_view<size> view(object, data_shndx);
+        size_t r_offset = reloc.get_r_offset();
+        if (r_offset >= 2
+            && Target_x86_64<size>::can_convert_mov_to_lea(gsym, r_type,
+                                                           r_offset, &view))
+          break;
+
+	if (r_offset >= 2
+	    && Target_x86_64<size>::can_convert_callq_to_direct(gsym, r_type,
+								r_offset,
+								&view))
+          break;
 
 	if (gsym->final_value_is_known())
 	  {
@@ -3347,6 +3426,61 @@ Target_x86_64<size>::do_finalize_sections(
     }
 }
 
+// For x32, we need to handle PC-relative relocations using full 64-bit
+// arithmetic, so that we can detect relocation overflows properly.
+// This class overrides the pcrela32_check methods from the defaults in
+// Relocate_functions in reloc.h.
+
+template<int size>
+class X86_64_relocate_functions : public Relocate_functions<size, false>
+{
+ public:
+  typedef Relocate_functions<size, false> Base;
+
+  // Do a simple PC relative relocation with the addend in the
+  // relocation.
+  static inline typename Base::Reloc_status
+  pcrela32_check(unsigned char* view,
+		 typename elfcpp::Elf_types<64>::Elf_Addr value,
+		 typename elfcpp::Elf_types<64>::Elf_Swxword addend,
+		 typename elfcpp::Elf_types<64>::Elf_Addr address)
+  {
+    typedef typename elfcpp::Swap<32, false>::Valtype Valtype;
+    Valtype* wv = reinterpret_cast<Valtype*>(view);
+    value = value + addend - address;
+    elfcpp::Swap<32, false>::writeval(wv, value);
+    return (Bits<32>::has_overflow(value)
+	    ? Base::RELOC_OVERFLOW : Base::RELOC_OK);
+  }
+
+  // Do a simple PC relative relocation with a Symbol_value with the
+  // addend in the relocation.
+  static inline typename Base::Reloc_status
+  pcrela32_check(unsigned char* view,
+		 const Sized_relobj_file<size, false>* object,
+		 const Symbol_value<size>* psymval,
+		 typename elfcpp::Elf_types<64>::Elf_Swxword addend,
+		 typename elfcpp::Elf_types<64>::Elf_Addr address)
+  {
+    typedef typename elfcpp::Swap<32, false>::Valtype Valtype;
+    Valtype* wv = reinterpret_cast<Valtype*>(view);
+    typename elfcpp::Elf_types<64>::Elf_Addr value;
+    if (addend >= 0)
+      value = psymval->value(object, addend);
+    else
+      {
+	// For negative addends, get the symbol value without
+	// the addend, then add the addend using 64-bit arithmetic.
+	value = psymval->value(object, 0);
+	value += addend;
+      }
+    value -= address;
+    elfcpp::Swap<32, false>::writeval(wv, value);
+    return (Bits<32>::has_overflow(value)
+	    ? Base::RELOC_OVERFLOW : Base::RELOC_OK);
+  }
+};
+
 // Perform a relocation.
 
 template<int size>
@@ -3364,12 +3498,15 @@ Target_x86_64<size>::Relocate::relocate(
     typename elfcpp::Elf_types<size>::Elf_Addr address,
     section_size_type view_size)
 {
+  typedef X86_64_relocate_functions<size> Reloc_funcs;
   const elfcpp::Rela<size, false> rela(preloc);
   unsigned int r_type = elfcpp::elf_r_type<size>(rela.get_r_info());
 
   if (this->skip_call_tls_get_addr_)
     {
       if ((r_type != elfcpp::R_X86_64_PLT32
+	   && r_type != elfcpp::R_X86_64_GOTPCREL
+	   && r_type != elfcpp::R_X86_64_GOTPCRELX
 	   && r_type != elfcpp::R_X86_64_PLT32_BND
 	   && r_type != elfcpp::R_X86_64_PC32_BND
 	   && r_type != elfcpp::R_X86_64_PC32)
@@ -3378,6 +3515,7 @@ Target_x86_64<size>::Relocate::relocate(
 	{
 	  gold_error_at_location(relinfo, relnum, rela.get_r_offset(),
 				 _("missing expected TLS relocation"));
+	  this->skip_call_tls_get_addr_ = false;
 	}
       else
 	{
@@ -3444,6 +3582,8 @@ Target_x86_64<size>::Relocate::relocate(
       break;
     }
 
+  typename Reloc_funcs::Reloc_status rstatus = Reloc_funcs::RELOC_OK;
+
   switch (r_type)
     {
     case elfcpp::R_X86_64_NONE:
@@ -3452,51 +3592,44 @@ Target_x86_64<size>::Relocate::relocate(
       break;
 
     case elfcpp::R_X86_64_64:
-      Relocate_functions<size, false>::rela64(view, object, psymval, addend);
+      Reloc_funcs::rela64(view, object, psymval, addend);
       break;
 
     case elfcpp::R_X86_64_PC64:
-      Relocate_functions<size, false>::pcrela64(view, object, psymval, addend,
+      Reloc_funcs::pcrela64(view, object, psymval, addend,
 					      address);
       break;
 
     case elfcpp::R_X86_64_32:
-      // FIXME: we need to verify that value + addend fits into 32 bits:
-      //    uint64_t x = value + addend;
-      //    x == static_cast<uint64_t>(static_cast<uint32_t>(x))
-      // Likewise for other <=32-bit relocations (but see R_X86_64_32S).
-      Relocate_functions<size, false>::rela32(view, object, psymval, addend);
+      rstatus = Reloc_funcs::rela32_check(view, object, psymval, addend,
+					  Reloc_funcs::CHECK_UNSIGNED);
       break;
 
     case elfcpp::R_X86_64_32S:
-      // FIXME: we need to verify that value + addend fits into 32 bits:
-      //    int64_t x = value + addend;   // note this quantity is signed!
-      //    x == static_cast<int64_t>(static_cast<int32_t>(x))
-      Relocate_functions<size, false>::rela32(view, object, psymval, addend);
+      rstatus = Reloc_funcs::rela32_check(view, object, psymval, addend,
+					  Reloc_funcs::CHECK_SIGNED);
       break;
 
     case elfcpp::R_X86_64_PC32:
     case elfcpp::R_X86_64_PC32_BND:
-      Relocate_functions<size, false>::pcrela32(view, object, psymval, addend,
-						address);
+      rstatus = Reloc_funcs::pcrela32_check(view, object, psymval, addend,
+					    address);
       break;
 
     case elfcpp::R_X86_64_16:
-      Relocate_functions<size, false>::rela16(view, object, psymval, addend);
+      Reloc_funcs::rela16(view, object, psymval, addend);
       break;
 
     case elfcpp::R_X86_64_PC16:
-      Relocate_functions<size, false>::pcrela16(view, object, psymval, addend,
-						address);
+      Reloc_funcs::pcrela16(view, object, psymval, addend, address);
       break;
 
     case elfcpp::R_X86_64_8:
-      Relocate_functions<size, false>::rela8(view, object, psymval, addend);
+      Reloc_funcs::rela8(view, object, psymval, addend);
       break;
 
     case elfcpp::R_X86_64_PC8:
-      Relocate_functions<size, false>::pcrela8(view, object, psymval, addend,
-					       address);
+      Reloc_funcs::pcrela8(view, object, psymval, addend, address);
       break;
 
     case elfcpp::R_X86_64_PLT32:
@@ -3510,8 +3643,8 @@ Target_x86_64<size>::Relocate::relocate(
       // Note: while this code looks the same as for R_X86_64_PC32, it
       // behaves differently because psymval was set to point to
       // the PLT entry, rather than the symbol, in Scan::global().
-      Relocate_functions<size, false>::pcrela32(view, object, psymval, addend,
-						address);
+      rstatus = Reloc_funcs::pcrela32_check(view, object, psymval, addend,
+					    address);
       break;
 
     case elfcpp::R_X86_64_PLTOFF64:
@@ -3522,14 +3655,13 @@ Target_x86_64<size>::Relocate::relocate(
 	typename elfcpp::Elf_types<size>::Elf_Addr got_address;
 	// This is the address of GLOBAL_OFFSET_TABLE.
 	got_address = target->got_plt_section()->address();
-	Relocate_functions<size, false>::rela64(view, object, psymval,
-						addend - got_address);
+	Reloc_funcs::rela64(view, object, psymval, addend - got_address);
       }
       break;
 
     case elfcpp::R_X86_64_GOT32:
       gold_assert(have_got_offset);
-      Relocate_functions<size, false>::rela32(view, got_offset, addend);
+      Reloc_funcs::rela32(view, got_offset, addend);
       break;
 
     case elfcpp::R_X86_64_GOTPC32:
@@ -3537,7 +3669,7 @@ Target_x86_64<size>::Relocate::relocate(
 	gold_assert(gsym);
 	typename elfcpp::Elf_types<size>::Elf_Addr value;
 	value = target->got_plt_section()->address();
-	Relocate_functions<size, false>::pcrela32(view, value, addend, address);
+	Reloc_funcs::pcrela32_check(view, value, addend, address);
       }
       break;
 
@@ -3546,7 +3678,7 @@ Target_x86_64<size>::Relocate::relocate(
       // R_X86_64_GOTPLT64 is obsolete and treated the the same as
       // GOT64.
       gold_assert(have_got_offset);
-      Relocate_functions<size, false>::rela64(view, got_offset, addend);
+      Reloc_funcs::rela64(view, got_offset, addend);
       break;
 
     case elfcpp::R_X86_64_GOTPC64:
@@ -3554,7 +3686,7 @@ Target_x86_64<size>::Relocate::relocate(
 	gold_assert(gsym);
 	typename elfcpp::Elf_types<size>::Elf_Addr value;
 	value = target->got_plt_section()->address();
-	Relocate_functions<size, false>::pcrela64(view, value, addend, address);
+	Reloc_funcs::pcrela64(view, value, addend, address);
       }
       break;
 
@@ -3563,7 +3695,7 @@ Target_x86_64<size>::Relocate::relocate(
 	typename elfcpp::Elf_types<size>::Elf_Addr value;
 	value = (psymval->value(object, 0)
 		 - target->got_plt_section()->address());
-	Relocate_functions<size, false>::rela64(view, value, addend);
+	Reloc_funcs::rela64(view, value, addend);
       }
       break;
 
@@ -3575,15 +3707,55 @@ Target_x86_64<size>::Relocate::relocate(
       // mov foo@GOTPCREL(%rip), %reg
       // to lea foo(%rip), %reg.
       // if possible.
-      if (rela.get_r_offset() >= 2
-	  && view[-2] == 0x8b
-	  && ((gsym == NULL && !psymval->is_ifunc_symbol())
-	      || (gsym != NULL
-		  && Target_x86_64<size>::can_convert_mov_to_lea(gsym))))
+       if ((gsym == NULL
+             && rela.get_r_offset() >= 2
+             && view[-2] == 0x8b
+             && !psymval->is_ifunc_symbol())
+            || (gsym != NULL
+                && rela.get_r_offset() >= 2
+                && Target_x86_64<size>::can_convert_mov_to_lea(gsym, r_type,
+                                                               0, &view)))
 	{
 	  view[-2] = 0x8d;
-	  Relocate_functions<size, false>::pcrela32(view, object, psymval, addend,
-						    address);
+	  Reloc_funcs::pcrela32(view, object, psymval, addend, address);
+	}
+      // Convert
+      // callq *foo@GOTPCRELX(%rip) to
+      // addr32 callq foo
+      // and jmpq *foo@GOTPCRELX(%rip) to
+      // jmpq foo
+      // nop
+      else if (gsym != NULL
+	       && rela.get_r_offset() >= 2
+	       && Target_x86_64<size>::can_convert_callq_to_direct(gsym,
+								   r_type,
+								   0, &view))
+	{
+	  if (view[-1] == 0x15)
+	    {
+	      // Convert callq *foo@GOTPCRELX(%rip) to addr32 callq.
+	      // Opcode of addr32 is 0x67 and opcode of direct callq is 0xe8.
+	      view[-2] = 0x67;
+	      view[-1] = 0xe8;
+	      // Convert GOTPCRELX to 32-bit pc relative reloc.
+	      Reloc_funcs::pcrela32(view, object, psymval, addend, address);
+	    }
+	  else
+	    {
+	      // Convert jmpq *foo@GOTPCRELX(%rip) to
+	      // jmpq foo
+	      // nop
+	      // The opcode of direct jmpq is 0xe9.
+	      view[-2] = 0xe9;
+	      // The opcode of nop is 0x90.
+	      view[3] = 0x90;
+	      // Convert GOTPCRELX to 32-bit pc relative reloc.  jmpq is rip
+	      // relative and since the instruction following the jmpq is now
+	      // the nop, offset the address by 1 byte.  The start of the
+              // relocation also moves ahead by 1 byte.
+	      Reloc_funcs::pcrela32(&view[-1], object, psymval, addend,
+				    address - 1);
+	    }
 	}
       else
 	{
@@ -3601,7 +3773,7 @@ Target_x86_64<size>::Relocate::relocate(
 	    }
 	  typename elfcpp::Elf_types<size>::Elf_Addr value;
 	  value = target->got_plt_section()->address() + got_offset;
-	  Relocate_functions<size, false>::pcrela32(view, value, addend, address);
+	  Reloc_funcs::pcrela32_check(view, value, addend, address);
 	}
       }
       break;
@@ -3611,7 +3783,7 @@ Target_x86_64<size>::Relocate::relocate(
 	gold_assert(have_got_offset);
 	typename elfcpp::Elf_types<size>::Elf_Addr value;
 	value = target->got_plt_section()->address() + got_offset;
-	Relocate_functions<size, false>::pcrela64(view, value, addend, address);
+	Reloc_funcs::pcrela64(view, value, addend, address);
       }
       break;
 
@@ -3649,6 +3821,32 @@ Target_x86_64<size>::Relocate::relocate(
 			     _("unsupported reloc %u"),
 			     r_type);
       break;
+    }
+
+  if (rstatus == Reloc_funcs::RELOC_OVERFLOW)
+    {
+      if (gsym == NULL)
+        {
+	  unsigned int r_sym = elfcpp::elf_r_sym<size>(rela.get_r_info());
+	  gold_error_at_location(relinfo, relnum, rela.get_r_offset(),
+				 _("relocation overflow: "
+				   "reference to local symbol %u in %s"),
+				 r_sym, object->name().c_str());
+        }
+      else if (gsym->is_defined() && gsym->source() == Symbol::FROM_OBJECT)
+        {
+	  gold_error_at_location(relinfo, relnum, rela.get_r_offset(),
+				 _("relocation overflow: "
+				   "reference to '%s' defined in %s"),
+				 gsym->name(),
+				 gsym->object()->name().c_str());
+        }
+      else
+        {
+	  gold_error_at_location(relinfo, relnum, rela.get_r_offset(),
+				 _("relocation overflow: reference to '%s'"),
+				 gsym->name());
+        }
     }
 
   return true;
@@ -3974,16 +4172,23 @@ Target_x86_64<size>::Relocate::tls_gd_to_ie(
 {
   // For SIZE == 64:
   //	.byte 0x66; leaq foo@tlsgd(%rip),%rdi;
-  //	.word 0x6666; rex64; call __tls_get_addr
+  //	.word 0x6666; rex64; call __tls_get_addr@PLT
+  //	==> movq %fs:0,%rax; addq x@gottpoff(%rip),%rax
+  //	.byte 0x66; leaq foo@tlsgd(%rip),%rdi;
+  //	.word 0x66; rex64; call *__tls_get_addr@GOTPCREL(%rip)
   //	==> movq %fs:0,%rax; addq x@gottpoff(%rip),%rax
   // For SIZE == 32:
   //	leaq foo@tlsgd(%rip),%rdi;
-  //	.word 0x6666; rex64; call __tls_get_addr
+  //	.word 0x6666; rex64; call __tls_get_addr@PLT
+  //	==> movl %fs:0,%eax; addq x@gottpoff(%rip),%rax
+  //	leaq foo@tlsgd(%rip),%rdi;
+  //	.word 0x66; rex64; call *__tls_get_addr@GOTPCREL(%rip)
   //	==> movl %fs:0,%eax; addq x@gottpoff(%rip),%rax
 
   tls::check_range(relinfo, relnum, rela.get_r_offset(), view_size, 12);
   tls::check_tls(relinfo, relnum, rela.get_r_offset(),
-		 (memcmp(view + 4, "\x66\x66\x48\xe8", 4) == 0));
+		 (memcmp(view + 4, "\x66\x66\x48\xe8", 4) == 0
+		  || memcmp(view + 4, "\x66\x48\xff", 3) == 0));
 
   if (size == 64)
     {
@@ -4030,16 +4235,23 @@ Target_x86_64<size>::Relocate::tls_gd_to_le(
 {
   // For SIZE == 64:
   //	.byte 0x66; leaq foo@tlsgd(%rip),%rdi;
-  //	.word 0x6666; rex64; call __tls_get_addr
+  //	.word 0x6666; rex64; call __tls_get_addr@PLT
+  //	==> movq %fs:0,%rax; leaq x@tpoff(%rax),%rax
+  //	.byte 0x66; leaq foo@tlsgd(%rip),%rdi;
+  //	.word 0x66; rex64; call *__tls_get_addr@GOTPCREL(%rip)
   //	==> movq %fs:0,%rax; leaq x@tpoff(%rax),%rax
   // For SIZE == 32:
   //	leaq foo@tlsgd(%rip),%rdi;
-  //	.word 0x6666; rex64; call __tls_get_addr
+  //	.word 0x6666; rex64; call __tls_get_addr@PLT
+  //	==> movl %fs:0,%eax; leaq x@tpoff(%rax),%rax
+  //	leaq foo@tlsgd(%rip),%rdi;
+  //	.word 0x66; rex64; call *__tls_get_addr@GOTPCREL(%rip)
   //	==> movl %fs:0,%eax; leaq x@tpoff(%rax),%rax
 
   tls::check_range(relinfo, relnum, rela.get_r_offset(), view_size, 12);
   tls::check_tls(relinfo, relnum, rela.get_r_offset(),
-		 (memcmp(view + 4, "\x66\x66\x48\xe8", 4) == 0));
+		 (memcmp(view + 4, "\x66\x66\x48\xe8", 4) == 0
+		  || memcmp(view + 4, "\x66\x48\xff", 3) == 0));
 
   if (size == 64)
     {
@@ -4167,6 +4379,13 @@ Target_x86_64<size>::Relocate::tls_ld_to_le(
   // For SIZE == 32:
   // ... leq foo@dtpoff(%rax),%reg
   // ==> nopl 0x0(%rax); movl %fs:0,%eax ... leaq x@tpoff(%rax),%rdx
+  // leaq foo@tlsld(%rip),%rdi; call *__tls_get_addr@GOTPCREL(%rip)
+  // For SIZE == 64:
+  // ... leq foo@dtpoff(%rax),%reg
+  // ==> .word 0x6666; .byte 0x6666; movq %fs:0,%rax ... leaq x@tpoff(%rax),%rdx
+  // For SIZE == 32:
+  // ... leq foo@dtpoff(%rax),%reg
+  // ==> nopw 0x0(%rax); movl %fs:0,%eax ... leaq x@tpoff(%rax),%rdx
 
   tls::check_range(relinfo, relnum, rela.get_r_offset(), view_size, -3);
   tls::check_range(relinfo, relnum, rela.get_r_offset(), view_size, 9);
@@ -4174,12 +4393,25 @@ Target_x86_64<size>::Relocate::tls_ld_to_le(
   tls::check_tls(relinfo, relnum, rela.get_r_offset(),
 		 view[-3] == 0x48 && view[-2] == 0x8d && view[-1] == 0x3d);
 
-  tls::check_tls(relinfo, relnum, rela.get_r_offset(), view[4] == 0xe8);
+  tls::check_tls(relinfo, relnum, rela.get_r_offset(),
+		 view[4] == 0xe8 || view[4] == 0xff);
 
-  if (size == 64)
-    memcpy(view - 3, "\x66\x66\x66\x64\x48\x8b\x04\x25\0\0\0\0", 12);
+  if (view[4] == 0xe8)
+    {
+      if (size == 64)
+	memcpy(view - 3, "\x66\x66\x66\x64\x48\x8b\x04\x25\0\0\0\0", 12);
+      else
+	memcpy(view - 3, "\x0f\x1f\x40\x00\x64\x8b\x04\x25\0\0\0\0", 12);
+    }
   else
-    memcpy(view - 3, "\x0f\x1f\x40\x00\x64\x8b\x04\x25\0\0\0\0", 12);
+    {
+      if (size == 64)
+	memcpy(view - 3, "\x66\x66\x66\x66\x64\x48\x8b\x04\x25\0\0\0\0",
+	       13);
+      else
+	memcpy(view - 3, "\x66\x0f\x1f\x40\x00\x64\x8b\x04\x25\0\0\0\0",
+	       13);
+    }
 
   // The next reloc should be a PLT32 reloc against __tls_get_addr.
   // We can skip it.

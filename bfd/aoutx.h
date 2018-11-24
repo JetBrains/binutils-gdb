@@ -733,9 +733,19 @@ NAME (aout, machine_type) (enum bfd_architecture arch,
 	  || machine == bfd_mach_sparc_v8plus
 	  || machine == bfd_mach_sparc_v8plusa
 	  || machine == bfd_mach_sparc_v8plusb
+          || machine == bfd_mach_sparc_v8plusc
+          || machine == bfd_mach_sparc_v8plusd
+          || machine == bfd_mach_sparc_v8pluse
+          || machine == bfd_mach_sparc_v8plusv
+          || machine == bfd_mach_sparc_v8plusm
 	  || machine == bfd_mach_sparc_v9
 	  || machine == bfd_mach_sparc_v9a
-	  || machine == bfd_mach_sparc_v9b)
+	  || machine == bfd_mach_sparc_v9b
+          || machine == bfd_mach_sparc_v9c
+          || machine == bfd_mach_sparc_v9d
+          || machine == bfd_mach_sparc_v9e
+          || machine == bfd_mach_sparc_v9v
+	  || machine == bfd_mach_sparc_v9m)
 	arch_flags = M_SPARC;
       else if (machine == bfd_mach_sparc_sparclet)
 	arch_flags = M_SPARCLET;
@@ -1267,7 +1277,8 @@ NAME (aout, set_section_contents) (bfd *abfd,
 			   (section->vma - obj_textsec (abfd)->vma);
       else
 	{
-          (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	   (_("%s: can not represent section `%s' in a.out object file format"),
 	     bfd_get_filename (abfd), bfd_get_section_name (abfd, section));
           bfd_set_error (bfd_error_nonrepresentable_section);
@@ -1567,8 +1578,10 @@ translate_to_native_sym_flags (bfd *abfd,
     {
       /* This case occurs, e.g., for the *DEBUG* section of a COFF
 	 file.  */
-      (*_bfd_error_handler)
-	(_("%s: can not represent section for symbol `%s' in a.out object file format"),
+      _bfd_error_handler
+	/* xgettext:c-format */
+	(_("%s: can not represent section for symbol `%s' in a.out "
+	   "object file format"),
 	 bfd_get_filename (abfd),
 	 cache_ptr->name != NULL ? cache_ptr->name : _("*unknown*"));
       bfd_set_error (bfd_error_nonrepresentable_section);
@@ -1601,7 +1614,8 @@ translate_to_native_sym_flags (bfd *abfd,
 	sym_pointer->e_type[0] |= N_TEXT;
       else
 	{
-          (*_bfd_error_handler)
+	  _bfd_error_handler
+	    /* xgettext:c-format */
 	   (_("%s: can not represent section `%s' in a.out object file format"),
 	     bfd_get_filename (abfd), bfd_get_section_name (abfd, sec));
           bfd_set_error (bfd_error_nonrepresentable_section);
@@ -3002,7 +3016,11 @@ aout_link_add_symbols (bfd *abfd, struct bfd_link_info *info)
       if ((type & N_STAB) != 0)
 	continue;
 
+      /* PR 19629: Corrupt binaries can contain illegal string offsets.  */
+      if (GET_WORD (abfd, p->e_strx) > obj_aout_external_string_size (abfd))
+	return FALSE;
       name = strings + GET_WORD (abfd, p->e_strx);
+      
       value = GET_WORD (abfd, p->e_value);
       flags = BSF_GLOBAL;
       string = NULL;
@@ -3060,6 +3078,9 @@ aout_link_add_symbols (bfd *abfd, struct bfd_link_info *info)
 	     which this one really is.  */
 	  BFD_ASSERT (p + 1 < pend);
 	  ++p;
+	  /* PR 19629: Corrupt binaries can contain illegal string offsets.  */
+	  if (GET_WORD (abfd, p->e_strx) > obj_aout_external_string_size (abfd))
+	    return FALSE;
 	  string = strings + GET_WORD (abfd, p->e_strx);
 	  section = bfd_ind_section_ptr;
 	  flags |= BSF_INDIRECT;
@@ -3093,6 +3114,9 @@ aout_link_add_symbols (bfd *abfd, struct bfd_link_info *info)
 	    return TRUE;
 	  ++p;
 	  string = name;
+	  /* PR 19629: Corrupt binaries can contain illegal string offsets.  */
+	  if (GET_WORD (abfd, p->e_strx) > obj_aout_external_string_size (abfd))
+	    return FALSE;
 	  name = strings + GET_WORD (abfd, p->e_strx);
 	  section = bfd_und_section_ptr;
 	  flags |= BSF_WARNING;
@@ -3725,9 +3749,8 @@ aout_link_reloc_link_order (struct aout_final_link_info *flaginfo,
 	}
       else
 	{
-	  if (! ((*flaginfo->info->callbacks->unattached_reloc)
-		 (flaginfo->info, pr->u.name, NULL, NULL, (bfd_vma) 0)))
-	    return FALSE;
+	  (*flaginfo->info->callbacks->unattached_reloc)
+	    (flaginfo->info, pr->u.name, NULL, NULL, (bfd_vma) 0);
 	  r_index = 0;
 	}
     }
@@ -3822,17 +3845,13 @@ aout_link_reloc_link_order (struct aout_final_link_info *flaginfo,
 	    case bfd_reloc_outofrange:
 	      abort ();
 	    case bfd_reloc_overflow:
-	      if (! ((*flaginfo->info->callbacks->reloc_overflow)
-		     (flaginfo->info, NULL,
-		      (p->type == bfd_section_reloc_link_order
-		       ? bfd_section_name (flaginfo->output_bfd,
-					   pr->u.section)
-		       : pr->u.name),
-		      howto->name, pr->addend, NULL, NULL, (bfd_vma) 0)))
-		{
-		  free (buf);
-		  return FALSE;
-		}
+	      (*flaginfo->info->callbacks->reloc_overflow)
+		(flaginfo->info, NULL,
+		 (p->type == bfd_section_reloc_link_order
+		  ? bfd_section_name (flaginfo->output_bfd,
+				      pr->u.section)
+		  : pr->u.name),
+		 howto->name, pr->addend, NULL, NULL, (bfd_vma) 0);
 	      break;
 	    }
 	  ok = bfd_set_section_contents (flaginfo->output_bfd, o, (void *) buf,
@@ -4089,10 +4108,9 @@ aout_link_input_section_std (struct aout_final_link_info *flaginfo,
 
 			  name = strings + GET_WORD (input_bfd,
 						     syms[r_index].e_strx);
-			  if (! ((*flaginfo->info->callbacks->unattached_reloc)
-				 (flaginfo->info, name, input_bfd, input_section,
-				  r_addr)))
-			    return FALSE;
+			  (*flaginfo->info->callbacks->unattached_reloc)
+			    (flaginfo->info, name,
+			     input_bfd, input_section, r_addr);
 			  r_index = 0;
 			}
 		    }
@@ -4214,10 +4232,8 @@ aout_link_input_section_std (struct aout_final_link_info *flaginfo,
 		name = h->root.root.string;
 	      else
 		name = strings + GET_WORD (input_bfd, syms[r_index].e_strx);
-	      if (! ((*flaginfo->info->callbacks->undefined_symbol)
-		     (flaginfo->info, name, input_bfd, input_section,
-		     r_addr, TRUE)))
-		return FALSE;
+	      (*flaginfo->info->callbacks->undefined_symbol)
+		(flaginfo->info, name, input_bfd, input_section, r_addr, TRUE);
 	    }
 
 	  r = MY_final_link_relocate (howto,
@@ -4249,11 +4265,9 @@ aout_link_input_section_std (struct aout_final_link_info *flaginfo,
 		    s = aout_reloc_index_to_section (input_bfd, r_index);
 		    name = bfd_section_name (input_bfd, s);
 		  }
-		if (! ((*flaginfo->info->callbacks->reloc_overflow)
-		       (flaginfo->info, (h ? &h->root : NULL), name,
-			howto->name, (bfd_vma) 0, input_bfd,
-			input_section, r_addr)))
-		  return FALSE;
+		(*flaginfo->info->callbacks->reloc_overflow)
+		  (flaginfo->info, (h ? &h->root : NULL), name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, r_addr);
 	      }
 	      break;
 	    }
@@ -4431,10 +4445,9 @@ aout_link_input_section_ext (struct aout_final_link_info *flaginfo,
 
 			  name = strings + GET_WORD (input_bfd,
 						     syms[r_index].e_strx);
-			  if (! ((*flaginfo->info->callbacks->unattached_reloc)
-				 (flaginfo->info, name, input_bfd, input_section,
-				  r_addr)))
-			    return FALSE;
+			  (*flaginfo->info->callbacks->unattached_reloc)
+			    (flaginfo->info, name,
+			     input_bfd, input_section, r_addr);
 			  r_index = 0;
 			}
 		    }
@@ -4621,10 +4634,8 @@ aout_link_input_section_ext (struct aout_final_link_info *flaginfo,
 		name = h->root.root.string;
 	      else
 		name = strings + GET_WORD (input_bfd, syms[r_index].e_strx);
-	      if (! ((*flaginfo->info->callbacks->undefined_symbol)
-		     (flaginfo->info, name, input_bfd, input_section,
-		     r_addr, TRUE)))
-		return FALSE;
+	      (*flaginfo->info->callbacks->undefined_symbol)
+		(flaginfo->info, name, input_bfd, input_section, r_addr, TRUE);
 	    }
 
 	  if (r_type != (unsigned int) RELOC_SPARC_REV32)
@@ -4668,11 +4679,10 @@ aout_link_input_section_ext (struct aout_final_link_info *flaginfo,
 			s = aout_reloc_index_to_section (input_bfd, r_index);
 			name = bfd_section_name (input_bfd, s);
 		      }
-		    if (! ((*flaginfo->info->callbacks->reloc_overflow)
-			   (flaginfo->info, (h ? &h->root : NULL), name,
-			    howto_table_ext[r_type].name,
-			    r_addend, input_bfd, input_section, r_addr)))
-		      return FALSE;
+		    (*flaginfo->info->callbacks->reloc_overflow)
+		      (flaginfo->info, (h ? &h->root : NULL), name,
+		       howto_table_ext[r_type].name,
+		       r_addend, input_bfd, input_section, r_addr);
 		  }
 		  break;
 		}
@@ -5368,7 +5378,8 @@ NAME (aout, final_link) (bfd *abfd,
 		 and call get_reloc_upper_bound and canonicalize_reloc to
 		 work out the number of relocs needed, and then multiply
 		 by the reloc size.  */
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%s: relocatable link from %s to %s not supported"),
 		 bfd_get_filename (abfd),
 		 sub->xvec->name, abfd->xvec->name);

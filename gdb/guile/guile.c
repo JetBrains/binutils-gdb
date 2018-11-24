@@ -27,7 +27,7 @@
 #include "cli/cli-utils.h"
 #include "command.h"
 #include "gdbcmd.h"
-#include "interps.h"
+#include "top.h"
 #include "extension-priv.h"
 #include "utils.h"
 #include "version.h"
@@ -77,7 +77,7 @@ extern const struct extension_language_ops guile_extension_ops;
 
 /* The main struct describing GDB's interface to the Guile
    extension language.  */
-EXPORTED_CONST struct extension_language_defn extension_language_guile =
+extern const struct extension_language_defn extension_language_guile =
 {
   EXT_LANG_GUILE,
   "guile",
@@ -155,7 +155,6 @@ const struct extension_language_ops guile_extension_ops =
   gdbscm_breakpoint_cond_says_stop,
 
   NULL, /* gdbscm_check_quit_flag, */
-  NULL, /* gdbscm_clear_quit_flag, */
   NULL, /* gdbscm_set_quit_flag, */
 };
 
@@ -166,8 +165,8 @@ guile_repl_command (char *arg, int from_tty)
 {
   struct cleanup *cleanup;
 
-  cleanup = make_cleanup_restore_integer (&interpreter_async);
-  interpreter_async = 0;
+  cleanup = make_cleanup_restore_integer (&current_ui->async);
+  current_ui->async = 0;
 
   arg = skip_spaces (arg);
 
@@ -199,8 +198,8 @@ guile_command (char *arg, int from_tty)
 {
   struct cleanup *cleanup;
 
-  cleanup = make_cleanup_restore_integer (&interpreter_async);
-  interpreter_async = 0;
+  cleanup = make_cleanup_restore_integer (&current_ui->async);
+  current_ui->async = 0;
 
   arg = skip_spaces (arg);
 
@@ -312,7 +311,6 @@ gdbscm_execute_gdb_command (SCM command_scm, SCM rest)
   int from_tty = 0, to_string = 0;
   const SCM keywords[] = { from_tty_keyword, to_string_keyword, SCM_BOOL_F };
   char *command;
-  char *result = NULL;
   struct cleanup *cleanups;
   struct gdb_exception except = exception_none;
 
@@ -325,21 +323,20 @@ gdbscm_execute_gdb_command (SCM command_scm, SCM rest)
      executed.  */
   cleanups = make_cleanup (xfree, command);
 
+  std::string to_string_res;
+
   TRY
     {
       struct cleanup *inner_cleanups;
 
-      inner_cleanups = make_cleanup_restore_integer (&interpreter_async);
-      interpreter_async = 0;
+      inner_cleanups = make_cleanup_restore_integer (&current_ui->async);
+      current_ui->async = 0;
 
       prevent_dont_repeat ();
       if (to_string)
-	result = execute_command_to_string (command, from_tty);
+	to_string_res = execute_command_to_string (command, from_tty);
       else
-	{
-	  execute_command (command, from_tty);
-	  result = NULL;
-	}
+	execute_command (command, from_tty);
 
       /* Do any commands attached to breakpoint we stopped at.  */
       bpstat_do_actions ();
@@ -355,12 +352,8 @@ gdbscm_execute_gdb_command (SCM command_scm, SCM rest)
   do_cleanups (cleanups);
   GDBSCM_HANDLE_GDB_EXCEPTION (except);
 
-  if (result)
-    {
-      SCM r = gdbscm_scm_from_c_string (result);
-      xfree (result);
-      return r;
-    }
+  if (to_string)
+    return gdbscm_scm_from_c_string (to_string_res.c_str ());
   return SCM_UNSPECIFIED;
 }
 
@@ -629,9 +622,9 @@ initialize_scheme_side (void)
   char *boot_scm_path;
   char *msg;
 
-  guile_datadir = concat (gdb_datadir, SLASH_STRING, "guile", NULL);
+  guile_datadir = concat (gdb_datadir, SLASH_STRING, "guile", (char *) NULL);
   boot_scm_path = concat (guile_datadir, SLASH_STRING, "gdb",
-			  SLASH_STRING, boot_scm_filename, NULL);
+			  SLASH_STRING, boot_scm_filename, (char *) NULL);
 
   scm_c_catch (SCM_BOOL_T, boot_guile_support, boot_scm_path,
 	       handle_boot_error, boot_scm_path, NULL, NULL);

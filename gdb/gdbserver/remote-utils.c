@@ -51,7 +51,7 @@
 #if HAVE_FCNTL_H
 #include <fcntl.h>
 #endif
-#include "gdb_sys_time.h"
+#include <sys/time.h>
 #include <unistd.h>
 #if HAVE_ARPA_INET_H
 #include <arpa/inet.h>
@@ -194,8 +194,8 @@ handle_accept_event (int err, gdb_client_data client_data)
   delete_file_handler (listen_desc);
 
   /* Convert IP address to string.  */
-  fprintf (stderr, "Remote debugging from host %s\n",
-	   inet_ntoa (sockaddr.sin_addr));
+  gnulib::fprintf (stderr, "Remote debugging from host %s\n",
+		   inet_ntoa (sockaddr.sin_addr));
 
   enable_async_notification (remote_desc);
 
@@ -296,7 +296,7 @@ remote_open (char *name)
 
   if (strcmp (name, STDIO_CONNECTION_NAME) == 0)
     {
-      fprintf (stderr, "Remote debugging using stdio\n");
+      gnulib::fprintf (stderr, "Remote debugging using stdio\n");
 
       /* Use stdin as the handle of the connection.
 	 We only select on reads, for example.  */
@@ -368,7 +368,7 @@ remote_open (char *name)
       }
 #endif
 
-      fprintf (stderr, "Remote debugging using %s\n", name);
+      gnulib::fprintf (stderr, "Remote debugging using %s\n", name);
 
       enable_async_notification (remote_desc);
 
@@ -389,7 +389,7 @@ remote_open (char *name)
 	perror_with_name ("Can't determine port");
       port = ntohs (sockaddr.sin_port);
 
-      fprintf (stderr, "Listening on port %d\n", port);
+      gnulib::fprintf (stderr, "Listening on port %d\n", port);
       fflush (stderr);
 
       /* Register the event loop handler.  */
@@ -401,6 +401,11 @@ void
 remote_close (void)
 {
   delete_file_handler (remote_desc);
+
+#ifndef USE_WIN32API
+  /* Remove SIGIO handler.  */
+  signal (SIGIO, SIG_IGN);
+#endif
 
 #ifdef USE_WIN32API
   closesocket (remote_desc);
@@ -659,9 +664,9 @@ putpkt_binary_1 (char *buf, int cnt, int is_notif)
 	  if (remote_debug)
 	    {
 	      if (is_notif)
-		fprintf (stderr, "putpkt (\"%s\"); [notif]\n", buf2);
+		gnulib::fprintf (stderr, "putpkt (\"%s\"); [notif]\n", buf2);
 	      else
-		fprintf (stderr, "putpkt (\"%s\"); [noack mode]\n", buf2);
+		gnulib::fprintf (stderr, "putpkt (\"%s\"); [noack mode]\n", buf2);
 	      fflush (stderr);
 	    }
 	  break;
@@ -669,7 +674,7 @@ putpkt_binary_1 (char *buf, int cnt, int is_notif)
 
       if (remote_debug)
 	{
-	  fprintf (stderr, "putpkt (\"%s\"); [looking for ack]\n", buf2);
+	  gnulib::fprintf (stderr, "putpkt (\"%s\"); [looking for ack]\n", buf2);
 	  fflush (stderr);
 	}
 
@@ -683,7 +688,7 @@ putpkt_binary_1 (char *buf, int cnt, int is_notif)
 
       if (remote_debug)
 	{
-	  fprintf (stderr, "[received '%c' (0x%x)]\n", cc, cc);
+	  gnulib::fprintf (stderr, "[received '%c' (0x%x)]\n", cc, cc);
 	  fflush (stderr);
 	}
 
@@ -745,16 +750,16 @@ input_interrupt (int unused)
 
       if (cc == 0)
 	{
-	  fprintf (stderr, "client connection closed\n");
+	  gnulib::fprintf (stderr, "client connection closed\n");
 	  return;
 	}
       else if (cc != 1 || c != '\003')
 	{
-	  fprintf (stderr, "input_interrupt, count = %d c = %d ", cc, c);
+	  gnulib::fprintf (stderr, "input_interrupt, count = %d c = %d ", cc, c);
 	  if (isprint (c))
-	    fprintf (stderr, "('%c')\n", c);
+	    gnulib::fprintf (stderr, "('%c')\n", c);
 	  else
-	    fprintf (stderr, "('\\x%02x')\n", c & 0xff);
+	    gnulib::fprintf (stderr, "('\\x%02x')\n", c & 0xff);
 	  return;
 	}
 
@@ -775,19 +780,19 @@ check_remote_input_interrupt_request (void)
   input_interrupt (0);
 }
 
-/* Asynchronous I/O support.  SIGIO must be enabled when waiting, in order to
-   accept Control-C from the client, and must be disabled when talking to
-   the client.  */
+/* Asynchronous I/O support.  SIGIO must be unblocked when waiting,
+   in order to accept Control-C from the client, and must be blocked
+   when talking to the client.  */
 
 static void
-unblock_async_io (void)
+block_unblock_async_io (int block)
 {
 #ifndef USE_WIN32API
   sigset_t sigio_set;
 
   sigemptyset (&sigio_set);
   sigaddset (&sigio_set, SIGIO);
-  sigprocmask (SIG_UNBLOCK, &sigio_set, NULL);
+  sigprocmask (block ? SIG_BLOCK : SIG_UNBLOCK, &sigio_set, NULL);
 #endif
 }
 
@@ -823,9 +828,8 @@ enable_async_io (void)
   if (async_io_enabled)
     return;
 
-#ifndef USE_WIN32API
-  signal (SIGIO, input_interrupt);
-#endif
+  block_unblock_async_io (0);
+
   async_io_enabled = 1;
 #ifdef __QNX__
   nto_comctrl (1);
@@ -839,9 +843,8 @@ disable_async_io (void)
   if (!async_io_enabled)
     return;
 
-#ifndef USE_WIN32API
-  signal (SIGIO, SIG_IGN);
-#endif
+  block_unblock_async_io (1);
+
   async_io_enabled = 0;
 #ifdef __QNX__
   nto_comctrl (0);
@@ -852,12 +855,14 @@ disable_async_io (void)
 void
 initialize_async_io (void)
 {
-  /* Make sure that async I/O starts disabled.  */
+  /* Make sure that async I/O starts blocked.  */
   async_io_enabled = 1;
   disable_async_io ();
 
-  /* Make sure the signal is unblocked.  */
-  unblock_async_io ();
+  /* Install the signal handler.  */
+#ifndef USE_WIN32API
+  signal (SIGIO, input_interrupt);
+#endif
 }
 
 /* Internal buffer used by readchar.
@@ -884,7 +889,7 @@ readchar (void)
 	  if (readchar_bufcnt == 0)
 	    {
 	      if (remote_debug)
-		fprintf (stderr, "readchar: Got EOF\n");
+		gnulib::fprintf (stderr, "readchar: Got EOF\n");
 	    }
 	  else
 	    perror ("readchar");
@@ -972,7 +977,7 @@ getpkt (char *buf)
 	    break;
 	  if (remote_debug)
 	    {
-	      fprintf (stderr, "[getpkt: discarding char '%c']\n", c);
+	      gnulib::fprintf (stderr, "[getpkt: discarding char '%c']\n", c);
 	      fflush (stderr);
 	    }
 
@@ -1001,16 +1006,16 @@ getpkt (char *buf)
 
       if (noack_mode)
 	{
-	  fprintf (stderr,
-		   "Bad checksum, sentsum=0x%x, csum=0x%x, "
-		   "buf=%s [no-ack-mode, Bad medium?]\n",
-		   (c1 << 4) + c2, csum, buf);
+	  gnulib::fprintf (stderr,
+			   "Bad checksum, sentsum=0x%x, csum=0x%x, "
+			   "buf=%s [no-ack-mode, Bad medium?]\n",
+			   (c1 << 4) + c2, csum, buf);
 	  /* Not much we can do, GDB wasn't expecting an ack/nac.  */
 	  break;
 	}
 
-      fprintf (stderr, "Bad checksum, sentsum=0x%x, csum=0x%x, buf=%s\n",
-	       (c1 << 4) + c2, csum, buf);
+      gnulib::fprintf (stderr, "Bad checksum, sentsum=0x%x, csum=0x%x, buf=%s\n",
+		       (c1 << 4) + c2, csum, buf);
       if (write_prim ("-", 1) != 1)
 	return -1;
     }
@@ -1019,7 +1024,7 @@ getpkt (char *buf)
     {
       if (remote_debug)
 	{
-	  fprintf (stderr, "getpkt (\"%s\");  [sending ack] \n", buf);
+	  gnulib::fprintf (stderr, "getpkt (\"%s\");  [sending ack] \n", buf);
 	  fflush (stderr);
 	}
 
@@ -1028,7 +1033,7 @@ getpkt (char *buf)
 
       if (remote_debug)
 	{
-	  fprintf (stderr, "[sent ack]\n");
+	  gnulib::fprintf (stderr, "[sent ack]\n");
 	  fflush (stderr);
 	}
     }
@@ -1036,9 +1041,25 @@ getpkt (char *buf)
     {
       if (remote_debug)
 	{
-	  fprintf (stderr, "getpkt (\"%s\");  [no ack sent] \n", buf);
+	  gnulib::fprintf (stderr, "getpkt (\"%s\");  [no ack sent] \n", buf);
 	  fflush (stderr);
 	}
+    }
+
+  /* The readchar above may have already read a '\003' out of the socket
+     and moved it to the local buffer.  For example, when GDB sends
+     vCont;c immediately followed by interrupt (see
+     gdb.base/interrupt-noterm.exp).  As soon as we see the vCont;c, we'll
+     resume the inferior and wait.  Since we've already moved the '\003'
+     to the local buffer, SIGIO won't help.  In that case, if we don't
+     check for interrupt after the vCont;c packet, the interrupt character
+     would stay in the buffer unattended until after the next (unrelated)
+     stop.  */
+  while (readchar_bufcnt > 0 && *readchar_bufp == '\003')
+    {
+      /* Consume the interrupt character in the buffer.  */
+      readchar ();
+      (*the_target->request_interrupt) ();
     }
 
   return bp - buf;
@@ -1081,39 +1102,6 @@ outreg (struct regcache *regcache, int regno, char *buf)
   *buf++ = ';';
 
   return buf;
-}
-
-void
-new_thread_notify (int id)
-{
-  char own_buf[256];
-
-  /* The `n' response is not yet part of the remote protocol.  Do nothing.  */
-  if (1)
-    return;
-
-  if (server_waiting == 0)
-    return;
-
-  sprintf (own_buf, "n%x", id);
-  disable_async_io ();
-  putpkt (own_buf);
-  enable_async_io ();
-}
-
-void
-dead_thread_notify (int id)
-{
-  char own_buf[256];
-
-  /* The `x' response is not yet part of the remote protocol.  Do nothing.  */
-  if (1)
-    return;
-
-  sprintf (own_buf, "x%x", id);
-  disable_async_io ();
-  putpkt (own_buf);
-  enable_async_io ();
 }
 
 void
@@ -1474,7 +1462,7 @@ clear_symbol_cache (struct sym_cache **symcache_p)
 int
 look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
 {
-  char own_buf[266], *p, *q;
+  char *p, *q;
   int len;
   struct sym_cache *sym;
   struct process_info *proc;
@@ -1509,23 +1497,37 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
   /* We ought to handle pretty much any packet at this point while we
      wait for the qSymbol "response".  That requires re-entering the
      main loop.  For now, this is an adequate approximation; allow
-     GDB to read from memory while it figures out the address of the
-     symbol.  */
-  while (own_buf[0] == 'm')
+     GDB to read from memory and handle 'v' packets (for vFile transfers)
+     while it figures out the address of the symbol.  */
+  while (1)
     {
-      CORE_ADDR mem_addr;
-      unsigned char *mem_buf;
-      unsigned int mem_len;
+      if (own_buf[0] == 'm')
+	{
+	  CORE_ADDR mem_addr;
+	  unsigned char *mem_buf;
+	  unsigned int mem_len;
 
-      decode_m_packet (&own_buf[1], &mem_addr, &mem_len);
-      mem_buf = (unsigned char *) xmalloc (mem_len);
-      if (read_inferior_memory (mem_addr, mem_buf, mem_len) == 0)
-	bin2hex (mem_buf, own_buf, mem_len);
+	  decode_m_packet (&own_buf[1], &mem_addr, &mem_len);
+	  mem_buf = (unsigned char *) xmalloc (mem_len);
+	  if (read_inferior_memory (mem_addr, mem_buf, mem_len) == 0)
+	    bin2hex (mem_buf, own_buf, mem_len);
+	  else
+	    write_enn (own_buf);
+	  free (mem_buf);
+	  if (putpkt (own_buf) < 0)
+	    return -1;
+	}
+      else if (own_buf[0] == 'v')
+	{
+	  int new_len = -1;
+	  handle_v_requests (own_buf, len, &new_len);
+	  if (new_len != -1)
+	    putpkt_binary (own_buf, new_len);
+	  else
+	    putpkt (own_buf);
+	}
       else
-	write_enn (own_buf);
-      free (mem_buf);
-      if (putpkt (own_buf) < 0)
-	return -1;
+	break;
       len = getpkt (own_buf);
       if (len < 0)
 	return -1;
@@ -1573,12 +1575,10 @@ look_up_one_symbol (const char *name, CORE_ADDR *addrp, int may_ask_gdb)
 int
 relocate_instruction (CORE_ADDR *to, CORE_ADDR oldloc)
 {
-  char own_buf[266];
   int len;
   ULONGEST written = 0;
 
   /* Send the request.  */
-  strcpy (own_buf, "qRelocInsn:");
   sprintf (own_buf, "qRelocInsn:%s;%s", paddress (oldloc),
 	   paddress (*to));
   if (putpkt (own_buf) < 0)

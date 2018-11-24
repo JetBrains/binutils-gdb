@@ -50,7 +50,6 @@ static bfd_vma elf_vax_plt_sym_val (bfd_vma, const asection *,
 				    const arelent *);
 
 static bfd_boolean elf32_vax_set_private_flags (bfd *, flagword);
-static bfd_boolean elf32_vax_merge_private_bfd_data (bfd *, bfd *);
 static bfd_boolean elf32_vax_print_private_bfd_data (bfd *, void *);
 
 static reloc_howto_type howto_table[] = {
@@ -287,8 +286,9 @@ rtype_to_howto (bfd *abfd, arelent *cache_ptr, Elf_Internal_Rela *dst)
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= R_VAX_max)
     {
-      (*_bfd_error_handler) (_("%B: unrecognised VAX reloc number: %d"),
-			     abfd, r_type);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: unrecognised VAX reloc number: %d"),
+			  abfd, r_type);
       bfd_set_error (bfd_error_bad_value);
       r_type = R_VAX_NONE;
     }
@@ -499,8 +499,9 @@ elf32_vax_set_private_flags (bfd *abfd, flagword flags)
 /* Merge backend specific data from an object file to the output
    object file when linking.  */
 static bfd_boolean
-elf32_vax_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+elf32_vax_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword in_flags;
 
   if (   bfd_get_flavour (ibfd) != bfd_target_elf_flavour
@@ -658,7 +659,8 @@ elf_vax_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
 		{
 		  h->got.refcount++;
 		  if (eh->got_addend != (bfd_vma) rel->r_addend)
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%s: warning: GOT addend of %ld to `%s' does"
 			 " not match previous GOT addend of %ld"),
 			 bfd_get_filename (abfd), rel->r_addend,
@@ -1545,7 +1547,8 @@ elf_vax_relocate_section (bfd *output_bfd,
 	      h->plt.offset |= 1;
 	    }
 	  else if (rel->r_addend != 0)
-	    (*_bfd_error_handler)
+	    _bfd_error_handler
+	      /* xgettext:c-format */
 	      (_("%s: warning: PLT addend of %d to `%s' from %s section ignored"),
 		      bfd_get_filename (input_bfd), rel->r_addend,
 		      h->root.root.string,
@@ -1670,13 +1673,15 @@ elf_vax_relocate_section (bfd *output_bfd,
 		      && ELF32_R_TYPE (outrel.r_info) != R_VAX_GLOB_DAT))
 		{
 		  if (h != NULL)
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%s: warning: %s relocation against symbol `%s' from %s section"),
 		      bfd_get_filename (input_bfd), howto->name,
 		      h->root.root.string,
 		      bfd_get_section_name (input_bfd, input_section));
 		  else
-		    (*_bfd_error_handler)
+		    _bfd_error_handler
+		      /* xgettext:c-format */
 		      (_("%s: warning: %s relocation to 0x%x from %s section"),
 		      bfd_get_filename (input_bfd), howto->name,
 		      outrel.r_addend,
@@ -1738,11 +1743,9 @@ elf_vax_relocate_section (bfd *output_bfd,
 		    if (*name == '\0')
 		      name = bfd_section_name (input_bfd, sec);
 		  }
-		if (!(info->callbacks->reloc_overflow
-		      (info, (h ? &h->root : NULL), name, howto->name,
-		       (bfd_vma) 0, input_bfd, input_section,
-		       rel->r_offset)))
-		  return FALSE;
+		info->callbacks->reloc_overflow
+		  (info, (h ? &h->root : NULL), name, howto->name,
+		   (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      }
 	      break;
 	    }
@@ -1929,20 +1932,18 @@ elf_vax_finish_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      break;
 
 	    case DT_PLTGOT:
-	      name = ".got";
+	      name = ".got.plt";
 	      goto get_vma;
 	    case DT_JMPREL:
 	      name = ".rela.plt";
 	    get_vma:
-	      s = bfd_get_section_by_name (output_bfd, name);
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->vma;
+	      s = bfd_get_linker_section (dynobj, name);
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_PLTRELSZ:
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
-	      BFD_ASSERT (s != NULL);
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      dyn.d_un.d_val = s->size;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
@@ -1955,7 +1956,7 @@ elf_vax_finish_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 		 linker script arranges for .rela.plt to follow all
 		 other relocation sections, we don't have to worry
 		 about changing the DT_RELA entry.  */
-	      s = bfd_get_section_by_name (output_bfd, ".rela.plt");
+	      s = bfd_get_linker_section (dynobj, ".rela.plt");
 	      if (s != NULL)
 		dyn.d_un.d_val -= s->size;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);

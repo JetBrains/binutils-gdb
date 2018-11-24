@@ -898,6 +898,7 @@ metag_info_to_howto_rela (bfd *abfd ATTRIBUTE_UNUSED,
   r_type = ELF32_R_TYPE (dst->r_info);
   if (r_type >= (unsigned int) R_METAG_MAX)
     {
+      /* xgettext:c-format */
       _bfd_error_handler (_("%B: invalid METAG reloc number: %d"), abfd, r_type);
       r_type = 0;
     }
@@ -1202,9 +1203,9 @@ metag_add_stub (const char *stub_name,
 				TRUE, FALSE);
   if (hsh == NULL)
     {
-      (*_bfd_error_handler) (_("%B: cannot create stub entry %s"),
-			     section->owner,
-			     stub_name);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: cannot create stub entry %s"),
+			  section->owner, stub_name);
       return NULL;
     }
 
@@ -1928,7 +1929,8 @@ elf_metag_relocate_section (bfd *output_bfd,
 	case R_METAG_TLS_LE_LO16:
 	  if (bfd_link_pic (info))
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B(%A+0x%lx): R_METAG_TLS_LE/IENONPIC relocation not permitted in shared object"),
 		 input_bfd, input_section,
 		 (long) rel->r_offset, howto->name);
@@ -1988,15 +1990,14 @@ elf_metag_relocate_section (bfd *output_bfd,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      r = info->callbacks->reloc_overflow
+	      (*info->callbacks->reloc_overflow)
 		(info, (hh ? &hh->eh.root : NULL), name, howto->name,
 		 (bfd_vma) 0, input_bfd, input_section, rel->r_offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      r = info->callbacks->undefined_symbol
-		(info, name, input_bfd, input_section, rel->r_offset,
-		 TRUE);
+	      (*info->callbacks->undefined_symbol)
+		(info, name, input_bfd, input_section, rel->r_offset, TRUE);
 	      break;
 
 	    case bfd_reloc_outofrange:
@@ -2017,11 +2018,8 @@ elf_metag_relocate_section (bfd *output_bfd,
 	    }
 
 	  if (msg)
-	    r = info->callbacks->warning
-	      (info, msg, name, input_bfd, input_section, rel->r_offset);
-
-	  if (! r)
-	    return FALSE;
+	    (*info->callbacks->warning) (info, msg, name, input_bfd,
+					 input_section, rel->r_offset);
 	}
     }
 
@@ -2290,7 +2288,8 @@ elf_metag_check_relocs (bfd *abfd,
 		name = hh->eh.root.root.string;
 	      else
 		name = bfd_elf_sym_name (abfd, symtab_hdr, isym, NULL);
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
+		/* xgettext:c-format */
 		(_("%B: relocation %s against `%s' can not be used when making a shared object; recompile with -fPIC"),
 		 abfd, elf_metag_howto_table[r_type].name, name);
 	      bfd_set_error (bfd_error_bad_value);
@@ -3330,16 +3329,14 @@ elf_metag_finish_dynamic_sections (bfd *output_bfd,
 	      continue;
 
 	    case DT_PLTGOT:
-	      s = htab->sgot->output_section;
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->vma + htab->sgot->output_offset;
+	      s = htab->sgot;
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_JMPREL:
-	      s = htab->srelplt->output_section;
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->vma;
+	      s = htab->srelplt;
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 

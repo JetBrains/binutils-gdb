@@ -74,6 +74,21 @@ replace_bits24 (unsigned insn, int value ATTRIBUTE_UNUSED)
 
 #endif /* REPLACE_bits24 */
 
+/* Special 24 bit replace for big endian.  */
+/* mask  = 111111111111111111111111.  */
+#ifndef REPLACE_bits24_be
+#define REPLACE_bits24_be
+ATTRIBUTE_UNUSED static unsigned
+replace_bits24_be (unsigned insn, int value ATTRIBUTE_UNUSED)
+{
+  insn = insn & ~0xffffff00;
+  insn |= ((value >> 0) & 0xffffff) << 8;
+
+  return insn;
+}
+
+#endif /* REPLACE_bits24_be */
+
 /* mask  = 11111111111111111111111111111111.  */
 #ifndef REPLACE_word32
 #define REPLACE_word32
@@ -249,3 +264,18 @@ replace_disp9s1 (unsigned insn, int value ATTRIBUTE_UNUSED)
 }
 
 #endif /* REPLACE_disp9s1 */
+
+/* mask  = 00000000000000000000111111222222.  */
+#ifndef REPLACE_disp12s
+#define REPLACE_disp12s
+ATTRIBUTE_UNUSED static unsigned
+replace_disp12s (unsigned insn, int value ATTRIBUTE_UNUSED)
+{
+  insn = insn & ~0xfff;
+  insn |= ((value >> 0) & 0x003f) << 6;
+  insn |= ((value >> 6) & 0x003f) << 0;
+
+  return insn;
+}
+
+#endif /* REPLACE_disp12s */

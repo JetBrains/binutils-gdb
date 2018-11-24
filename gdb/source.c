@@ -43,6 +43,7 @@
 #include "ui-out.h"
 #include "readline/readline.h"
 #include "common/enum-flags.h"
+#include <algorithm>
 
 #define OPEN_MODE (O_RDONLY | O_BINARY)
 #define FDOPEN_MODE FOPEN_RB
@@ -283,7 +284,7 @@ select_source_symtab (struct symtab *s)
       xfree (sals.sals);
       current_source_pspace = sal.pspace;
       current_source_symtab = sal.symtab;
-      current_source_line = max (sal.line - (lines_to_list - 1), 1);
+      current_source_line = std::max (sal.line - (lines_to_list - 1), 1);
       if (current_source_symtab)
 	return;
     }
@@ -685,9 +686,12 @@ source_info (char *ignore, int from_tty)
 }
 
 
-/* Return True if the file NAME exists and is a regular file.  */
+/* Return True if the file NAME exists and is a regular file.
+   If the result is false then *ERRNO_PTR is set to a useful value assuming
+   we're expecting a regular file.  */
+
 static int
-is_regular_file (const char *name)
+is_regular_file (const char *name, int *errno_ptr)
 {
   struct stat st;
   const int status = stat (name, &st);
@@ -698,9 +702,21 @@ is_regular_file (const char *name)
      on obscure systems where stat does not work as expected.  */
 
   if (status != 0)
-    return (errno != ENOENT);
+    {
+      if (errno != ENOENT)
+	return 1;
+      *errno_ptr = ENOENT;
+      return 0;
+    }
 
-  return S_ISREG (st.st_mode);
+  if (S_ISREG (st.st_mode))
+    return 1;
+
+  if (S_ISDIR (st.st_mode))
+    *errno_ptr = EISDIR;
+  else
+    *errno_ptr = EINVAL;
+  return 0;
 }
 
 /* Open a file named STRING, searching path PATH (dir names sep by some char)
@@ -775,22 +791,23 @@ openp (const char *path, int opts, const char *string,
 
   if ((opts & OPF_TRY_CWD_FIRST) || IS_ABSOLUTE_PATH (string))
     {
-      int i;
+      int i, reg_file_errno;
 
-      if (is_regular_file (string))
+      if (is_regular_file (string, &reg_file_errno))
 	{
 	  filename = (char *) alloca (strlen (string) + 1);
 	  strcpy (filename, string);
 	  fd = gdb_open_cloexec (filename, mode, 0);
 	  if (fd >= 0)
 	    goto done;
+	  last_errno = errno;
 	}
       else
 	{
 	  filename = NULL;
 	  fd = -1;
+	  last_errno = reg_file_errno;
 	}
-      last_errno = errno;
 
       if (!(opts & OPF_SEARCH_IN_PATH))
 	for (i = 0; string[i]; i++)
@@ -821,6 +838,7 @@ openp (const char *path, int opts, const char *string,
   for (ix = 0; VEC_iterate (char_ptr, dir_vec, ix, dir); ++ix)
     {
       size_t len = strlen (dir);
+      int reg_file_errno;
 
       if (strcmp (dir, "$cwd") == 0)
 	{
@@ -879,13 +897,15 @@ openp (const char *path, int opts, const char *string,
       strcat (filename + len, SLASH_STRING);
       strcat (filename, string);
 
-      if (is_regular_file (filename))
+      if (is_regular_file (filename, &reg_file_errno))
 	{
 	  fd = gdb_open_cloexec (filename, mode, 0);
 	  if (fd >= 0)
 	    break;
 	  last_errno = errno;
 	}
+      else
+	last_errno = reg_file_errno;
     }
 
   do_cleanups (back_to);
@@ -1068,7 +1088,7 @@ find_and_open_source (const char *filename,
 #define	cdir_len	5
       /* We cast strstr's result in case an ANSIhole has made it const,
          which produces a "required warning" when assigned to a nonconst.  */
-      p = (char *) strstr (source_path, "$cdir");
+      p = (char *) gnulib::strstr (source_path, "$cdir");
       if (p && (p == path || p[-1] == DIRNAME_SEPARATOR)
 	  && (p[cdir_len] == DIRNAME_SEPARATOR || p[cdir_len] == '\0'))
 	{
@@ -1159,8 +1179,8 @@ symtab_to_fullname (struct symtab *s)
 	  if (SYMTAB_DIRNAME (s) == NULL || IS_ABSOLUTE_PATH (s->filename))
 	    fullname = xstrdup (s->filename);
 	  else
-	    fullname = concat (SYMTAB_DIRNAME (s), SLASH_STRING, s->filename,
-			       NULL);
+	    fullname = concat (SYMTAB_DIRNAME (s), SLASH_STRING,
+			       s->filename, (char *) NULL);
 
 	  back_to = make_cleanup (xfree, fullname);
 	  s->fullname = rewrite_source_path (fullname);
@@ -1439,7 +1459,7 @@ print_source_lines_base (struct symtab *s, int line, int stopline,
     {
       char buf[20];
 
-      c = fgetc (stream);
+      c = gnulib::fgetc (stream);
       if (c == EOF)
 	break;
       last_line_listed = current_source_line;
@@ -1462,7 +1482,7 @@ print_source_lines_base (struct symtab *s, int line, int stopline,
 	  else if (c == '\r')
 	    {
 	      /* Skip a \r character, but only before a \n.  */
-	      int c1 = fgetc (stream);
+	      int c1 = gnulib::fgetc (stream);
 
 	      if (c1 != '\n')
 		printf_filtered ("^%c", c + 0100);
@@ -1475,7 +1495,7 @@ print_source_lines_base (struct symtab *s, int line, int stopline,
 	      ui_out_text (uiout, buf);
 	    }
 	}
-      while (c != '\n' && (c = fgetc (stream)) >= 0);
+      while (c != '\n' && (c = gnulib::fgetc (stream)) >= 0);
     }
 
   do_cleanups (cleanup);
@@ -1655,7 +1675,7 @@ forward_search_command (char *regex, int from_tty)
       buf = (char *) xmalloc (cursize);
       p = buf;
 
-      c = fgetc (stream);
+      c = gnulib::fgetc (stream);
       if (c == EOF)
 	break;
       do
@@ -1669,7 +1689,7 @@ forward_search_command (char *regex, int from_tty)
 	      cursize = newsize;
 	    }
 	}
-      while (c != '\n' && (c = fgetc (stream)) >= 0);
+      while (c != '\n' && (c = gnulib::fgetc (stream)) >= 0);
 
       /* Remove the \r, if any, at the end of the line, otherwise
          regular expressions that end with $ or \n won't work.  */
@@ -1687,7 +1707,7 @@ forward_search_command (char *regex, int from_tty)
 	  do_cleanups (cleanups);
 	  print_source_lines (current_source_symtab, line, line + 1, 0);
 	  set_internalvar_integer (lookup_internalvar ("_"), line);
-	  current_source_line = max (line - lines_to_list / 2, 1);
+	  current_source_line = std::max (line - lines_to_list / 2, 1);
 	  return;
 	}
       line++;
@@ -1740,14 +1760,14 @@ reverse_search_command (char *regex, int from_tty)
       char buf[4096];		/* Should be reasonable???  */
       char *p = buf;
 
-      c = fgetc (stream);
+      c = gnulib::fgetc (stream);
       if (c == EOF)
 	break;
       do
 	{
 	  *p++ = c;
 	}
-      while (c != '\n' && (c = fgetc (stream)) >= 0);
+      while (c != '\n' && (c = gnulib::fgetc (stream)) >= 0);
 
       /* Remove the \r, if any, at the end of the line, otherwise
          regular expressions that end with $ or \n won't work.  */
@@ -1765,7 +1785,7 @@ reverse_search_command (char *regex, int from_tty)
 	  do_cleanups (cleanups);
 	  print_source_lines (current_source_symtab, line, line + 1, 0);
 	  set_internalvar_integer (lookup_internalvar ("_"), line);
-	  current_source_line = max (line - lines_to_list / 2, 1);
+	  current_source_line = std::max (line - lines_to_list / 2, 1);
 	  return;
 	}
       line--;

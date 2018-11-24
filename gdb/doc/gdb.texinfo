@@ -2499,9 +2499,11 @@ display the name of the terminal that will be used for future runs of your
 program.
 
 @table @code
-@item set inferior-tty /dev/ttyb
+@item set inferior-tty [ @var{tty} ]
 @kindex set inferior-tty
-Set the tty for the program being debugged to /dev/ttyb.
+Set the tty for the program being debugged to @var{tty}.  Omitting @var{tty}
+restores the default behavior, which is to use the same terminal as
+@value{GDBN}.
 
 @item show inferior-tty
 @kindex show inferior-tty
@@ -4375,7 +4377,7 @@ A failed Ada assertion.
 A call to @code{exec}.
 
 @item syscall
-@itemx syscall @r{[}@var{name} @r{|} @var{number}@r{]} @dots{} 
+@itemx syscall @r{[}@var{name} @r{|} @var{number} @r{|} @r{group:}@var{groupname} @r{|} @r{g:}@var{groupname}@r{]} @dots{}
 @kindex catch syscall
 @cindex break on a system call.
 A call to or return from a system call, a.k.a.@: @dfn{syscall}.  A
@@ -4409,6 +4411,15 @@ into the corresponding numeric code, but using the number directly
 may be useful if @value{GDBN}'s database does not have the complete
 list of syscalls on your system (e.g., because @value{GDBN} lags
 behind the OS upgrades).
+
+You may specify a group of related syscalls to be caught at once using
+the @code{group:} syntax (@code{g:} is a shorter equivalent).  For
+instance, on some platforms @value{GDBN} allows you to catch all
+network related syscalls, by passing the argument @code{group:network}
+to @code{catch syscall}.  Note that not all syscall groups are
+available in every system.  You can use the command completion
+facilities (@pxref{Completion,, command completion}) to list the
+syscall groups available on your environment.
 
 The example below illustrates how this command works if you don't provide
 arguments to it:
@@ -4464,6 +4475,23 @@ Continuing.
 
 Program exited normally.
 (@value{GDBP})
+@end smallexample
+
+Here is an example of catching a syscall group:
+
+@smallexample
+(@value{GDBP}) catch syscall group:process
+Catchpoint 1 (syscalls 'exit' [1] 'fork' [2] 'waitpid' [7]
+'execve' [11] 'wait4' [114] 'clone' [120] 'vfork' [190]
+'exit_group' [252] 'waitid' [284] 'unshare' [310])
+(@value{GDBP}) r
+Starting program: /tmp/catch-syscall
+
+Catchpoint 1 (call to syscall fork), 0x00007ffff7df4e27 in open64 ()
+   from /lib64/ld-linux-x86-64.so.2
+
+(@value{GDBP}) c
+Continuing.
 @end smallexample
 
 However, there can be situations when there is no corresponding name
@@ -5527,8 +5555,9 @@ default is @code{on}.
 @cindex skipping over functions and files
 
 The program you are debugging may contain some functions which are
-uninteresting to debug.  The @code{skip} comand lets you tell @value{GDBN} to
-skip a function or all functions in a file when stepping.
+uninteresting to debug.  The @code{skip} command lets you tell @value{GDBN} to
+skip a function, all functions in a file or a particular function in
+a particular file when stepping.
 
 For example, consider the following C function:
 
@@ -5555,13 +5584,75 @@ A more flexible solution is to execute @kbd{skip boring}.  This instructs
 @code{step} at line 103, you'll step over @code{boring} and directly into
 @code{foo}.
 
-You can also instruct @value{GDBN} to skip all functions in a file, with, for
-example, @code{skip file boring.c}.
+Functions may be skipped by providing either a function name, linespec
+(@pxref{Specify Location}), regular expression that matches the function's
+name, file name or a @code{glob}-style pattern that matches the file name.
+
+On Posix systems the form of the regular expression is
+``Extended Regular Expressions''.  See for example @samp{man 7 regex}
+on @sc{gnu}/Linux systems.  On non-Posix systems the form of the regular
+expression is whatever is provided by the @code{regcomp} function of
+the underlying system.
+See for example @samp{man 7 glob} on @sc{gnu}/Linux systems for a
+description of @code{glob}-style patterns.
 
 @table @code
+@kindex skip
+@item skip @r{[}@var{options}@r{]}
+The basic form of the @code{skip} command takes zero or more options
+that specify what to skip.
+The @var{options} argument is any useful combination of the following:
+
+@table @code
+@item -file @var{file}
+@itemx -fi @var{file}
+Functions in @var{file} will be skipped over when stepping.
+
+@item -gfile @var{file-glob-pattern}
+@itemx -gfi @var{file-glob-pattern}
+@cindex skipping over files via glob-style patterns
+Functions in files matching @var{file-glob-pattern} will be skipped
+over when stepping.
+
+@smallexample
+(gdb) skip -gfi utils/*.c
+@end smallexample
+
+@item -function @var{linespec}
+@itemx -fu @var{linespec}
+Functions named by @var{linespec} or the function containing the line
+named by @var{linespec} will be skipped over when stepping.
+@xref{Specify Location}.
+
+@item -rfunction @var{regexp}
+@itemx -rfu @var{regexp}
+@cindex skipping over functions via regular expressions
+Functions whose name matches @var{regexp} will be skipped over when stepping.
+
+This form is useful for complex function names.
+For example, there is generally no need to step into C@t{++} @code{std::string}
+constructors or destructors.  Plus with C@t{++} templates it can be hard to
+write out the full name of the function, and often it doesn't matter what
+the template arguments are.  Specifying the function to be skipped as a
+regular expression makes this easier.
+
+@smallexample
+(gdb) skip -rfu ^std::(allocator|basic_string)<.*>::~?\1 *\(
+@end smallexample
+
+If you want to skip every templated C@t{++} constructor and destructor
+in the @code{std} namespace you can do:
+
+@smallexample
+(gdb) skip -rfu ^std::([a-zA-z0-9_]+)<.*>::~?\1 *\(
+@end smallexample
+@end table
+
+If no options are specified, the function you're currently debugging
+will be skipped.
+
 @kindex skip function
-@item skip @r{[}@var{linespec}@r{]}
-@itemx skip function @r{[}@var{linespec}@r{]}
+@item skip function @r{[}@var{linespec}@r{]}
 After running this command, the function named by @var{linespec} or the
 function containing the line named by @var{linespec} will be skipped over when
 stepping.  @xref{Specify Location}.
@@ -5576,6 +5667,11 @@ will be skipped.
 @item skip file @r{[}@var{filename}@r{]}
 After running this command, any function whose source lives in @var{filename}
 will be skipped over when stepping.
+
+@smallexample
+(gdb) skip file boring.c
+File boring.c will be skipped when stepping.
+@end smallexample
 
 If you do not specify @var{filename}, functions whose source lives in the file
 you're currently debugging will be skipped.
@@ -5594,20 +5690,21 @@ print a table with details about all functions and files marked for skipping.
 @table @emph
 @item Identifier
 A number identifying this skip.
-@item Type
-The type of this skip, either @samp{function} or @samp{file}.
 @item Enabled or Disabled
-Enabled skips are marked with @samp{y}.  Disabled skips are marked with @samp{n}.
-@item Address
-For function skips, this column indicates the address in memory of the function
-being skipped.  If you've set a function skip on a function which has not yet
-been loaded, this field will contain @samp{<PENDING>}.  Once a shared library
-which has the function is loaded, @code{info skip} will show the function's
-address here.
-@item What
-For file skips, this field contains the filename being skipped.  For functions
-skips, this field contains the function name and its line number in the file
-where it is defined.
+Enabled skips are marked with @samp{y}.
+Disabled skips are marked with @samp{n}.
+@item Glob
+If the file name is a @samp{glob} pattern this is @samp{y}.
+Otherwise it is @samp{n}.
+@item File
+The name or @samp{glob} pattern of the file to be skipped.
+If no file is specified this is @samp{<none>}.
+@item RE
+If the function name is a @samp{regular expression} this is @samp{y}.
+Otherwise it is @samp{n}.
+@item Function
+The name or regular expression of the function to skip.
+If no function is specified this is @samp{<none>}.
 @end table
 
 @kindex skip delete
@@ -5851,6 +5948,33 @@ $1 = (void *) 0x7ffff7ff7000
 @end smallexample
 
 Depending on target support, @code{$_siginfo} may also be writable.
+
+@cindex Intel MPX boundary violations
+@cindex boundary violations, Intel MPX
+On some targets, a @code{SIGSEGV} can be caused by a boundary
+violation, i.e., accessing an address outside of the allowed range.
+In those cases @value{GDBN} may displays additional information,
+depending on how @value{GDBN} has been told to handle the signal.
+With @code{handle stop SIGSEGV}, @value{GDBN} displays the violation
+kind: "Upper" or "Lower", the memory address accessed and the
+bounds, while with @code{handle nostop SIGSEGV} no additional
+information is displayed.
+
+The usual output of a segfault is:
+@smallexample
+Program received signal SIGSEGV, Segmentation fault
+0x0000000000400d7c in upper () at i386-mpx-sigsegv.c:68
+68        value = *(p + len);
+@end smallexample
+
+While a bound violation is presented as:
+@smallexample
+Program received signal SIGSEGV, Segmentation fault
+Upper bound violation while accessing address 0x7fffffffc3b3
+Bounds: [lower = 0x7fffffffc390, upper = 0x7fffffffc3a3]
+0x0000000000400d7c in upper () at i386-mpx-sigsegv.c:68
+68        value = *(p + len);
+@end smallexample
 
 @node Thread Stops
 @section Stopping and Starting Multi-thread Programs
@@ -6535,7 +6659,9 @@ Hardware-supported instruction recording.  This method does not record
 data.  Further, the data is collected in a ring buffer so old data will
 be overwritten when the buffer is full.  It allows limited reverse
 execution.  Variables and registers are not available during reverse
-execution.
+execution.  In remote debugging, recording continues on disconnect.
+Recorded data can be inspected after reconnecting.  The recording may
+be stopped using @code{record stop}.
 
 The recording format can be specified as parameter.  Without a parameter
 the command chooses the recording format.  The following recording
@@ -7815,7 +7941,7 @@ Any expression valid in the current working language.
 
 @item @var{funcaddr}
 An address of a function or procedure derived from its name.  In C,
-C@t{++}, Java, Objective-C, Fortran, minimal, and assembly, this is
+C@t{++}, Objective-C, Fortran, minimal, and assembly, this is
 simply the function's name @var{function} (and actually a special case
 of a valid expression).  In Pascal and Modula-2, this is
 @code{&@var{function}}.  In Ada, this is @code{@var{function}'Address}
@@ -8636,6 +8762,7 @@ being passed the type of @var{arg} as the argument.
                                 character set than GDB does
 * Caching Target Data::         Data caching for targets
 * Searching Memory::            Searching memory for a sequence of bytes
+* Value Sizes::                 Managing memory allocated for values
 @end menu
 
 @node Expressions
@@ -9198,7 +9325,8 @@ Several commands set convenient defaults for @var{addr}.
 @table @r
 @item @var{n}, the repeat count
 The repeat count is a decimal integer; the default is 1.  It specifies
-how much memory (counting by units @var{u}) to display.
+how much memory (counting by units @var{u}) to display.  If a negative
+number is specified, memory is examined backward from @var{addr}.
 @c This really is **decimal**; unaffected by 'set radix' as of GDB
 @c 4.1.2.
 
@@ -9253,6 +9381,10 @@ starting at address @code{0x54320}.  @samp{x/4xw $sp} prints the four
 words (@samp{w}) of memory above the stack pointer (here, @samp{$sp};
 @pxref{Registers, ,Registers}) in hexadecimal (@samp{x}).
 
+You can also specify a negative repeat count to examine memory backward
+from the given address.  For example, @samp{x/-3uh 0x54320} prints three
+halfwords (@code{h}) at @code{0x54314}, @code{0x54328}, and @code{0x5431c}.
+
 Since the letters indicating unit sizes are all distinct from the
 letters specifying output formats, you do not have to remember whether
 unit size or format comes first; either order works.  The output
@@ -9268,6 +9400,13 @@ slot instructions, if any, beyond the count specified, which immediately
 follow the last instruction that is within the count.  The command
 @code{disassemble} gives an alternative way of inspecting machine
 instructions; see @ref{Machine Code,,Source and Machine Code}.
+
+If a negative repeat count is specified for the formats @samp{s} or @samp{i},
+the command displays null-terminated strings or instructions before the given
+address as many as the absolute value of the given number.  For the @samp{i}
+format, we use line number information in the debug info to accurately locate
+instruction boundaries while disassembling backward.  If line info is not
+available, the command stops examining memory with an error message.
 
 All the defaults for the arguments to @code{x} are designed to make it
 easy to continue scanning memory with minimal specifications each time
@@ -10663,6 +10802,19 @@ checks all stack frames from the immediate caller to the frame specified
 by @var{number_of_frames}, whereas @code{$_caller_matches} only checks the
 frame specified by @var{number_of_frames}.
 
+@item $_as_string(@var{value})
+@findex $_as_string@r{, convenience function}
+Return the string representation of @var{value}.
+
+This function is useful to obtain the textual label (enumerator) of an
+enumeration value.  For example, assuming the variable @var{node} is of
+an enumerated type:
+
+@smallexample
+(gdb) printf "Visiting node of type %s\n", $_as_string(node)
+Visiting node of type NODE_INTEGER
+@end smallexample
+
 @end table
 
 @value{GDBN} provides the ability to list and get help on
@@ -11711,6 +11863,47 @@ $1 = 1
 $2 = (void *) 0x8049560
 @end smallexample
 
+@node Value Sizes
+@section Value Sizes
+
+Whenever @value{GDBN} prints a value memory will be allocated within
+@value{GDBN} to hold the contents of the value.  It is possible in
+some languages with dynamic typing systems, that an invalid program
+may indicate a value that is incorrectly large, this in turn may cause
+@value{GDBN} to try and allocate an overly large ammount of memory.
+
+@table @code
+@kindex set max-value-size
+@item set max-value-size @var{bytes}
+@itemx set max-value-size unlimited
+Set the maximum size of memory that @value{GDBN} will allocate for the
+contents of a value to @var{bytes}, trying to display a value that
+requires more memory than that will result in an error.
+
+Setting this variable does not effect values that have already been
+allocated within @value{GDBN}, only future allocations.
+
+There's a minimum size that @code{max-value-size} can be set to in
+order that @value{GDBN} can still operate correctly, this minimum is
+currently 16 bytes.
+
+The limit applies to the results of some subexpressions as well as to
+complete expressions.  For example, an expression denoting a simple
+integer component, such as @code{x.y.z}, may fail if the size of
+@var{x.y} is dynamic and exceeds @var{bytes}.  On the other hand,
+@value{GDBN} is sometimes clever; the expression @code{A[i]}, where
+@var{A} is an array variable with non-constant size, will generally
+succeed regardless of the bounds on @var{A}, as long as the component
+size is less than @var{bytes}.
+
+The default value of @code{max-value-size} is currently 64k.
+
+@kindex show max-value-size
+@item show max-value-size
+Show the maximum size of memory, in bytes, that @value{GDBN} will
+allocate for the contents of a value.
+@end table
+
 @node Optimized Code
 @chapter Debugging Optimized Code
 @cindex optimized code, debugging
@@ -12727,6 +12920,13 @@ Collect all local variables.
 Collect the return address.  This is helpful if you want to see more
 of a backtrace.
 
+@emph{Note:} The return address location can not always be reliably
+determined up front, and the wrong address / registers may end up
+collected instead.  On some architectures the reliability is higher
+for tracepoints at function entry, while on others it's the opposite.
+When this happens, backtracing will stop because the return address is
+found unavailable (unless another collect rule happened to match it).
+
 @item $_probe_argc
 Collects the number of arguments from the static probe at which the
 tracepoint is located.
@@ -13227,7 +13427,8 @@ Stop debugging trace snapshots, resume @emph{live} debugging.
 Same as @samp{tfind none}.
 
 @item tfind
-No argument means find the next trace snapshot.
+No argument means find the next trace snapshot or find the first
+one if no trace snapshot is selected.
 
 @item tfind -
 Find the previous trace snapshot before the current one.  This permits
@@ -13477,7 +13678,7 @@ the data directly into @var{filename} in its own filesystem, which may be
 more efficient if the trace buffer is very large.  (Note, however, that
 @code{target tfile} can only read from files accessible to the host.)
 By default, this command will save trace frame in tfile format.
-You can supply the optional argument @code{-ctf} to save date in CTF
+You can supply the optional argument @code{-ctf} to save data in CTF
 format.  The @dfn{Common Trace Format} (CTF) is proposed as a trace format
 that can be shared by multiple debugging and tracing tools.  Please go to
 @indicateurl{http://www.efficios.com/ctf} to get more information.
@@ -14239,8 +14440,8 @@ being set automatically by @value{GDBN}.
 @node Supported Languages
 @section Supported Languages
 
-@value{GDBN} supports C, C@t{++}, D, Go, Objective-C, Fortran, Java,
-OpenCL C, Pascal, assembly, Modula-2, and Ada.
+@value{GDBN} supports C, C@t{++}, D, Go, Objective-C, Fortran,
+OpenCL C, Pascal, Rust, assembly, Modula-2, and Ada.
 @c This is false ...
 Some @value{GDBN} features may be used in expressions regardless of the
 language you use: the @value{GDBN} @code{@@} and @code{::} operators,
@@ -14264,6 +14465,7 @@ language reference or tutorial.
 * OpenCL C::                    OpenCL C
 * Fortran::                     Fortran
 * Pascal::                      Pascal
+* Rust::                        Rust
 * Modula-2::                    Modula-2
 * Ada::                         Ada
 @end menu
@@ -15068,6 +15270,99 @@ syntax.
 The Pascal-specific command @code{set print pascal_static-members}
 controls whether static members of Pascal objects are displayed.
 @xref{Print Settings, pascal_static-members}.
+
+@node Rust
+@subsection Rust
+
+@value{GDBN} supports the @url{https://www.rust-lang.org/, Rust
+Programming Language}.  Type- and value-printing, and expression
+parsing, are reasonably complete.  However, there are a few
+peculiarities and holes to be aware of.
+
+@itemize @bullet
+@item
+Linespecs (@pxref{Specify Location}) are never relative to the current
+crate.  Instead, they act as if there were a global namespace of
+crates, somewhat similar to the way @code{extern crate} behaves.
+
+That is, if @value{GDBN} is stopped at a breakpoint in a function in
+crate @samp{A}, module @samp{B}, then @code{break B::f} will attempt
+to set a breakpoint in a function named @samp{f} in a crate named
+@samp{B}.
+
+As a consequence of this approach, linespecs also cannot refer to
+items using @samp{self::} or @samp{super::}.
+
+@item
+Because @value{GDBN} implements Rust name-lookup semantics in
+expressions, it will sometimes prepend the current crate to a name.
+For example, if @value{GDBN} is stopped at a breakpoint in the crate
+@samp{K}, then @code{print ::x::y} will try to find the symbol
+@samp{K::x::y}.
+
+However, since it is useful to be able to refer to other crates when
+debugging, @value{GDBN} provides the @code{extern} extension to
+circumvent this.  To use the extension, just put @code{extern} before
+a path expression to refer to the otherwise unavailable ``global''
+scope.
+
+In the above example, if you wanted to refer to the symbol @samp{y} in
+the crate @samp{x}, you would use @code{print extern x::y}.
+
+@item
+The Rust expression evaluator does not support ``statement-like''
+expressions such as @code{if} or @code{match}, or lambda expressions.
+
+@item
+Tuple expressions are not implemented.
+
+@item
+The Rust expression evaluator does not currently implement the
+@code{Drop} trait.  Objects that may be created by the evaluator will
+never be destroyed.
+
+@item
+@value{GDBN} does not implement type inference for generics.  In order
+to call generic functions or otherwise refer to generic items, you
+will have to specify the type parameters manually.
+
+@item
+@value{GDBN} currently uses the C@t{++} demangler for Rust.  In most
+cases this does not cause any problems.  However, in an expression
+context, completing a generic function name will give syntactically
+invalid results.  This happens because Rust requires the @samp{::}
+operator between the function name and its generic arguments.  For
+example, @value{GDBN} might provide a completion like
+@code{crate::f<u32>}, where the parser would require
+@code{crate::f::<u32>}.
+
+@item
+As of this writing, the Rust compiler (version 1.8) has a few holes in
+the debugging information it generates.  These holes prevent certain
+features from being implemented by @value{GDBN}:
+@itemize @bullet
+
+@item
+Method calls cannot be made via traits.
+
+@item
+Trait objects cannot be created or inspected.
+
+@item
+Operator overloading is not implemented.
+
+@item
+When debugging in a monomorphized function, you cannot use the generic
+type names.
+
+@item
+The type @code{Self} is not available.
+
+@item
+@code{use} statements are not available, so some names may not be
+available in the crate.
+@end itemize
+@end itemize
 
 @node Modula-2
 @subsection Modula-2
@@ -17023,6 +17318,15 @@ line 1574.
 @}
 (@value{GDBP})
 @end smallexample
+
+@kindex maint info line-table
+@cindex listing @value{GDBN}'s internal line tables
+@cindex line tables, listing @value{GDBN}'s internal
+@item maint info line-table @r{[} @var{regexp} @r{]}
+
+List the @code{struct linetable} from all @code{struct symtab}
+instances whose name matches @var{regexp}.  If @var{regexp} is not
+given, list the @code{struct linetable} from all @code{struct symtab}.
 
 @kindex maint set symbol-cache-size
 @cindex symbol cache size
@@ -21246,6 +21550,35 @@ This command displays thread specific information stored in the
 Thread Information Block (readable on the X86 CPU family using @code{$fs}
 selector for 32-bit programs and @code{$gs} for 64-bit programs).
 
+@kindex signal-event
+@item signal-event @var{id}
+This command signals an event with user-provided @var{id}.  Used to resume
+crashing process when attached to it using MS-Windows JIT debugging (AeDebug).
+
+To use it, create or edit the following keys in
+@code{HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug} and/or
+@code{HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug}
+(for x86_64 versions):
+
+@itemize @minus
+@item
+@code{Debugger} (REG_SZ) --- a command to launch the debugger.
+Suggested command is: @code{@var{fully-qualified-path-to-gdb.exe} -ex
+"attach %ld" -ex "signal-event %ld" -ex "continue"}.
+
+The first @code{%ld} will be replaced by the process ID of the
+crashing process, the second @code{%ld} will be replaced by the ID of
+the event that blocks the crashing process, waiting for @value{GDBN}
+to attach.
+
+@item
+@code{Auto} (REG_SZ) --- either @code{1} or @code{0}.  @code{1} will
+make the system run debugger specified by the Debugger key
+automatically, @code{0} will cause a dialog box with ``OK'' and
+``Cancel'' buttons to appear, which allows the user to either
+terminate the crashing process (OK) or debug it (Cancel).
+@end itemize
+
 @kindex set cygwin-exceptions
 @cindex debugging the Cygwin DLL
 @cindex Cygwin DLL, debugging
@@ -21684,8 +22017,8 @@ acceptable commands.
 
 
 @menu
+* ARC::                         Synopsys ARC
 * ARM::                         ARM
-* M32R/SDI::                    Renesas M32R/SDI
 * M68K::                        Motorola M68K
 * MicroBlaze::			Xilinx MicroBlaze
 * MIPS Embedded::               MIPS Embedded
@@ -21694,6 +22027,30 @@ acceptable commands.
 * CRIS::                        CRIS
 * Super-H::                     Renesas Super-H
 @end menu
+
+@node ARC
+@subsection Synopsys ARC
+@cindex Synopsys ARC
+@cindex ARC specific commands
+@cindex ARC600
+@cindex ARC700
+@cindex ARC EM
+@cindex ARC HS
+
+@value{GDBN} provides the following ARC-specific commands:
+
+@table @code
+@item set debug arc
+@kindex set debug arc
+Control the level of ARC specific debug messages.  Use 0 for no messages (the
+default) and 1 for debug messages.  At present higher values offer no further
+messages.
+
+@item show debug arc
+@kindex show debug arc
+Show the level of ARC specific debugging in operation.
+
+@end table
 
 @node ARM
 @subsection ARM
@@ -21792,43 +22149,6 @@ The default value is @code{all}.
 @end table
 @end table
 
-@node M32R/SDI
-@subsection Renesas M32R/SDI
-
-The following commands are available for M32R/SDI:
-
-@table @code
-@item sdireset
-@kindex sdireset
-@cindex reset SDI connection, M32R
-This command resets the SDI connection.
-
-@item sdistatus
-@kindex sdistatus
-This command shows the SDI connection status.
-
-@item debug_chaos
-@kindex debug_chaos
-@cindex M32R/Chaos debugging
-Instructs the remote that M32R/Chaos debugging is to be used.
-
-@item use_debug_dma
-@kindex use_debug_dma
-Instructs the remote to use the DEBUG_DMA method of accessing memory.
-
-@item use_mon_code
-@kindex use_mon_code
-Instructs the remote to use the MON_CODE method of accessing memory.
-
-@item use_ib_break
-@kindex use_ib_break
-Instructs the remote to set breakpoints by IB break.
-
-@item use_dbt_break
-@kindex use_dbt_break
-Instructs the remote to set breakpoints by DBT.
-@end table
-
 @node M68K
 @subsection M68k
 
@@ -21875,59 +22195,8 @@ Show MicroBlaze-specific debugging level.
 @node MIPS Embedded
 @subsection @acronym{MIPS} Embedded
 
-@cindex @acronym{MIPS} boards
-@value{GDBN} can use the @acronym{MIPS} remote debugging protocol to talk to a
-@acronym{MIPS} board attached to a serial line.  This is available when
-you configure @value{GDBN} with @samp{--target=mips-elf}.
-
-@need 1000
-Use these @value{GDBN} commands to specify the connection to your target board:
-
-@table @code
-@item target mips @var{port}
-@kindex target mips @var{port}
-To run a program on the board, start up @code{@value{GDBP}} with the
-name of your program as the argument.  To connect to the board, use the
-command @samp{target mips @var{port}}, where @var{port} is the name of
-the serial port connected to the board.  If the program has not already
-been downloaded to the board, you may use the @code{load} command to
-download it.  You can then use all the usual @value{GDBN} commands.
-
-For example, this sequence connects to the target board through a serial
-port, and loads and runs a program called @var{prog} through the
-debugger:
-
-@smallexample
-host$ @value{GDBP} @var{prog}
-@value{GDBN} is free software and @dots{}
-(@value{GDBP}) target mips /dev/ttyb
-(@value{GDBP}) load @var{prog}
-(@value{GDBP}) run
-@end smallexample
-
-@item target mips @var{hostname}:@var{portnumber}
-On some @value{GDBN} host configurations, you can specify a TCP
-connection (for instance, to a serial line managed by a terminal
-concentrator) instead of a serial port, using the syntax
-@samp{@var{hostname}:@var{portnumber}}.
-
-@item target pmon @var{port}
-@kindex target pmon @var{port}
-PMON ROM monitor.
-
-@item target ddb @var{port}
-@kindex target ddb @var{port}
-NEC's DDB variant of PMON for Vr4300.
-
-@item target lsi @var{port}
-@kindex target lsi @var{port}
-LSI variant of PMON.
-
-@end table
-
-
 @noindent
-@value{GDBN} also supports these special commands for @acronym{MIPS} targets:
+@value{GDBN} supports these special commands for @acronym{MIPS} targets:
 
 @table @code
 @item set mipsfpu double
@@ -21957,78 +22226,6 @@ and @samp{set mipsfpu off} will select no floating point.
 
 As usual, you can inquire about the @code{mipsfpu} variable with
 @samp{show mipsfpu}.
-
-@item set timeout @var{seconds}
-@itemx set retransmit-timeout @var{seconds}
-@itemx show timeout
-@itemx show retransmit-timeout
-@cindex @code{timeout}, @acronym{MIPS} protocol
-@cindex @code{retransmit-timeout}, @acronym{MIPS} protocol
-@kindex set timeout
-@kindex show timeout
-@kindex set retransmit-timeout
-@kindex show retransmit-timeout
-You can control the timeout used while waiting for a packet, in the @acronym{MIPS}
-remote protocol, with the @code{set timeout @var{seconds}} command.  The
-default is 5 seconds.  Similarly, you can control the timeout used while
-waiting for an acknowledgment of a packet with the @code{set
-retransmit-timeout @var{seconds}} command.  The default is 3 seconds.
-You can inspect both values with @code{show timeout} and @code{show
-retransmit-timeout}.  (These commands are @emph{only} available when
-@value{GDBN} is configured for @samp{--target=mips-elf}.)
-
-The timeout set by @code{set timeout} does not apply when @value{GDBN}
-is waiting for your program to stop.  In that case, @value{GDBN} waits
-forever because it has no way of knowing how long the program is going
-to run before stopping.
-
-@item set syn-garbage-limit @var{num}
-@kindex set syn-garbage-limit@r{, @acronym{MIPS} remote}
-@cindex synchronize with remote @acronym{MIPS} target
-Limit the maximum number of characters @value{GDBN} should ignore when
-it tries to synchronize with the remote target.  The default is 10
-characters.  Setting the limit to -1 means there's no limit.
-
-@item show syn-garbage-limit
-@kindex show syn-garbage-limit@r{, @acronym{MIPS} remote}
-Show the current limit on the number of characters to ignore when
-trying to synchronize with the remote system.
-
-@item set monitor-prompt @var{prompt}
-@kindex set monitor-prompt@r{, @acronym{MIPS} remote}
-@cindex remote monitor prompt
-Tell @value{GDBN} to expect the specified @var{prompt} string from the
-remote monitor.  The default depends on the target:
-@table @asis
-@item pmon target
-@samp{PMON}
-@item ddb target
-@samp{NEC010}
-@item lsi target
-@samp{PMON>}
-@end table
-
-@item show monitor-prompt
-@kindex show monitor-prompt@r{, @acronym{MIPS} remote}
-Show the current strings @value{GDBN} expects as the prompt from the
-remote monitor.
-
-@item set monitor-warnings
-@kindex set monitor-warnings@r{, @acronym{MIPS} remote}
-Enable or disable monitor warnings about hardware breakpoints.  This
-has effect only for the @code{lsi} target.  When on, @value{GDBN} will
-display warning messages whose codes are returned by the @code{lsi}
-PMON monitor for breakpoint commands.
-
-@item show monitor-warnings
-@kindex show monitor-warnings@r{, @acronym{MIPS} remote}
-Show the current setting of printing monitor warnings.
-
-@item pmon @var{command}
-@kindex pmon@r{, @acronym{MIPS} remote}
-@cindex send PMON command
-This command allows sending an arbitrary @var{command} string to the
-monitor.  The monitor must be in debug mode for this to work.
 @end table
 
 @node PowerPC Embedded
@@ -23622,7 +23819,7 @@ Displays the current state of displaying @value{GDBN} frame debugging
 info.
 @item set debug gnu-nat
 @cindex @sc{gnu}/Hurd debug messages
-Turns on or off debugging messages from the @sc{gnu}/Hurd debug support.
+Turn on or off debugging messages from the @sc{gnu}/Hurd debug support.
 @item show debug gnu-nat
 Show the current state of @sc{gnu}/Hurd debugging messages.
 @item set debug infrun
@@ -23634,18 +23831,18 @@ for implementing operations such as single-stepping the inferior.
 Displays the current state of @value{GDBN} inferior debugging.
 @item set debug jit
 @cindex just-in-time compilation, debugging messages
-Turns on or off debugging messages from JIT debug support.
+Turn on or off debugging messages from JIT debug support.
 @item show debug jit
 Displays the current state of @value{GDBN} JIT debugging.
 @item set debug lin-lwp
 @cindex @sc{gnu}/Linux LWP debug messages
 @cindex Linux lightweight processes
-Turns on or off debugging messages from the Linux LWP debug support.
+Turn on or off debugging messages from the Linux LWP debug support.
 @item show debug lin-lwp
 Show the current state of Linux LWP debugging messages.
 @item set debug linux-namespaces
 @cindex @sc{gnu}/Linux namespaces debug messages
-Turns on or off debugging messages from the Linux namespaces debug support.
+Turn on or off debugging messages from the Linux namespaces debug support.
 @item show debug linux-namespaces
 Show the current state of Linux namespaces debugging messages.
 @item set debug mach-o
@@ -23657,7 +23854,7 @@ Displays the current state of displaying debugging messages related to
 reading of COFF/PE exported symbols.
 @item set debug notification
 @cindex remote async notification debugging info
-Turns on or off debugging messages about remote async notification.
+Turn on or off debugging messages about remote async notification.
 The default is off.
 @item show debug notification
 Displays the current state of remote async notification debugging messages.
@@ -23703,7 +23900,7 @@ Displays the current state of displaying @value{GDBN} serial debugging
 info.
 @item set debug solib-frv
 @cindex FR-V shared-library debugging
-Turns on or off debugging messages for FR-V shared-library code.
+Turn on or off debugging messages for FR-V shared-library code.
 @item show debug solib-frv
 Display the current state of FR-V shared-library code debugging
 messages.
@@ -23755,7 +23952,7 @@ Displays the current state of displaying @value{GDBN} variable object
 debugging info.
 @item set debug xml
 @cindex XML parser debugging
-Turns on or off debugging messages for built-in XML parsers.
+Turn on or off debugging messages for built-in XML parsers.
 @item show debug xml
 Displays the current state of XML debugging messages.
 @end table
@@ -24798,18 +24995,11 @@ The @sc{gdb/mi} interface included in @value{GDBN} 5.1, 5.2, and 5.3.
 @end table
 
 @cindex invoke another interpreter
-The interpreter being used by @value{GDBN} may not be dynamically
-switched at runtime.  Although possible, this could lead to a very
-precarious situation.  Consider an IDE using @sc{gdb/mi}.  If a user
-enters the command "interpreter-set console" in a console view,
-@value{GDBN} would switch to using the console interpreter, rendering
-the IDE inoperable!
 
 @kindex interpreter-exec
-Although you may only choose a single interpreter at startup, you may execute
-commands in any interpreter from the current interpreter using the appropriate
-command.  If you are running the console interpreter, simply use the
-@code{interpreter-exec} command:
+You may execute commands in any interpreter from the current
+interpreter using the appropriate command.  If you are running the
+console interpreter, simply use the @code{interpreter-exec} command:
 
 @smallexample
 interpreter-exec mi "-data-list-register-names"
@@ -24817,6 +25007,49 @@ interpreter-exec mi "-data-list-register-names"
 
 @sc{gdb/mi} has a similar command, although it is only available in versions of
 @value{GDBN} which support @sc{gdb/mi} version 2 (or greater).
+
+Note that @code{interpreter-exec} only changes the interpreter for the
+duration of the specified command.  It does not change the interpreter
+permanently.
+
+@cindex start a new independent interpreter
+
+Although you may only choose a single interpreter at startup, it is
+possible to run an independent interpreter on a specified input/output
+device (usually a tty).
+
+For example, consider a debugger GUI or IDE that wants to provide a
+@value{GDBN} console view.  It may do so by embedding a terminal
+emulator widget in its GUI, starting @value{GDBN} in the traditional
+command-line mode with stdin/stdout/stderr redirected to that
+terminal, and then creating an MI interpreter running on a specified
+input/output device.  The console interpreter created by @value{GDBN}
+at startup handles commands the user types in the terminal widget,
+while the GUI controls and synchronizes state with @value{GDBN} using
+the separate MI interpreter.
+
+To start a new secondary @dfn{user interface} running MI, use the
+@code{new-ui} command:
+
+@kindex new-ui
+@cindex new user interface
+@smallexample
+new-ui @var{interpreter} @var{tty}
+@end smallexample
+
+The @var{interpreter} parameter specifies the interpreter to run.
+This accepts the same values as the @code{interpreter-exec} command.
+For example, @samp{console}, @samp{mi}, @samp{mi2}, etc.  The
+@var{tty} parameter specifies the name of the bidirectional file the
+interpreter uses for input/output, usually the name of a
+pseudoterminal slave on Unix systems.  For example:
+
+@smallexample
+(@value{GDBP}) new-ui mi /dev/pts/9
+@end smallexample
+
+@noindent
+runs an MI interpreter on @file{/dev/pts/9}.
 
 @node TUI
 @chapter @value{GDBN} Text User Interface
@@ -25599,13 +25832,13 @@ identifier for thread and frame to operate on.
 Usually, each top-level window in a frontend allows the user to select
 a thread and a frame, and remembers the user selection for further
 operations.  However, in some cases @value{GDBN} may suggest that the
-current thread be changed.  For example, when stopping on a breakpoint
-it is reasonable to switch to the thread where breakpoint is hit.  For
-another example, if the user issues the CLI @samp{thread} command via
-the frontend, it is desirable to change the frontend's selected thread to the
-one specified by user.  @value{GDBN} communicates the suggestion to
-change current thread using the @samp{=thread-selected} notification.
-No such notification is available for the selected frame at the moment.
+current thread or frame be changed.  For example, when stopping on a
+breakpoint it is reasonable to switch to the thread where breakpoint is
+hit.  For another example, if the user issues the CLI @samp{thread} or
+@samp{frame} commands via the frontend, it is desirable to change the
+frontend's selection to the one specified by user.  @value{GDBN}
+communicates the suggestion to change current thread and frame using the
+@samp{=thread-selected} notification.
 
 Note that historically, MI shares the selected thread with CLI, so 
 frontends used the @code{-thread-select} to execute commands in the
@@ -26251,13 +26484,18 @@ A thread either was created, or has exited.  The @var{id} field
 contains the global @value{GDBN} identifier of the thread.  The @var{gid}
 field identifies the thread group this thread belongs to.
 
-@item =thread-selected,id="@var{id}"
-Informs that the selected thread was changed as result of the last
-command.  This notification is not emitted as result of @code{-thread-select}
-command but is emitted whenever an MI command that is not documented
-to change the selected thread actually changes it.  In particular,
-invoking, directly or indirectly (via user-defined command), the CLI
-@code{thread} command, will generate this notification.
+@item =thread-selected,id="@var{id}"[,frame="@var{frame}"]
+Informs that the selected thread or frame were changed.  This notification
+is not emitted as result of the @code{-thread-select} or
+@code{-stack-select-frame} commands, but is emitted whenever an MI command
+that is not documented to change the selected thread and frame actually
+changes them.  In particular, invoking, directly or indirectly
+(via user-defined command), the CLI @code{thread} or @code{frame} commands,
+will generate this notification.  Changing the thread or frame from another
+user interface (see @ref{Interpreters}) will also generate this notification.
+
+The @var{frame} field is only present if the newly selected thread is
+stopped.  See @ref{GDB/MI Frame Information} for the format of its value.
 
 We suggest that in response to this notification, front ends
 highlight the selected thread and cause subsequent commands to apply to
@@ -26322,11 +26560,16 @@ breakpoint commands; @xref{GDB/MI Breakpoint Commands}.  The
 Note that if a breakpoint is emitted in the result record of a
 command, then it will not also be emitted in an async record.
 
-@item =record-started,thread-group="@var{id}"
+@item =record-started,thread-group="@var{id}",method="@var{method}"[,format="@var{format}"]
 @itemx =record-stopped,thread-group="@var{id}"
 Execution log recording was either started or stopped on an
 inferior.  The @var{id} is the @value{GDBN} identifier of the thread
 group corresponding to the affected inferior.
+
+The @var{method} field indicates the method used to record execution.  If the
+method in use supports multiple recording formats, @var{format} will be present
+and contain the currently used format.  @xref{Process Record and Replay}
+for existing method and format values.
 
 @item =cmd-param-changed,param=@var{param},value=@var{value}
 Reports that a parameter of the command @code{set @var{param}} is
@@ -30691,13 +30934,17 @@ body=[variable=@{name="$trace_timestamp",initial="0"@}
 @subsubheading Synopsis
 
 @smallexample
- -trace-save [-r ] @var{filename}
+ -trace-save [ -r ] [ -ctf ] @var{filename}
 @end smallexample
 
 Saves the collected trace data to @var{filename}.  Without the
 @samp{-r} option, the data is downloaded from the target and saved
 in a local file.  With the @samp{-r} option the target is asked
 to perform the save.
+
+By default, this command will save the trace in the tfile format.  You can
+supply the optional @samp{-ctf} argument to save it the CTF format. See
+@ref{Trace Files} for more information about CTF.
 
 @subsubheading @value{GDBN} Command
 
@@ -30713,7 +30960,7 @@ The corresponding @value{GDBN} command is @samp{tsave}.
  -trace-start
 @end smallexample
 
-Starts a tracing experiments.  The result of this command does not
+Starts a tracing experiment.  The result of this command does not
 have any fields.
 
 @subsubheading @value{GDBN} Command
@@ -34444,6 +34691,11 @@ that symbol is described.  The type chain produced by this command is
 a recursive definition of the data type as stored in @value{GDBN}'s
 data structures, including its flags and contained types.
 
+@kindex maint selftest
+@cindex self tests
+Run any self tests that were compiled in to @value{GDBN}.  This will
+print a message showing how many tests were run, and how many failed.
+
 @kindex maint set dwarf always-disassemble
 @kindex maint show dwarf always-disassemble
 @item maint set dwarf always-disassemble
@@ -35007,8 +35259,7 @@ Each byte of register data is described by two hex digits.  The bytes
 with the register are transmitted in target byte order.  The size of
 each register and their position within the @samp{g} packet are
 determined by the @value{GDBN} internal gdbarch functions
-@code{DEPRECATED_REGISTER_RAW_SIZE} and @code{gdbarch_register_name}.  The
-specification of several standard @samp{g} packets is specified below.
+@code{DEPRECATED_REGISTER_RAW_SIZE} and @code{gdbarch_register_name}.
 
 When reading registers from a trace frame (@pxref{Analyze Collected
 Data,,Using the Collected Data}), the stub may also return a string of
@@ -35279,13 +35530,16 @@ for success in non-stop mode (@pxref{Remote Non-Stop})
 @cindex @samp{vCont} packet
 @anchor{vCont packet}
 Resume the inferior, specifying different actions for each thread.
-If an action is specified with no @var{thread-id}, then it is applied to any
-threads that don't have a specific action specified; if no default action is
-specified then other threads should remain stopped in all-stop mode and
-in their current state in non-stop mode.
-Specifying multiple
-default actions is an error; specifying no actions is also an error.
-Thread IDs are specified using the syntax described in @ref{thread-id syntax}.
+
+For each inferior thread, the leftmost action with a matching
+@var{thread-id} is applied.  Threads that don't match any action
+remain in their current state.  Thread IDs are specified using the
+syntax described in @ref{thread-id syntax}.  If multiprocess
+extensions (@pxref{multiprocess extensions}) are supported, actions
+can be specified to match all threads in a process by using the
+@samp{p@var{pid}.-1} form of the @var{thread-id}.  An action with no
+@var{thread-id} matches all threads.  Specifying no actions is an
+error.
 
 Currently supported actions are:
 
@@ -35330,11 +35584,17 @@ the corresponding stop reply should indicate that the thread has stopped with
 signal @samp{0}, regardless of whether the target uses some other signal
 as an implementation detail.
 
+The server must ignore @samp{c}, @samp{C}, @samp{s}, @samp{S}, and
+@samp{r} actions for threads that are already running.  Conversely,
+the server must ignore @samp{t} actions for threads that are already
+stopped.
+
+@emph{Note:} In non-stop mode, a thread is considered running until
+@value{GDBN} acknowleges an asynchronous stop notification for it with
+the @samp{vStopped} packet (@pxref{Remote Non-Stop}).
+
 The stub must support @samp{vCont} if it reports support for
-multiprocess extensions (@pxref{multiprocess extensions}).  Note that in
-this case @samp{vCont} actions can be specified to apply to all threads
-in a process by using the @samp{p@var{pid}.-1} form of the
-@var{thread-id}.
+multiprocess extensions (@pxref{multiprocess extensions}).
 
 Reply:
 @xref{Stop Reply Packets}, for the reply specifications.
@@ -35505,22 +35765,25 @@ be implemented in an idempotent way.}
 @itemx Z0,@var{addr},@var{kind}@r{[};@var{cond_list}@dots{}@r{]}@r{[};cmds:@var{persist},@var{cmd_list}@dots{}@r{]}
 @cindex @samp{z0} packet
 @cindex @samp{Z0} packet
-Insert (@samp{Z0}) or remove (@samp{z0}) a memory breakpoint at address
+Insert (@samp{Z0}) or remove (@samp{z0}) a software breakpoint at address
 @var{addr} of type @var{kind}.
 
-A memory breakpoint is implemented by replacing the instruction at
+A software breakpoint is implemented by replacing the instruction at
 @var{addr} with a software breakpoint or trap instruction.  The
-@var{kind} is target-specific and typically indicates the size of
-the breakpoint in bytes that should be inserted.  E.g., the @sc{arm}
-and @sc{mips} can insert either a 2 or 4 byte breakpoint.  Some
-architectures have additional meanings for @var{kind};
-@var{cond_list} is an optional list of conditional expressions in bytecode
-form that should be evaluated on the target's side.  These are the
-conditions that should be taken into consideration when deciding if
-the breakpoint trigger should be reported back to @var{GDBN}.
+@var{kind} is target-specific and typically indicates the size of the
+breakpoint in bytes that should be inserted.  E.g., the @sc{arm} and
+@sc{mips} can insert either a 2 or 4 byte breakpoint.  Some
+architectures have additional meanings for @var{kind}
+(@pxref{Architecture-Specific Protocol Details}); if no
+architecture-specific value is being used, it should be @samp{0}.
+@var{kind} is hex-encoded.  @var{cond_list} is an optional list of
+conditional expressions in bytecode form that should be evaluated on
+the target's side.  These are the conditions that should be taken into
+consideration when deciding if the breakpoint trigger should be
+reported back to @value{GDBN}.
 
 See also the @samp{swbreak} stop reason (@pxref{swbreak stop reason})
-for how to best report a memory breakpoint event to @value{GDBN}.
+for how to best report a software breakpoint event to @value{GDBN}.
 
 The @var{cond_list} parameter is comprised of a series of expressions,
 concatenated without separators. Each expression has the following form:
@@ -35549,10 +35812,8 @@ actual conditional expression in bytecode form.
 
 @end table
 
-see @ref{Architecture-Specific Protocol Details}.
-
 @emph{Implementation note: It is possible for a target to copy or move
-code that contains memory breakpoints (e.g., when implementing
+code that contains software breakpoints (e.g., when implementing
 overlays).  The behavior of this packet, in the presence of such a
 target, is not defined.}
 
@@ -35567,15 +35828,16 @@ for an error
 @end table
 
 @item z1,@var{addr},@var{kind}
-@itemx Z1,@var{addr},@var{kind}@r{[};@var{cond_list}@dots{}@r{]}
+@itemx Z1,@var{addr},@var{kind}@r{[};@var{cond_list}@dots{}@r{]}@r{[};cmds:@var{persist},@var{cmd_list}@dots{}@r{]}
 @cindex @samp{z1} packet
 @cindex @samp{Z1} packet
 Insert (@samp{Z1}) or remove (@samp{z1}) a hardware breakpoint at
 address @var{addr}.
 
 A hardware breakpoint is implemented using a mechanism that is not
-dependant on being able to modify the target's memory.  The @var{kind}
-and @var{cond_list} have the same meaning as in @samp{Z0} packets.
+dependent on being able to modify the target's memory.  The
+@var{kind}, @var{cond_list}, and @var{cmd_list} arguments have the
+same meaning as in @samp{Z0} packets.
 
 @emph{Implementation note: A hardware breakpoint is not affected by code
 movement.}
@@ -35655,6 +35917,10 @@ when the target halts.  In the below the exact meaning of @dfn{signal
 number} is defined by the header @file{include/gdb/signals.h} in the
 @value{GDBN} source code.
 
+In non-stop mode, the server will simply reply @samp{OK} to commands
+such as @samp{vCont}; any stop will be the subject of a future
+notification.  @xref{Remote Non-Stop}.
+
 As in the description of request packets, we include spaces in the
 reply templates for clarity; these are not part of the reply packet's
 syntax.  No @value{GDBN} stop reply packet uses spaces to separate its
@@ -35733,7 +35999,7 @@ for more information.
 
 @item swbreak
 @anchor{swbreak stop reason}
-The packet indicates a memory breakpoint instruction was executed,
+The packet indicates a software breakpoint instruction was executed,
 irrespective of whether it was @value{GDBN} that planted the
 breakpoint or the breakpoint is hardcoded in the program.  The @var{r}
 part must be left empty.
@@ -35820,7 +36086,8 @@ The packet indicates that the thread was just created.  The new thread
 is stopped until @value{GDBN} sets it running with a resumption packet
 (@pxref{vCont packet}).  This packet should not be sent by default;
 @value{GDBN} requests it with the @ref{QThreadEvents} packet.  See
-also the @samp{w} (@ref{thread exit event}) remote reply below.
+also the @samp{w} (@pxref{thread exit event}) remote reply below.  The
+@var{r} part is ignored.
 
 @end table
 
@@ -35829,10 +36096,11 @@ also the @samp{w} (@ref{thread exit event}) remote reply below.
 The process exited, and @var{AA} is the exit status.  This is only
 applicable to certain targets.
 
-The second form of the response, including the process ID of the exited
-process, can be used only when @value{GDBN} has reported support for
-multiprocess protocol extensions; see @ref{multiprocess extensions}.
-The @var{pid} is formatted as a big-endian hex string.
+The second form of the response, including the process ID of the
+exited process, can be used only when @value{GDBN} has reported
+support for multiprocess protocol extensions; see @ref{multiprocess
+extensions}.  Both @var{AA} and @var{pid} are formatted as big-endian
+hex strings.
 
 @item X @var{AA}
 @itemx X @var{AA} ; process:@var{pid}
@@ -35841,7 +36109,8 @@ The process terminated with signal @var{AA}.
 The second form of the response, including the process ID of the
 terminated process, can be used only when @value{GDBN} has reported
 support for multiprocess protocol extensions; see @ref{multiprocess
-extensions}.  The @var{pid} is formatted as a big-endian hex string.
+extensions}.  Both @var{AA} and @var{pid} are formatted as big-endian
+hex strings.
 
 @anchor{thread exit event}
 @cindex thread exit event, remote reply
@@ -35850,6 +36119,7 @@ extensions}.  The @var{pid} is formatted as a big-endian hex string.
 The thread exited, and @var{AA} is the exit status.  This response
 should not be sent by default; @value{GDBN} requests it with the
 @ref{QThreadEvents} packet.  See also @ref{thread create event} above.
+@var{AA} is formatted as a big-endian hex string.
 
 @item N
 There are no resumed threads left in the target.  In other words, even
@@ -37145,9 +37415,40 @@ starting at @var{offset} bytes into the data.  The content and
 encoding of @var{annex} is specific to @var{object}; it can supply
 additional details about what data to access.
 
-Here are the specific requests of this form defined so far.  All
+Reply:
+@table @samp
+@item m @var{data}
+Data @var{data} (@pxref{Binary Data}) has been read from the
+target.  There may be more data at a higher address (although
+it is permitted to return @samp{m} even for the last valid
+block of data, as long as at least one byte of data was read).
+It is possible for @var{data} to have fewer bytes than the @var{length} in the
+request.
+
+@item l @var{data}
+Data @var{data} (@pxref{Binary Data}) has been read from the target.
+There is no more data to be read.  It is possible for @var{data} to
+have fewer bytes than the @var{length} in the request.
+
+@item l
+The @var{offset} in the request is at the end of the data.
+There is no more data to be read.
+
+@item E00
+The request was malformed, or @var{annex} was invalid.
+
+@item E @var{nn}
+The offset was invalid, or there was an error encountered reading the data.
+The @var{nn} part is a hex-encoded @code{errno} value.
+
+@item @w{}
+An empty reply indicates the @var{object} string was not recognized by
+the stub, or that the object does not support reading.
+@end table
+
+Here are the specific requests of this form defined so far.  All the
 @samp{qXfer:@var{object}:read:@dots{}} requests use the same reply
-formats, listed below.
+formats, listed above.
 
 @table @samp
 @item qXfer:auxv:read::@var{offset},@var{length}
@@ -37352,37 +37653,6 @@ Access the target's @dfn{operating system information}.
 
 @end table
 
-Reply:
-@table @samp
-@item m @var{data}
-Data @var{data} (@pxref{Binary Data}) has been read from the
-target.  There may be more data at a higher address (although
-it is permitted to return @samp{m} even for the last valid
-block of data, as long as at least one byte of data was read).
-It is possible for @var{data} to have fewer bytes than the @var{length} in the
-request.
-
-@item l @var{data}
-Data @var{data} (@pxref{Binary Data}) has been read from the target.
-There is no more data to be read.  It is possible for @var{data} to
-have fewer bytes than the @var{length} in the request.
-
-@item l
-The @var{offset} in the request is at the end of the data.
-There is no more data to be read.
-
-@item E00
-The request was malformed, or @var{annex} was invalid.
-
-@item E @var{nn}
-The offset was invalid, or there was an error encountered reading the data.
-The @var{nn} part is a hex-encoded @code{errno} value.
-
-@item @w{}
-An empty reply indicates the @var{object} string was not recognized by
-the stub, or that the object does not support reading.
-@end table
-
 @item qXfer:@var{object}:write:@var{annex}:@var{offset}:@var{data}@dots{}
 @cindex write data into object, remote request
 @anchor{qXfer write}
@@ -37393,9 +37663,27 @@ written is given by @var{data}@dots{}.  The content and encoding of @var{annex}
 is specific to @var{object}; it can supply additional details about what data
 to access.
 
-Here are the specific requests of this form defined so far.  All
+Reply:
+@table @samp
+@item @var{nn}
+@var{nn} (hex encoded) is the number of bytes written.
+This may be fewer bytes than supplied in the request.
+
+@item E00
+The request was malformed, or @var{annex} was invalid.
+
+@item E @var{nn}
+The offset was invalid, or there was an error encountered writing the data.
+The @var{nn} part is a hex-encoded @code{errno} value.
+
+@item @w{}
+An empty reply indicates the @var{object} string was not
+recognized by the stub, or that the object does not support writing.
+@end table
+
+Here are the specific requests of this form defined so far.  All the
 @samp{qXfer:@var{object}:write:@dots{}} requests use the same reply
-formats, listed below.
+formats, listed above.
 
 @table @samp
 @item qXfer:siginfo:write::@var{offset}:@var{data}@dots{}
@@ -37418,24 +37706,6 @@ in that context to be accessed.
 
 This packet is not probed by default; the remote stub must request it,
 by supplying an appropriate @samp{qSupported} response (@pxref{qSupported}).
-@end table
-
-Reply:
-@table @samp
-@item @var{nn}
-@var{nn} (hex encoded) is the number of bytes written.
-This may be fewer bytes than supplied in the request.
-
-@item E00
-The request was malformed, or @var{annex} was invalid.
-
-@item E @var{nn}
-The offset was invalid, or there was an error encountered writing the data.
-The @var{nn} part is a hex-encoded @code{errno} value.
-
-@item @w{}
-An empty reply indicates the @var{object} string was not
-recognized by the stub, or that the object does not support writing.
 @end table
 
 @item qXfer:@var{object}:@var{operation}:@dots{}
@@ -38421,7 +38691,7 @@ the process shall be repeated.
 The process of asynchronous notification can be illustrated by the
 following example:
 @smallexample
-<- @code{%%Stop:T0505:98e7ffbf;04:4ce6ffbf;08:b1b6e54c;thread:p7526.7526;core:0;}
+<- @code{%Stop:T0505:98e7ffbf;04:4ce6ffbf;08:b1b6e54c;thread:p7526.7526;core:0;}
 @code{...}
 -> @code{vStopped}
 <- @code{T0505:68f37db7;04:40f37db7;08:63850408;thread:p7526.7528;core:0;}
@@ -40192,6 +40462,7 @@ target descriptions.  @xref{Expat}.
 * Target Description Format::       The contents of a target description.
 * Predefined Target Types::         Standard types available for target
                                     descriptions.
+* Enum Target Types::               How to define enum target types.
 * Standard Target Features::        Features @value{GDBN} knows about.
 @end menu
 
@@ -40392,7 +40663,8 @@ Any register's value is a collection of bits which @value{GDBN} must
 interpret.  The default interpretation is a two's complement integer,
 but other types can be requested by name in the register description.
 Some predefined types are provided by @value{GDBN} (@pxref{Predefined
-Target Types}), and the description can define additional composite types.
+Target Types}), and the description can define additional composite
+and enum types.
 
 Each type element must have an @samp{id} attribute, which gives
 a unique (within the containing @samp{<feature>}) name to the type.
@@ -40422,24 +40694,15 @@ each of which has a @var{name} and a @var{type}:
 @end smallexample
 
 @cindex <struct>
+@cindex <flags>
 If a register's value is composed from several separate values, define
-it with a structure type.  There are two forms of the @samp{<struct>}
-element; a @samp{<struct>} element must either contain only bitfields
-or contain no bitfields.  If the structure contains only bitfields,
-its total size in bytes must be specified, each bitfield must have an
-explicit start and end, and bitfields are automatically assigned an
-integer type.  The field's @var{start} should be less than or
-equal to its @var{end}, and zero represents the least significant bit.
+it with either a structure type or a flags type.
+A flags type may only contain bitfields.
+A structure type may either contain only bitfields or contain no bitfields.
+If the value contains only bitfields, its total size in bytes must be
+specified.
 
-@smallexample
-<struct id="@var{id}" size="@var{size}">
-  <field name="@var{name}" start="@var{start}" end="@var{end}"/>
-  @dots{}
-</struct>
-@end smallexample
-
-If the structure contains no bitfields, then each field has an
-explicit type, and no implicit padding is added.
+Non-bitfield values have a @var{name} and @var{type}.
 
 @smallexample
 <struct id="@var{id}">
@@ -40448,19 +40711,63 @@ explicit type, and no implicit padding is added.
 </struct>
 @end smallexample
 
-@cindex <flags>
-If a register's value is a series of single-bit flags, define it with
-a flags type.  The @samp{<flags>} element has an explicit @var{size}
-and contains one or more @samp{<field>} elements.  Each field has a
-@var{name}, a @var{start}, and an @var{end}.  Only single-bit flags
-are supported.
+Both @var{name} and @var{type} values are required.
+No implicit padding is added.
+
+Bitfield values have a @var{name}, @var{start}, @var{end} and @var{type}.
+
+@smallexample
+<struct id="@var{id}" size="@var{size}">
+  <field name="@var{name}" start="@var{start}" end="@var{end}" type="@var{type}"/>
+  @dots{}
+</struct>
+@end smallexample
 
 @smallexample
 <flags id="@var{id}" size="@var{size}">
-  <field name="@var{name}" start="@var{start}" end="@var{end}"/>
+  <field name="@var{name}" start="@var{start}" end="@var{end}" type="@var{type}"/>
   @dots{}
 </flags>
 @end smallexample
+
+The @var{name} value is required.
+Bitfield values may be named with the empty string, @samp{""},
+in which case the field is ``filler'' and its value is not printed.
+Not all bits need to be specified, so ``filler'' fields are optional.
+
+The @var{start} and @var{end} values are required, and @var{type}
+is optional.
+The field's @var{start} must be less than or equal to its @var{end},
+and zero represents the least significant bit.
+
+The default value of @var{type} is @code{bool} for single bit fields,
+and an unsigned integer otherwise.
+
+Which to choose?  Structures or flags?
+
+Registers defined with @samp{flags} have these advantages over
+defining them with @samp{struct}:
+
+@itemize @bullet
+@item
+Arithmetic may be performed on them as if they were integers.
+@item
+They are printed in a more readable fashion.
+@end itemize
+
+Registers defined with @samp{struct} have one advantage over
+defining them with @samp{flags}:
+
+@itemize @bullet
+@item
+One can fetch individual fields like in @samp{C}.
+
+@smallexample
+(gdb) print $my_struct_reg.field3
+$1 = 42
+@end smallexample
+
+@end itemize
 
 @subsection Registers
 @cindex <reg>
@@ -40530,6 +40837,9 @@ types.  The currently supported types are:
 
 @table @code
 
+@item bool
+Boolean type, occupying a single bit.
+
 @item int8
 @itemx int16
 @itemx int32
@@ -40572,6 +40882,44 @@ The 10-byte extended precision format used by x87 registers.
 
 @end table
 
+@node Enum Target Types
+@section Enum Target Types
+@cindex target descriptions, enum types
+
+Enum target types are useful in @samp{struct} and @samp{flags}
+register descriptions.  @xref{Target Description Format}.
+
+Enum types have a name, size and a list of name/value pairs.
+
+@smallexample
+<enum id="@var{id}" size="@var{size}">
+  <evalue name="@var{name}" value="@var{value}"/>
+  @dots{}
+</enum>
+@end smallexample
+
+Enums must be defined before they are used.
+
+@smallexample
+<enum id="levels_type" size="4">
+  <evalue name="low" value="0"/>
+  <evalue name="high" value="1"/>
+</enum>
+<flags id="flags_type" size="4">
+  <field name="X" start="0"/>
+  <field name="LEVEL" start="1" end="1" type="levels_type"/>
+</flags>
+<reg name="flags" bitsize="32" type="flags_type"/>
+@end smallexample
+
+Given that description, a value of 3 for the @samp{flags} register
+would be printed as:
+
+@smallexample
+(gdb) info register flags
+flags 0x3 [ X LEVEL=high ]
+@end smallexample
+
 @node Standard Target Features
 @section Standard Target Features
 @cindex target descriptions, standard features
@@ -40608,11 +40956,13 @@ registers using the capitalization used in the description.
 
 @menu
 * AArch64 Features::
+* ARC Features::
 * ARM Features::
 * i386 Features::
 * MicroBlaze Features::
 * MIPS Features::
 * M68K Features::
+* NDS32 Features::
 * Nios II Features::
 * PowerPC Features::
 * S/390 and System z Features::
@@ -40631,6 +40981,45 @@ targets.  It should contain registers @samp{x0} through @samp{x30},
 The @samp{org.gnu.gdb.aarch64.fpu} feature is optional.  If present,
 it should contain registers @samp{v0} through @samp{v31}, @samp{fpsr},
 and @samp{fpcr}.
+
+@node ARC Features
+@subsection ARC Features
+@cindex target descriptions, ARC Features
+
+ARC processors are highly configurable, so even core registers and their number
+are not completely predetermined.  In addition flags and PC registers which are
+important to @value{GDBN} are not ``core'' registers in ARC.  It is required
+that one of the core registers features is present.
+@samp{org.gnu.gdb.arc.aux-minimal} feature is mandatory.
+
+The @samp{org.gnu.gdb.arc.core.v2} feature is required for ARC EM and ARC HS
+targets with a normal register file.  It should contain registers @samp{r0}
+through @samp{r25}, @samp{gp}, @samp{fp}, @samp{sp}, @samp{r30}, @samp{blink},
+@samp{lp_count} and @samp{pcl}.  This feature may contain register @samp{ilink}
+and any of extension core registers @samp{r32} through @samp{r59/acch}.
+@samp{ilink} and extension core registers are not available to read/write, when
+debugging GNU/Linux applications, thus @samp{ilink} is made optional.
+
+The @samp{org.gnu.gdb.arc.core-reduced.v2} feature is required for ARC EM and
+ARC HS targets with a reduced register file.  It should contain registers
+@samp{r0} through @samp{r3}, @samp{r10} through @samp{r15}, @samp{gp},
+@samp{fp}, @samp{sp}, @samp{r30}, @samp{blink}, @samp{lp_count} and @samp{pcl}.
+This feature may contain register @samp{ilink} and any of extension core
+registers @samp{r32} through @samp{r59/acch}.
+
+The @samp{org.gnu.gdb.arc.core.arcompact} feature is required for ARCompact
+targets with a normal register file.  It should contain registers @samp{r0}
+through @samp{r25}, @samp{gp}, @samp{fp}, @samp{sp}, @samp{r30}, @samp{blink},
+@samp{lp_count} and @samp{pcl}.  This feature may contain registers
+@samp{ilink1}, @samp{ilink2} and any of extension core registers @samp{r32}
+through @samp{r59/acch}.  @samp{ilink1} and @samp{ilink2} and extension core
+registers are not available when debugging GNU/Linux applications.  The only
+difference with @samp{org.gnu.gdb.arc.core.v2} feature is in the names of
+@samp{ilink1} and @samp{ilink2} registers and that @samp{r30} is mandatory in
+ARC v2, but @samp{ilink2} is optional on ARCompact.
+
+The @samp{org.gnu.gdb.arc.aux-minimal} feature is required for all ARC
+targets.  It should contain registers @samp{pc} and @samp{status32}.
 
 @node ARM Features
 @subsection ARM Features
@@ -40821,6 +41210,28 @@ This feature is optional.  If present, it should contain registers
 @samp{fpiaddr}.
 @end table
 
+@node NDS32 Features
+@subsection NDS32 Features
+@cindex target descriptions, NDS32 features
+
+The @samp{org.gnu.gdb.nds32.core} feature is required for NDS32
+targets.  It should contain at least registers @samp{r0} through
+@samp{r10}, @samp{r15}, @samp{fp}, @samp{gp}, @samp{lp}, @samp{sp},
+and @samp{pc}.
+
+The @samp{org.gnu.gdb.nds32.fpu} feature is optional.  If present,
+it should contain 64-bit double-precision floating-point registers
+@samp{fd0} through @emph{fdN}, which should be @samp{fd3}, @samp{fd7},
+@samp{fd15}, or @samp{fd31} based on the FPU configuration implemented.
+
+@emph{Note:} The first sixteen 64-bit double-precision floating-point
+registers are overlapped with the thirty-two 32-bit single-precision
+floating-point registers.  The 32-bit single-precision registers, if
+not being listed explicitly, will be synthesized from halves of the
+overlapping 64-bit double-precision registers.  Listing 32-bit
+single-precision registers explicitly is deprecated, and the
+support to it could be totally removed some day.
+
 @node Nios II Features
 @subsection Nios II Features
 @cindex target descriptions, Nios II features
@@ -40989,7 +41400,38 @@ as tracepoint definitions or register set size.  @value{GDBN} will
 ignore any line that it does not recognize.  An empty line marks the end
 of this section.
 
-@c FIXME add some specific types of data
+@table @code
+@item R @var{size}
+Specifies the size of a register block in bytes.  This is equal to the
+size of a @code{g} packet payload in the remote protocol.  @var{size}
+is an ascii decimal number.  There should be only one such line in
+a single trace file.
+
+@item status @var{status}
+Trace status.  @var{status} has the same format as a @code{qTStatus}
+remote packet reply.  There should be only one such line in a single trace
+file.
+
+@item tp @var{payload}
+Tracepoint definition.  The @var{payload} has the same format as
+@code{qTfP}/@code{qTsP} remote packet reply payload.  A single tracepoint
+may take multiple lines of definition, corresponding to the multiple
+reply packets.
+
+@item tsv @var{payload}
+Trace state variable definition.  The @var{payload} has the same format as
+@code{qTfV}/@code{qTsV} remote packet reply payload.  A single variable
+may take multiple lines of definition, corresponding to the multiple
+reply packets.
+
+@item tdesc @var{payload}
+Target description in XML format.  The @var{payload} is a single line of
+the XML file.  All such lines should be concatenated together to get
+the original XML file.  This file is in the same format as @code{qXfer}
+@code{features} payload, and corresponds to the main @code{target.xml}
+file.  Includes are not allowed.
+
+@end table
 
 The trace frame section consists of a number of consecutive frames.
 Each frame begins with a two-byte tracepoint number, followed by a
@@ -41006,8 +41448,7 @@ endianness.
 @item R @var{bytes}
 Register block.  The number and ordering of bytes matches that of a
 @code{g} packet in the remote protocol.  Note that these are the
-actual bytes, in target order and @value{GDBN} register order, not a
-hexadecimal encoding.
+actual bytes, in target order, not a hexadecimal encoding.
 
 @item M @var{address} @var{length} @var{bytes}...
 Memory block.  This is a contiguous block of memory, at the 8-byte
@@ -41225,7 +41666,7 @@ switch (die->tag)
     break;
   case DW_TAG_enumerator:
     kind = VARIABLE;
-    is_static = (language != CPLUS && language != JAVA);
+    is_static = language != CPLUS;
     break;
   case DW_TAG_subprogram:
     kind = FUNCTION;
@@ -41249,7 +41690,7 @@ switch (die->tag)
   case DW_TAG_union_type:
   case DW_TAG_enumeration_type:
     kind = TYPE;
-    is_static = (language != CPLUS && language != JAVA);
+    is_static = language != CPLUS;
     break;
   default:
     assert (0);
@@ -41345,7 +41786,7 @@ Here are some of the most frequently needed @value{GDBN} commands:
 
 @c pod2man highlights the right hand side of the @item lines.
 @table @env
-@item break [@var{file}:]@var{functiop}
+@item break [@var{file}:]@var{function}
 Set a breakpoint at @var{function} (in @var{file}).
 
 @item run [@var{arglist}]

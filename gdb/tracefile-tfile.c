@@ -28,6 +28,11 @@
 #include "exec.h" /* exec_bfd */
 #include "completer.h"
 #include "filenames.h"
+#include "remote.h"
+#include "xml-tdesc.h"
+#include "target-descriptions.h"
+#include "buffer.h"
+#include <algorithm>
 
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
@@ -103,7 +108,7 @@ tfile_write_header (struct trace_file_writer *self)
   /* Write a file header, with a high-bit-set char to indicate a
      binary file, plus a hint as what this file is, and a version
      number in case of future needs.  */
-  written = fwrite ("\x7fTRACE0\n", 8, 1, writer->fp);
+  written = gnulib::fwrite ("\x7fTRACE0\n", 8, 1, writer->fp);
   if (written < 1)
     perror_with_name (writer->pathname);
 }
@@ -117,7 +122,7 @@ tfile_write_regblock_type (struct trace_file_writer *self, int size)
   struct tfile_trace_file_writer *writer
     = (struct tfile_trace_file_writer *) self;
 
-  fprintf (writer->fp, "R %x\n", size);
+  gnulib::fprintf (writer->fp, "R %x\n", size);
 }
 
 /* This is the implementation of trace_file_write_ops method
@@ -130,37 +135,38 @@ tfile_write_status (struct trace_file_writer *self,
   struct tfile_trace_file_writer *writer
     = (struct tfile_trace_file_writer *) self;
 
-  fprintf (writer->fp, "status %c;%s",
-	   (ts->running ? '1' : '0'), stop_reason_names[ts->stop_reason]);
+  gnulib::fprintf (writer->fp, "status %c;%s",
+		   (ts->running ? '1' : '0'),
+		   stop_reason_names[ts->stop_reason]);
   if (ts->stop_reason == tracepoint_error
       || ts->stop_reason == tstop_command)
     {
       char *buf = (char *) alloca (strlen (ts->stop_desc) * 2 + 1);
 
       bin2hex ((gdb_byte *) ts->stop_desc, buf, strlen (ts->stop_desc));
-      fprintf (writer->fp, ":%s", buf);
+      gnulib::fprintf (writer->fp, ":%s", buf);
     }
-  fprintf (writer->fp, ":%x", ts->stopping_tracepoint);
+  gnulib::fprintf (writer->fp, ":%x", ts->stopping_tracepoint);
   if (ts->traceframe_count >= 0)
-    fprintf (writer->fp, ";tframes:%x", ts->traceframe_count);
+    gnulib::fprintf (writer->fp, ";tframes:%x", ts->traceframe_count);
   if (ts->traceframes_created >= 0)
-    fprintf (writer->fp, ";tcreated:%x", ts->traceframes_created);
+    gnulib::fprintf (writer->fp, ";tcreated:%x", ts->traceframes_created);
   if (ts->buffer_free >= 0)
-    fprintf (writer->fp, ";tfree:%x", ts->buffer_free);
+    gnulib::fprintf (writer->fp, ";tfree:%x", ts->buffer_free);
   if (ts->buffer_size >= 0)
-    fprintf (writer->fp, ";tsize:%x", ts->buffer_size);
+    gnulib::fprintf (writer->fp, ";tsize:%x", ts->buffer_size);
   if (ts->disconnected_tracing)
-    fprintf (writer->fp, ";disconn:%x", ts->disconnected_tracing);
+    gnulib::fprintf (writer->fp, ";disconn:%x", ts->disconnected_tracing);
   if (ts->circular_buffer)
-    fprintf (writer->fp, ";circular:%x", ts->circular_buffer);
+    gnulib::fprintf (writer->fp, ";circular:%x", ts->circular_buffer);
   if (ts->start_time)
     {
-      fprintf (writer->fp, ";starttime:%s",
+      gnulib::fprintf (writer->fp, ";starttime:%s",
       phex_nz (ts->start_time, sizeof (ts->start_time)));
     }
   if (ts->stop_time)
     {
-      fprintf (writer->fp, ";stoptime:%s",
+      gnulib::fprintf (writer->fp, ";stoptime:%s",
       phex_nz (ts->stop_time, sizeof (ts->stop_time)));
     }
   if (ts->notes != NULL)
@@ -168,16 +174,16 @@ tfile_write_status (struct trace_file_writer *self,
       char *buf = (char *) alloca (strlen (ts->notes) * 2 + 1);
 
       bin2hex ((gdb_byte *) ts->notes, buf, strlen (ts->notes));
-      fprintf (writer->fp, ";notes:%s", buf);
+      gnulib::fprintf (writer->fp, ";notes:%s", buf);
     }
   if (ts->user_name != NULL)
     {
       char *buf = (char *) alloca (strlen (ts->user_name) * 2 + 1);
 
       bin2hex ((gdb_byte *) ts->user_name, buf, strlen (ts->user_name));
-      fprintf (writer->fp, ";username:%s", buf);
+      gnulib::fprintf (writer->fp, ";username:%s", buf);
     }
-  fprintf (writer->fp, "\n");
+  gnulib::fprintf (writer->fp, "\n");
 }
 
 /* This is the implementation of trace_file_write_ops method
@@ -197,9 +203,9 @@ tfile_write_uploaded_tsv (struct trace_file_writer *self,
       bin2hex ((gdb_byte *) (utsv->name), buf, strlen (utsv->name));
     }
 
-  fprintf (writer->fp, "tsv %x:%s:%x:%s\n",
-	   utsv->number, phex_nz (utsv->initial_value, 8),
-	   utsv->builtin, buf);
+  gnulib::fprintf (writer->fp, "tsv %x:%s:%x:%s\n",
+		   utsv->number, phex_nz (utsv->initial_value, 8),
+		   utsv->builtin, buf);
 
   if (utsv->name)
     xfree (buf);
@@ -220,46 +226,82 @@ tfile_write_uploaded_tp (struct trace_file_writer *self,
   char *act;
   char buf[MAX_TRACE_UPLOAD];
 
-  fprintf (writer->fp, "tp T%x:%s:%c:%x:%x",
-	   utp->number, phex_nz (utp->addr, sizeof (utp->addr)),
-	   (utp->enabled ? 'E' : 'D'), utp->step, utp->pass);
+  gnulib::fprintf (writer->fp, "tp T%x:%s:%c:%x:%x",
+		   utp->number, phex_nz (utp->addr, sizeof (utp->addr)),
+		   (utp->enabled ? 'E' : 'D'), utp->step, utp->pass);
   if (utp->type == bp_fast_tracepoint)
-    fprintf (writer->fp, ":F%x", utp->orig_size);
+    gnulib::fprintf (writer->fp, ":F%x", utp->orig_size);
   if (utp->cond)
-    fprintf (writer->fp,
-	     ":X%x,%s", (unsigned int) strlen (utp->cond) / 2,
-	     utp->cond);
-  fprintf (writer->fp, "\n");
+    gnulib::fprintf (writer->fp,
+		     ":X%x,%s", (unsigned int) strlen (utp->cond) / 2,
+		     utp->cond);
+  gnulib::fprintf (writer->fp, "\n");
   for (a = 0; VEC_iterate (char_ptr, utp->actions, a, act); ++a)
-    fprintf (writer->fp, "tp A%x:%s:%s\n",
-	     utp->number, phex_nz (utp->addr, sizeof (utp->addr)), act);
+    gnulib::fprintf (writer->fp, "tp A%x:%s:%s\n",
+		     utp->number, phex_nz (utp->addr, sizeof (utp->addr)), act);
   for (a = 0; VEC_iterate (char_ptr, utp->step_actions, a, act); ++a)
-    fprintf (writer->fp, "tp S%x:%s:%s\n",
-	     utp->number, phex_nz (utp->addr, sizeof (utp->addr)), act);
+    gnulib::fprintf (writer->fp, "tp S%x:%s:%s\n",
+		     utp->number, phex_nz (utp->addr, sizeof (utp->addr)), act);
   if (utp->at_string)
     {
       encode_source_string (utp->number, utp->addr,
 			    "at", utp->at_string, buf, MAX_TRACE_UPLOAD);
-      fprintf (writer->fp, "tp Z%s\n", buf);
+      gnulib::fprintf (writer->fp, "tp Z%s\n", buf);
     }
   if (utp->cond_string)
     {
       encode_source_string (utp->number, utp->addr,
 			    "cond", utp->cond_string,
 			    buf, MAX_TRACE_UPLOAD);
-      fprintf (writer->fp, "tp Z%s\n", buf);
+      gnulib::fprintf (writer->fp, "tp Z%s\n", buf);
     }
   for (a = 0; VEC_iterate (char_ptr, utp->cmd_strings, a, act); ++a)
     {
       encode_source_string (utp->number, utp->addr, "cmd", act,
 			    buf, MAX_TRACE_UPLOAD);
-      fprintf (writer->fp, "tp Z%s\n", buf);
+      gnulib::fprintf (writer->fp, "tp Z%s\n", buf);
     }
-  fprintf (writer->fp, "tp V%x:%s:%x:%s\n",
-	   utp->number, phex_nz (utp->addr, sizeof (utp->addr)),
-	   utp->hit_count,
-	   phex_nz (utp->traceframe_usage,
-		    sizeof (utp->traceframe_usage)));
+  gnulib::fprintf (writer->fp, "tp V%x:%s:%x:%s\n",
+		   utp->number, phex_nz (utp->addr, sizeof (utp->addr)),
+		   utp->hit_count,
+		   phex_nz (utp->traceframe_usage,
+			    sizeof (utp->traceframe_usage)));
+}
+
+/* This is the implementation of trace_file_write_ops method
+   write_tdesc.  */
+
+static void
+tfile_write_tdesc (struct trace_file_writer *self)
+{
+  struct tfile_trace_file_writer *writer
+    = (struct tfile_trace_file_writer *) self;
+  char *tdesc = target_fetch_description_xml (&current_target);
+  char *ptr = tdesc;
+  char *next;
+
+  if (tdesc == NULL)
+    return;
+
+  /* Write tdesc line by line, prefixing each line with "tdesc ".  */
+  while (ptr != NULL)
+    {
+      next = strchr (ptr, '\n');
+      if (next != NULL)
+	{
+	  gnulib::fprintf (writer->fp, "tdesc %.*s\n", (int) (next - ptr), ptr);
+	  /* Skip the \n.  */
+	  next++;
+	}
+      else if (*ptr != '\0')
+	{
+	  /* Last line, doesn't have a newline.  */
+	  gnulib::fprintf (writer->fp, "tdesc %s\n", ptr);
+	}
+      ptr = next;
+    }
+
+  xfree (tdesc);
 }
 
 /* This is the implementation of trace_file_write_ops method
@@ -271,7 +313,7 @@ tfile_write_definition_end (struct trace_file_writer *self)
   struct tfile_trace_file_writer *writer
     = (struct tfile_trace_file_writer *) self;
 
-  fprintf (writer->fp, "\n");
+  gnulib::fprintf (writer->fp, "\n");
 }
 
 /* This is the implementation of trace_file_write_ops method
@@ -284,7 +326,7 @@ tfile_write_raw_data (struct trace_file_writer *self, gdb_byte *buf,
   struct tfile_trace_file_writer *writer
     = (struct tfile_trace_file_writer *) self;
 
-  if (fwrite (buf, len, 1, writer->fp) < 1)
+  if (gnulib::fwrite (buf, len, 1, writer->fp) < 1)
     perror_with_name (writer->pathname);
 }
 
@@ -299,7 +341,7 @@ tfile_end (struct trace_file_writer *self)
   uint32_t gotten = 0;
 
   /* Mark the end of trace data.  */
-  if (fwrite (&gotten, 4, 1, writer->fp) < 1)
+  if (gnulib::fwrite (&gotten, 4, 1, writer->fp) < 1)
     perror_with_name (writer->pathname);
 }
 
@@ -315,6 +357,7 @@ static const struct trace_file_write_ops tfile_write_ops =
   tfile_write_status,
   tfile_write_uploaded_tsv,
   tfile_write_uploaded_tp,
+  tfile_write_tdesc,
   tfile_write_definition_end,
   tfile_write_raw_data,
   NULL,
@@ -352,7 +395,9 @@ static off_t trace_frames_offset;
 static off_t cur_offset;
 static int cur_data_size;
 int trace_regblock_size;
+static struct buffer trace_tdesc;
 
+static void tfile_append_tdesc_line (const char *line);
 static void tfile_interp_line (char *line,
 			       struct uploaded_tp **utpp,
 			       struct uploaded_tsv **utsvp);
@@ -419,6 +464,9 @@ tfile_open (const char *arg, int from_tty)
   trace_filename = xstrdup (filename);
   trace_fd = scratch_chan;
 
+  /* Make sure this is clear.  */
+  buffer_free (&trace_tdesc);
+
   bytes = 0;
   /* Read the file header and test for validity.  */
   tfile_read ((gdb_byte *) &header, TRACE_HEADER_SIZE);
@@ -466,6 +514,9 @@ tfile_open (const char *arg, int from_tty)
 	  if (i >= 1000)
 	    error (_("Excessively long lines in trace file"));
 	}
+
+      /* By now, tdesc lines have been read from tfile - let's parse them.  */
+      target_find_description ();
 
       /* Record the starting offset of the binary trace data.  */
       trace_frames_offset = bytes;
@@ -530,6 +581,11 @@ tfile_interp_line (char *line, struct uploaded_tp **utpp,
       p += strlen ("tsv ");
       parse_tsv_definition (p, utsvp);
     }
+  else if (startswith (p, "tdesc "))
+    {
+      p += strlen ("tdesc ");
+      tfile_append_tdesc_line (p);
+    }
   else
     warning (_("Ignoring trace file definition \"%s\""), line);
 }
@@ -552,6 +608,7 @@ tfile_close (struct target_ops *self)
   trace_fd = -1;
   xfree (trace_filename);
   trace_filename = NULL;
+  buffer_free (&trace_tdesc);
 
   trace_reset_local_state ();
 }
@@ -796,7 +853,7 @@ tfile_fetch_registers (struct target_ops *ops,
 		       struct regcache *regcache, int regno)
 {
   struct gdbarch *gdbarch = get_regcache_arch (regcache);
-  int offset, regn, regsize;
+  int offset, regn, regsize, dummy;
 
   /* An uninitialized reg size says we're not going to be
      successful at getting register blocks.  */
@@ -809,14 +866,15 @@ tfile_fetch_registers (struct target_ops *ops,
 
       tfile_read (regs, trace_regblock_size);
 
-      /* Assume the block is laid out in GDB register number order,
-	 each register with the size that it has in GDB.  */
-      offset = 0;
       for (regn = 0; regn < gdbarch_num_regs (gdbarch); regn++)
 	{
+	  if (!remote_register_number_and_offset (get_regcache_arch (regcache),
+						  regn, &dummy, &offset))
+	    continue;
+
 	  regsize = register_size (gdbarch, regn);
 	  /* Make sure we stay within block bounds.  */
-	  if (offset + regsize >= trace_regblock_size)
+	  if (offset + regsize > trace_regblock_size)
 	    break;
 	  if (regcache_register_status (regcache, regn) == REG_UNKNOWN)
 	    {
@@ -830,11 +888,37 @@ tfile_fetch_registers (struct target_ops *ops,
 		  regcache_raw_supply (regcache, regn, regs + offset);
 		}
 	    }
-	  offset += regsize;
 	}
     }
   else
     tracefile_fetch_registers (regcache, regno);
+}
+
+static enum target_xfer_status
+tfile_xfer_partial_features (struct target_ops *ops, const char *annex,
+			     gdb_byte *readbuf, const gdb_byte *writebuf,
+			     ULONGEST offset, ULONGEST len,
+			     ULONGEST *xfered_len)
+{
+  if (strcmp (annex, "target.xml"))
+    return TARGET_XFER_E_IO;
+
+  if (readbuf == NULL)
+    error (_("tfile_xfer_partial: tdesc is read-only"));
+
+  if (trace_tdesc.used_size == 0)
+    return TARGET_XFER_E_IO;
+
+  if (offset >= trace_tdesc.used_size)
+    return TARGET_XFER_EOF;
+
+  if (len > trace_tdesc.used_size - offset)
+    len = trace_tdesc.used_size - offset;
+
+  memcpy (readbuf, trace_tdesc.buffer + offset, len);
+  *xfered_len = len;
+
+  return TARGET_XFER_OK;
 }
 
 static enum target_xfer_status
@@ -843,7 +927,10 @@ tfile_xfer_partial (struct target_ops *ops, enum target_object object,
 		    const gdb_byte *writebuf, ULONGEST offset, ULONGEST len,
 		    ULONGEST *xfered_len)
 {
-  /* We're only doing regular memory for now.  */
+  /* We're only doing regular memory and tdesc for now.  */
+  if (object == TARGET_OBJECT_AVAILABLE_FEATURES)
+    return tfile_xfer_partial_features (ops, annex, readbuf, writebuf,
+					offset, len, xfered_len);
   if (object != TARGET_OBJECT_MEMORY)
     return TARGET_XFER_E_IO;
 
@@ -902,7 +989,7 @@ tfile_xfer_partial (struct target_ops *ops, enum target_object object,
 	 and this address falls within a read-only section, fallback
 	 to reading from executable, up to LOW_ADDR_AVAILABLE.  */
       if (offset < low_addr_available)
-	len = min (len, low_addr_available - offset);
+	len = std::min (len, low_addr_available - offset);
       res = exec_read_partial_read_only (readbuf, offset, len, xfered_len);
 
       if (res == TARGET_XFER_OK)
@@ -1021,6 +1108,16 @@ tfile_traceframe_info (struct target_ops *self)
 
   traceframe_walk_blocks (build_traceframe_info, 0, info);
   return info;
+}
+
+/* Handles tdesc lines from tfile by appending the payload to
+   a global trace_tdesc variable.  */
+
+static void
+tfile_append_tdesc_line (const char *line)
+{
+  buffer_grow_str (&trace_tdesc, line);
+  buffer_grow_str (&trace_tdesc, "\n");
 }
 
 static void

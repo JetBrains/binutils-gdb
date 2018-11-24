@@ -30,7 +30,6 @@
 #include "c-lang.h"
 #include "typeprint.h"
 #include "cp-abi.h"
-#include "jv-lang.h"
 #include "cp-support.h"
 
 static void c_type_print_varspec_prefix (struct type *,
@@ -61,15 +60,14 @@ print_name_maybe_canonical (const char *name,
 			    const struct type_print_options *flags,
 			    struct ui_file *stream)
 {
-  char *s = NULL;
+  std::string s;
 
   if (!flags->raw)
     s = cp_canonicalize_string_full (name,
 				     find_typedef_for_canonicalize,
 				     (void *) flags);
 
-  fputs_filtered (s ? s : name, stream);
-  xfree (s);
+  fputs_filtered (!s.empty () ? s.c_str () : name, stream);
 }
 
 
@@ -371,6 +369,7 @@ c_type_print_varspec_prefix (struct type *type,
     case TYPE_CODE_STRUCT:
     case TYPE_CODE_UNION:
     case TYPE_CODE_ENUM:
+    case TYPE_CODE_FLAGS:
     case TYPE_CODE_INT:
     case TYPE_CODE_FLT:
     case TYPE_CODE_VOID:
@@ -464,7 +463,7 @@ c_type_print_modifier (struct type *type, struct ui_file *stream,
    parameter types get removed their possible const and volatile qualifiers to
    match demangled linkage name parameters part of such function type.
    LANGUAGE is the language in which TYPE was defined.  This is a necessary
-   evil since this code is used by the C, C++, and Java backends.  */
+   evil since this code is used by the C and C++.  */
 
 void
 c_type_print_args (struct type *type, struct ui_file *stream,
@@ -503,10 +502,7 @@ c_type_print_args (struct type *type, struct ui_file *stream,
 	  param_type = make_cv_type (0, 0, param_type, NULL);
 	}
 
-      if (language == language_java)
-	java_print_type (param_type, "", stream, -1, 0, flags);
-      else
-	c_print_type (param_type, "", stream, -1, 0, flags);
+      c_print_type (param_type, "", stream, -1, 0, flags);
       printed_any = 1;
     }
 
@@ -523,8 +519,7 @@ c_type_print_args (struct type *type, struct ui_file *stream,
 	}
     }
   else if (!printed_any
-	   && ((TYPE_PROTOTYPED (type) && language != language_java)
-	       || language == language_cplus))
+	   && (TYPE_PROTOTYPED (type) || language == language_cplus))
     fprintf_filtered (stream, "void");
 
   fprintf_filtered (stream, ")");
@@ -748,6 +743,7 @@ c_type_print_varspec_suffix (struct type *type,
     case TYPE_CODE_UNDEF:
     case TYPE_CODE_STRUCT:
     case TYPE_CODE_UNION:
+    case TYPE_CODE_FLAGS:
     case TYPE_CODE_ENUM:
     case TYPE_CODE_INT:
     case TYPE_CODE_FLT:
@@ -1273,7 +1269,7 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 
 		      /* Get rid of the `static' appended by the
 			 demangler.  */
-		      p = strstr (demangled_no_class, " static");
+		      p = gnulib::strstr (demangled_no_class, " static");
 		      if (p != NULL)
 			{
 			  int length = p - demangled_no_class;
@@ -1305,27 +1301,27 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 	      if (TYPE_NFIELDS (type) != 0 || TYPE_NFN_FIELDS (type) != 0)
 		fprintf_filtered (stream, "\n");
 
-		for (i = 0; i < TYPE_TYPEDEF_FIELD_COUNT (type); i++)
-		  {
-		    struct type *target = TYPE_TYPEDEF_FIELD_TYPE (type, i);
+	      for (i = 0; i < TYPE_TYPEDEF_FIELD_COUNT (type); i++)
+		{
+		  struct type *target = TYPE_TYPEDEF_FIELD_TYPE (type, i);
 
-		    /* Dereference the typedef declaration itself.  */
-		    gdb_assert (TYPE_CODE (target) == TYPE_CODE_TYPEDEF);
-		    target = TYPE_TARGET_TYPE (target);
+		  /* Dereference the typedef declaration itself.  */
+		  gdb_assert (TYPE_CODE (target) == TYPE_CODE_TYPEDEF);
+		  target = TYPE_TARGET_TYPE (target);
 
-		    print_spaces_filtered (level + 4, stream);
-		    fprintf_filtered (stream, "typedef ");
+		  print_spaces_filtered (level + 4, stream);
+		  fprintf_filtered (stream, "typedef ");
 
-		    /* We want to print typedefs with substitutions
-		       from the template parameters or globally-known
-		       typedefs but not local typedefs.  */
-		    c_print_type (target,
-				  TYPE_TYPEDEF_FIELD_NAME (type, i),
-				  stream, show - 1, level + 4,
-				  &semi_local_flags);
-		    fprintf_filtered (stream, ";\n");
-		  }
-	      }
+		  /* We want to print typedefs with substitutions
+		     from the template parameters or globally-known
+		     typedefs but not local typedefs.  */
+		  c_print_type (target,
+				TYPE_TYPEDEF_FIELD_NAME (type, i),
+				stream, show - 1, level + 4,
+				&semi_local_flags);
+		  fprintf_filtered (stream, ";\n");
+		}
+	    }
 
 	    fprintfi_filtered (level, stream, "}");
 	  }
@@ -1400,6 +1396,55 @@ c_type_print_base (struct type *type, struct ui_file *stream,
 	    }
 	  fprintf_filtered (stream, "}");
 	}
+      break;
+
+    case TYPE_CODE_FLAGS:
+      {
+	struct type_print_options local_flags = *flags;
+
+	local_flags.local_typedefs = NULL;
+
+	c_type_print_modifier (type, stream, 0, 1);
+	fprintf_filtered (stream, "flag ");
+	print_name_maybe_canonical (TYPE_NAME (type), flags, stream);
+	if (show > 0)
+	  {
+	    fputs_filtered (" ", stream);
+	    fprintf_filtered (stream, "{\n");
+	    if (TYPE_NFIELDS (type) == 0)
+	      {
+		if (TYPE_STUB (type))
+		  fprintfi_filtered (level + 4, stream,
+				     _("<incomplete type>\n"));
+		else
+		  fprintfi_filtered (level + 4, stream,
+				     _("<no data fields>\n"));
+	      }
+	    len = TYPE_NFIELDS (type);
+	    for (i = 0; i < len; i++)
+	      {
+		QUIT;
+		print_spaces_filtered (level + 4, stream);
+		/* We pass "show" here and not "show - 1" to get enum types
+		   printed.  There's no other way to see them.  */
+		c_print_type (TYPE_FIELD_TYPE (type, i),
+			      TYPE_FIELD_NAME (type, i),
+			      stream, show, level + 4,
+			      &local_flags);
+		fprintf_filtered (stream, " @%s",
+				  plongest (TYPE_FIELD_BITPOS (type, i)));
+		if (TYPE_FIELD_BITSIZE (type, i) > 1)
+		  {
+		    fprintf_filtered (stream, "-%s",
+				      plongest (TYPE_FIELD_BITPOS (type, i)
+						+ TYPE_FIELD_BITSIZE (type, i)
+						- 1));
+		  }
+		fprintf_filtered (stream, ";\n");
+	      }
+	    fprintfi_filtered (level, stream, "}");
+	  }
+      }
       break;
 
     case TYPE_CODE_VOID:

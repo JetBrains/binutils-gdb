@@ -56,65 +56,10 @@
 
 #define parse_type(ps) builtin_type (parse_gdbarch (ps))
 
-/* Remap normal yacc parser interface names (yyparse, yylex, yyerror, etc),
-   as well as gratuitiously global symbol names, so we can have multiple
-   yacc generated parsers in gdb.  Note that these are only the variables
-   produced by yacc.  If other parser generators (bison, byacc, etc) produce
-   additional global names that conflict at link time, then those parser
-   generators need to be fixed instead of adding those names to this list. */
-
-#define	yymaxdepth c_maxdepth
-#define	yyparse	c_parse_internal
-#define	yylex	c_lex
-#define	yyerror	c_error
-#define	yylval	c_lval
-#define	yychar	c_char
-#define	yydebug	c_debug
-#define	yypact	c_pact	
-#define	yyr1	c_r1			
-#define	yyr2	c_r2			
-#define	yydef	c_def		
-#define	yychk	c_chk		
-#define	yypgo	c_pgo		
-#define	yyact	c_act		
-#define	yyexca	c_exca
-#define yyerrflag c_errflag
-#define yynerrs	c_nerrs
-#define	yyps	c_ps
-#define	yypv	c_pv
-#define	yys	c_s
-#define	yy_yys	c_yys
-#define	yystate	c_state
-#define	yytmp	c_tmp
-#define	yyv	c_v
-#define	yy_yyv	c_yyv
-#define	yyval	c_val
-#define	yylloc	c_lloc
-#define yyreds	c_reds		/* With YYDEBUG defined */
-#define yytoks	c_toks		/* With YYDEBUG defined */
-#define yyname	c_name		/* With YYDEBUG defined */
-#define yyrule	c_rule		/* With YYDEBUG defined */
-#define yylhs	c_yylhs
-#define yylen	c_yylen
-#define yydefred c_yydefred
-#define yydgoto	c_yydgoto
-#define yysindex c_yysindex
-#define yyrindex c_yyrindex
-#define yygindex c_yygindex
-#define yytable	 c_yytable
-#define yycheck	 c_yycheck
-#define yyss	c_yyss
-#define yysslim	c_yysslim
-#define yyssp	c_yyssp
-#define yystacksize c_yystacksize
-#define yyvs	c_yyvs
-#define yyvsp	c_yyvsp
-
-#ifndef YYDEBUG
-#define	YYDEBUG 1		/* Default to yydebug support */
-#endif
-
-#define YYFPRINTF parser_fprintf
+/* Remap normal yacc parser interface names (yyparse, yylex, yyerror,
+   etc).  */
+#define GDB_YY_REMAP_PREFIX c_
+#include "yy-remap.h"
 
 /* The state of the parser, used internally when we are parsing the
    expression.  */
@@ -1610,16 +1555,11 @@ oper:	OPERATOR NEW
 	|	OPERATOR OBJC_LBRAC ']'
 			{ $$ = operator_stoken ("[]"); }
 	|	OPERATOR conversion_type_id
-			{ char *name;
-			  long length;
-			  struct ui_file *buf = mem_fileopen ();
+			{ string_file buf;
 
-			  c_print_type ($2, NULL, buf, -1, 0,
+			  c_print_type ($2, NULL, &buf, -1, 0,
 					&type_print_raw_options);
-			  name = ui_file_xstrdup (buf, &length);
-			  ui_file_delete (buf);
-			  $$ = operator_stoken (name);
-			  free (name);
+			  $$ = operator_stoken (buf.c_str ());
 			}
 	;
 
@@ -3273,9 +3213,9 @@ c_print_token (FILE *file, int type, YYSTYPE value)
   switch (type)
     {
     case INT:
-      fprintf (file, "typed_val_int<%s, %s>",
-	       TYPE_SAFE_NAME (value.typed_val_int.type),
-	       pulongest (value.typed_val_int.val));
+      parser_fprintf (file, "typed_val_int<%s, %s>",
+		      TYPE_SAFE_NAME (value.typed_val_int.type),
+		      pulongest (value.typed_val_int.val));
       break;
 
     case CHAR:
@@ -3286,34 +3226,34 @@ c_print_token (FILE *file, int type, YYSTYPE value)
 	memcpy (copy, value.tsval.ptr, value.tsval.length);
 	copy[value.tsval.length] = '\0';
 
-	fprintf (file, "tsval<type=%d, %s>", value.tsval.type, copy);
+	parser_fprintf (file, "tsval<type=%d, %s>", value.tsval.type, copy);
       }
       break;
 
     case NSSTRING:
     case VARIABLE:
-      fprintf (file, "sval<%s>", copy_name (value.sval));
+      parser_fprintf (file, "sval<%s>", copy_name (value.sval));
       break;
 
     case TYPENAME:
-      fprintf (file, "tsym<type=%s, name=%s>",
-	       TYPE_SAFE_NAME (value.tsym.type),
-	       copy_name (value.tsym.stoken));
+      parser_fprintf (file, "tsym<type=%s, name=%s>",
+		      TYPE_SAFE_NAME (value.tsym.type),
+		      copy_name (value.tsym.stoken));
       break;
 
     case NAME:
     case UNKNOWN_CPP_NAME:
     case NAME_OR_INT:
     case BLOCKNAME:
-      fprintf (file, "ssym<name=%s, sym=%s, field_of_this=%d>",
-	       copy_name (value.ssym.stoken),
-	       (value.ssym.sym.symbol == NULL
-		? "(null)" : SYMBOL_PRINT_NAME (value.ssym.sym.symbol)),
-	       value.ssym.is_a_field_of_this);
+      parser_fprintf (file, "ssym<name=%s, sym=%s, field_of_this=%d>",
+		       copy_name (value.ssym.stoken),
+		       (value.ssym.sym.symbol == NULL
+			? "(null)" : SYMBOL_PRINT_NAME (value.ssym.sym.symbol)),
+		       value.ssym.is_a_field_of_this);
       break;
 
     case FILENAME:
-      fprintf (file, "bval<%s>", host_address_to_string (value.bval));
+      parser_fprintf (file, "bval<%s>", host_address_to_string (value.bval));
       break;
     }
 }

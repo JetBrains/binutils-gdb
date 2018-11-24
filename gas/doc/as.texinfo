@@ -235,6 +235,7 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
  [@b{-K}] [@b{-L}] [@b{--listing-lhs-width}=@var{NUM}]
  [@b{--listing-lhs-width2}=@var{NUM}] [@b{--listing-rhs-width}=@var{NUM}]
  [@b{--listing-cont-lines}=@var{NUM}] [@b{--keep-locals}]
+ [@b{--no-pad-sections}]
  [@b{-o} @var{objfile}] [@b{-R}]
  [@b{--hash-size}=@var{NUM}] [@b{--reduce-memory-overheads}]
  [@b{--statistics}]
@@ -242,11 +243,14 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
  [@b{-W}] [@b{--warn}] [@b{--fatal-warnings}] [@b{-w}] [@b{-x}]
  [@b{-Z}] [@b{@@@var{FILE}}]
  [@b{--sectname-subst}] [@b{--size-check=[error|warning]}]
+ [@b{--elf-stt-common=[no|yes]}]
  [@b{--target-help}] [@var{target-options}]
  [@b{--}|@var{files} @dots{}]
 @c
+@c man end
 @c Target dependent options are listed below.  Keep the list sorted.
 @c Add an empty line for separation.
+@c man begin TARGET
 @ifset AARCH64
 
 @emph{Target AArch64 options:}
@@ -268,6 +272,7 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
    [@b{-mcpu=@var{cpu}}]
    [@b{-mA6}|@b{-mARC600}|@b{-mARC601}|@b{-mA7}|@b{-mARC700}|@b{-mEM}|@b{-mHS}]
    [@b{-mcode-density}]
+   [@b{-mrelax}]
    [@b{-EB}|@b{-EL}]
 @end ifset
 @ifset ARM
@@ -420,6 +425,7 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
    [@b{-mdmx}] [@b{-no-mdmx}]
    [@b{-mdsp}] [@b{-mno-dsp}]
    [@b{-mdspr2}] [@b{-mno-dspr2}]
+   [@b{-mdspr3}] [@b{-mno-dspr3}]
    [@b{-mmsa}] [@b{-mno-msa}]
    [@b{-mxpa}] [@b{-mno-xpa}]
    [@b{-mmt}] [@b{-mno-mt}]
@@ -505,6 +511,13 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
    [@b{-mint-register=@var{number}}]
    [@b{-mgcc-abi}|@b{-mrx-abi}]
 @end ifset
+@ifset RISCV
+
+@emph{Target RISC-V options:}
+   [@b{-m32}|@b{-m64}]
+   [@b{-mrvc}]
+   [@b{-mhard-float}|@b{-msoft-float}]
+@end ifset
 @ifset S390
 
 @emph{Target s390 options:}
@@ -524,10 +537,21 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
 
 @emph{Target SPARC options:}
 @c The order here is important.  See c-sparc.texi.
-   [@b{-Av6}|@b{-Av7}|@b{-Av8}|@b{-Asparclet}|@b{-Asparclite}
-    @b{-Av8plus}|@b{-Av8plusa}|@b{-Av9}|@b{-Av9a}]
-   [@b{-xarch=v8plus}|@b{-xarch=v8plusa}] [@b{-bump}]
+   [@b{-Av6}|@b{-Av7}|@b{-Av8}|@b{-Aleon}|@b{-Asparclet}|@b{-Asparclite}
+    @b{-Av8plus}|@b{-Av8plusa}|@b{-Av8plusb}|@b{-Av8plusc}|@b{-Av8plusd}
+    @b{-Av8plusv}|@b{-Av8plusm}|@b{-Av9}|@b{-Av9a}|@b{-Av9b}|@b{-Av9c}
+    @b{-Av9d}|@b{-Av9e}|@b{-Av9v}|@b{-Av9m}|@b{-Asparc}|@b{-Asparcvis}
+    @b{-Asparcvis2}|@b{-Asparcfmaf}|@b{-Asparcima}|@b{-Asparcvis3}
+    @b{-Asparcvisr}|@b{-Asparc5}]
+   [@b{-xarch=v8plus}|@b{-xarch=v8plusa}]|@b{-xarch=v8plusb}|@b{-xarch=v8plusc}
+    @b{-xarch=v8plusd}|@b{-xarch=v8plusv}|@b{-xarch=v8plusm}|@b{-xarch=v9}
+    @b{-xarch=v9a}|@b{-xarch=v9b}|@b{-xarch=v9c}|@b{-xarch=v9d}|@b{-xarch=v9e}
+    @b{-xarch=v9v}|@b{-xarch=v9m}|@b{-xarch=sparc}|@b{-xarch=sparcvis}
+    @b{-xarch=sparcvis2}|@b{-xarch=sparcfmaf}|@b{-xarch=sparcima}
+    @b{-xarch=sparcvis3}|@b{-xarch=sparcvisr}|@b{-xarch=sparc5}
+    @b{-bump}]
    [@b{-32}|@b{-64}]
+   [@b{--enforce-aligned-data}][@b{--dcti-couples-detect}]
 @end ifset
 @ifset TIC54X
 
@@ -711,9 +735,17 @@ will have its dwarf line number information placed into a section called
 then debug line section will still be called just @var{.debug_line} without any
 suffix.
 
+@ifset ELF
 @item --size-check=error
 @itemx --size-check=warning
 Issue an error or warning for invalid ELF .size directive.
+
+@item --elf-stt-common=no
+@itemx --elf-stt-common=yes
+These options control whether the ELF assembler should generate common
+symbols with the @code{STT_COMMON} type.  The default can be controlled
+by a configure option @option{--enable-elf-stt-common}.
+@end ifset
 
 @item --help
 Print a summary of the command line options and exit.
@@ -759,6 +791,11 @@ Set the maximum width of an input source line, as displayed in a listing, to
 @item --listing-cont-lines=@var{number}
 Set the maximum number of lines printed in a listing for a single line of input
 to @var{number} + 1.
+
+@item --no-pad-sections
+Stop the assembler for padding the ends of output sections to the alignment
+of that section.  The default is to pad the sections, but this can waste space
+which might be needed on targets which have tight memory constraints.
 
 @item -o @var{objfile}
 Name the object-file output from @command{@value{AS}} @var{objfile}.
@@ -1426,9 +1463,16 @@ This tells the assembler to accept DSP Release 1 instructions.
 @item -mdspr2
 @itemx -mno-dspr2
 Generate code for the DSP Release 2 Application Specific Extension.
-This option implies -mdsp.
+This option implies @samp{-mdsp}.
 This tells the assembler to accept DSP Release 2 instructions.
 @samp{-mno-dspr2} turns off this option.
+
+@item -mdspr3
+@itemx -mno-dspr3
+Generate code for the DSP Release 3 Application Specific Extension.
+This option implies @samp{-mdsp} and @samp{-mdspr2}.
+This tells the assembler to accept DSP Release 3 instructions.
+@samp{-mno-dspr3} turns off this option.
 
 @item -mmsa
 @itemx -mno-msa
@@ -1610,6 +1654,25 @@ PowerPC processor.
 
 @end ifset
 
+@ifset RISCV
+
+@ifclear man
+@xref{RISC-V-Opts}, for the options available when @value{AS} is configured
+for a RISC-V processor.
+@end ifclear
+
+@ifset man
+@c man begin OPTIONS
+The following options are available when @value{AS} is configured for a
+RISC-V  processor.
+@c man end
+@c man begin INCLUDE
+@include c-riscv.texi
+@c ended inside the included file
+@end ifset
+
+@end ifset
+
 @c man begin OPTIONS
 @ifset RX
 See the info pages for documentation of the RX-specific options.
@@ -1628,9 +1691,11 @@ Select the word size, either 31/32 bits or 64 bits.
 Select the architecture mode, either the Enterprise System
 Architecture (esa) or the z/Architecture mode (zarch).
 @item -march=@var{processor}
-Specify which s390 processor variant is the target, @samp{g6}, @samp{g6},
-@samp{z900}, @samp{z990}, @samp{z9-109}, @samp{z9-ec}, @samp{z10},
-@samp{z196}, @samp{zEC12}, or @samp{z13}.
+Specify which s390 processor variant is the target, @samp{g5} (or
+@samp{arch3}), @samp{g6}, @samp{z900} (or @samp{arch5}), @samp{z990} (or
+@samp{arch6}), @samp{z9-109}, @samp{z9-ec} (or @samp{arch7}), @samp{z10} (or
+@samp{arch8}), @samp{z196} (or @samp{arch9}), @samp{zEC12} (or @samp{arch10}),
+or @samp{z13} (or @samp{arch11}).
 @item -mregnames
 @itemx -mno-regnames
 Allow or disallow symbolic names for registers.
@@ -2138,6 +2203,7 @@ assembler.)
 * listing::       --listing-XXX to configure listing output
 * M::		  -M or --mri to assemble in MRI compatibility mode
 * MD::            --MD for dependency tracking
+* no-pad-sections:: --no-pad-sections to stop section padding
 * o::             -o to name the object file
 * R::             -R to join data and text sections
 * statistics::    --statistics to see statistics about assembly
@@ -2474,6 +2540,15 @@ The rule is written to the file named in its argument.
 
 This feature is used in the automatic updating of makefiles.
 
+@node no-pad-sections
+@section Output Section Padding
+@kindex --no-pad-sections
+@cindex output section padding
+Normally the assembler will pad the end of each output section up to its
+alignment boundary.  But this can waste space, which can be significant on
+memory constrained targets.  So the @option{--no-pad-sections} option will
+disable this behaviour.
+
 @node o
 @section Name the Object File: @option{-o}
 
@@ -2660,7 +2735,7 @@ do include file processing with the @code{.include} directive
 (@pxref{Include,,@code{.include}}).  You can use the @sc{gnu} C compiler driver
 to get other ``CPP'' style preprocessing by giving the input file a
 @samp{.S} suffix.  @xref{Overall Options, ,Options Controlling the Kind of
-Output, gcc.info, Using GNU CC}.
+Output, gcc info, Using GNU CC}.
 
 Excess whitespace, comments, and character constants
 cannot be used in the portions of the input text that are not
@@ -4682,6 +4757,14 @@ directive is not used is @code{.cfi_sections .eh_frame}.
 On targets that support compact unwinding tables these can be generated
 by specifying @code{.eh_frame_entry} instead of @code{.eh_frame}.
 
+Some targets may support an additional name, such as @code{.c6xabi.exidx}
+which is used by the @value{TIC6X} target.
+
+The @code{.cfi_sections} directive can be repeated, with the same or different
+arguments, provided that CFI generation has not yet started.  Once CFI
+generation has started however the section list is fixed and any attempts to
+redefine it will result in an error.
+
 @subsection @code{.cfi_startproc [simple]}
 @cindex @code{cfi_startproc} directive
 @code{.cfi_startproc} is used at the beginning of each function that
@@ -4774,6 +4857,9 @@ value that is added/substracted from the previous offset.
 Previous value of @var{register} is saved at offset @var{offset} from
 CFA.
 
+@subsection @code{.cfi_val_offset @var{register}, @var{offset}}
+Previous value of @var{register} is CFA + @var{offset}.
+
 @subsection @code{.cfi_rel_offset @var{register}, @var{offset}}
 Previous value of @var{register} is saved at offset @var{offset} from
 the current CFA register.  This is transformed to @code{.cfi_offset}
@@ -4796,11 +4882,54 @@ From now on the previous value of @var{register} can't be restored anymore.
 Current value of @var{register} is the same like in the previous frame,
 i.e. no restoration needed.
 
-@subsection @code{.cfi_remember_state},
-First save all current rules for all registers by @code{.cfi_remember_state},
-then totally screw them up by subsequent @code{.cfi_*} directives and when
-everything is hopelessly bad, use @code{.cfi_restore_state} to restore
-the previous saved state.
+@subsection @code{.cfi_remember_state} and @code{.cfi_restore_state}
+@code{.cfi_remember_state} pushes the set of rules for every register onto an
+implicit stack, while @code{.cfi_restore_state} pops them off the stack and
+places them in the current row.  This is useful for situations where you have
+multiple @code{.cfi_*} directives that need to be undone due to the control
+flow of the program.  For example, we could have something like this (assuming
+the CFA is the value of @code{rbp}):
+
+@smallexample
+        je label
+        popq %rbx
+        .cfi_restore %rbx
+        popq %r12
+        .cfi_restore %r12
+        popq %rbp
+        .cfi_restore %rbp
+        .cfi_def_cfa %rsp, 8
+        ret
+label:
+        /* Do something else */
+@end smallexample
+
+Here, we want the @code{.cfi} directives to affect only the rows corresponding
+to the instructions before @code{label}.  This means we'd have to add multiple
+@code{.cfi} directives after @code{label} to recreate the original save
+locations of the registers, as well as setting the CFA back to the value of
+@code{rbp}.  This would be clumsy, and result in a larger binary size. Instead,
+we can write:
+
+@smallexample
+        je label
+        popq %rbx
+        .cfi_remember_state
+        .cfi_restore %rbx
+        popq %r12
+        .cfi_restore %r12
+        popq %rbp
+        .cfi_restore %rbp
+        .cfi_def_cfa %rsp, 8
+        ret
+label:
+        .cfi_restore_state
+        /* Do something else */
+@end smallexample
+
+That way, the rules for the instructions after @code{label} will be the same
+as before the first @code{.cfi_restore} without having to use multiple
+@code{.cfi} directives.
 
 @subsection @code{.cfi_return_column @var{register}}
 Change return column @var{register}, i.e. the return address is either
@@ -6259,6 +6388,7 @@ ways:
 
 If the optional argument is quoted, it is taken as flags to use for the
 section.  Each flag is a single character.  The following flags are recognized:
+
 @table @code
 @item b
 bss section (uninitialized data)
@@ -6347,6 +6477,7 @@ macros just for that purpose.
 
 The optional @var{flags} argument is a quoted string which may contain any
 combination of the following characters:
+
 @table @code
 @item a
 section is allocatable
@@ -6366,9 +6497,24 @@ section is a member of a section group
 section is used for thread-local-storage
 @item ?
 section is a member of the previously-current section's group, if any
+@item @code{<number>}
+a numeric value indicating the bits to be set in the ELF section header's flags
+field.  Note - if one or more of the alphabetic characters described above is
+also included in the flags field, their bit values will be ORed into the
+resulting value.
+@item @code{<target specific>}
+some targets extend this list with their own flag characters
 @end table
 
+Note - once a section's flags have been set they cannot be changed.  There are
+a few exceptions to this rule however.  Processor and application specific
+flags can be added to an already defined section.  The @code{.interp},
+@code{.strtab} and @code{.symtab} sections can have the allocate flag
+(@code{a}) set after they are initially defined, and the @code{.note-GNU-stack}
+section may have the executable (@code{x}) flag added.
+
 The optional @var{type} argument may contain one of the following constants:
+
 @table @code
 @item @@progbits
 section contains data
@@ -6382,13 +6528,22 @@ section contains an array of pointers to init functions
 section contains an array of pointers to finish functions
 @item @@preinit_array
 section contains an array of pointers to pre-init functions
+@item @@@code{<number>}
+a numeric value to be set as the ELF section header's type field.
+@item @@@code{<target specific>}
+some targets extend this list with their own types
 @end table
 
-Many targets only support the first three section types.
+Many targets only support the first three section types.  The type may be
+enclosed in double quotes if necessary.
 
 Note on targets where the @code{@@} character is the start of a comment (eg
 ARM) then another character is used instead.  For example the ARM port uses the
 @code{%} character.
+
+Note - some sections, eg @code{.text} and @code{.data} are considered to be
+special and have fixed types.  Any attempt to declare them with a different
+type will generate an error from the assembler.
 
 If @var{flags} contains the @code{M} symbol then the @var{type} argument must
 be specified as well as an extra argument---@var{entsize}---like this:
@@ -6416,6 +6571,7 @@ be present along with an additional field like this:
 
 The @var{GroupName} field specifies the name of the section group to which this
 particular section belongs.  The optional linkage field can contain:
+
 @table @code
 @item comdat
 indicates that only one copy of this section should be retained
@@ -6451,6 +6607,7 @@ directive for compatibility with the Solaris assembler:
 
 Note that the section name is quoted.  There may be a sequence of comma
 separated flags:
+
 @table @code
 @item #alloc
 section is allocatable
@@ -7442,6 +7599,9 @@ subject, see the hardware manufacturer's manual.
 @ifset RL78
 * RL78-Dependent::              RL78 Dependent Features
 @end ifset
+@ifset RISCV
+* RISC-V-Dependent::            RISC-V Dependent Features
+@end ifset
 @ifset RX
 * RX-Dependent::                RX Dependent Features
 @end ifset
@@ -7667,6 +7827,10 @@ family.
 
 @ifset RL78
 @include c-rl78.texi
+@end ifset
+
+@ifset RISCV
+@include c-riscv.texi
 @end ifset
 
 @ifset RX

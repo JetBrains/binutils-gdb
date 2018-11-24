@@ -1905,7 +1905,7 @@ nios2_elf32_install_imm16 (asection *sec, bfd_vma offset, bfd_vma value)
 {
   bfd_vma word = bfd_get_32 (sec->owner, sec->contents + offset);
 
-  BFD_ASSERT(value <= 0xffff);
+  BFD_ASSERT (value <= 0xffff || ((bfd_signed_vma) value) >= -0xffff);
 
   bfd_put_32 (sec->owner, word | ((value & 0xffff) << 6),
 	      sec->contents + offset);
@@ -2225,9 +2225,10 @@ nios2_add_stub (const char *stub_name,
 				TRUE, FALSE);
   if (hsh == NULL)
     {
-      (*_bfd_error_handler) (_("%B: cannot create stub entry %s"),
-			     section->owner,
-			     stub_name);
+      /* xgettext:c-format */
+      _bfd_error_handler (_("%B: cannot create stub entry %s"),
+			  section->owner,
+			  stub_name);
       return NULL;
     }
 
@@ -2916,8 +2917,9 @@ nios2_elf32_build_stubs (struct bfd_link_info *info)
    object file when linking.  */
 
 static bfd_boolean
-nios2_elf32_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
+nios2_elf32_merge_private_bfd_data (bfd *ibfd, struct bfd_link_info *info)
 {
+  bfd *obfd = info->output_bfd;
   flagword old_flags;
   flagword new_flags;
 
@@ -2925,7 +2927,7 @@ nios2_elf32_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
     return TRUE;
 
   /* Check if we have the same endianness.  */
-  if (! _bfd_generic_verify_endian_match (ibfd, obfd))
+  if (! _bfd_generic_verify_endian_match (ibfd, info))
     return FALSE;
 
   new_flags = elf_elfheader (ibfd)->e_flags;
@@ -2945,7 +2947,7 @@ nios2_elf32_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
 	case EF_NIOS2_ARCH_R2:
 	  if (bfd_big_endian (ibfd))
 	    {
-	      (*_bfd_error_handler)
+	      _bfd_error_handler
 		(_("error: %B: Big-endian R2 is not supported."), ibfd);
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
@@ -2960,7 +2962,8 @@ nios2_elf32_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
     {
       /* So far, the only incompatible flags denote incompatible
 	 architectures.  */
-      (*_bfd_error_handler)
+      _bfd_error_handler
+	/* xgettext:c-format */
 	(_("error: %B: Conflicting CPU architectures %d/%d"),
 	 ibfd, new_flags, old_flags);
       bfd_set_error (bfd_error_bad_value);
@@ -2968,7 +2971,7 @@ nios2_elf32_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
     }
 
   /* Merge Tag_compatibility attributes and any common GNU ones.  */
-  _bfd_elf_merge_object_attributes (ibfd, obfd);
+  _bfd_elf_merge_object_attributes (ibfd, info);
 
   return TRUE;
 }
@@ -3845,6 +3848,7 @@ nios2_elf32_relocate_section (bfd *output_bfd,
 		    {
 		      if (h)
 			name = h->root.root.string;
+		      /* xgettext:c-format */
 		      format = _("Unable to reach %s (at 0x%08x) from the "
 				 "global pointer (at 0x%08x) because the "
 				 "offset (%d) is out of the allowed range, "
@@ -4365,7 +4369,8 @@ nios2_elf32_relocate_section (bfd *output_bfd,
 	    case R_NIOS2_TLS_LE16:
 	      if (bfd_link_dll (info))
 		{
-		  (*_bfd_error_handler)
+		  _bfd_error_handler
+		    /* xgettext:c-format */
 		    (_("%B(%A+0x%lx): R_NIOS2_TLS_LE16 relocation not "
 		       "permitted in shared object"),
 		     input_bfd, input_section,
@@ -4480,16 +4485,16 @@ nios2_elf32_relocate_section (bfd *output_bfd,
 	  switch (r)
 	    {
 	    case bfd_reloc_overflow:
-	      r = info->callbacks->reloc_overflow (info, NULL, name,
-						   howto->name, (bfd_vma) 0,
-						   input_bfd, input_section,
-						   rel->r_offset);
+	      (*info->callbacks->reloc_overflow) (info, NULL, name,
+						  howto->name, (bfd_vma) 0,
+						  input_bfd, input_section,
+						  rel->r_offset);
 	      break;
 
 	    case bfd_reloc_undefined:
-	      r = info->callbacks->undefined_symbol (info, name, input_bfd,
-						     input_section,
-						     rel->r_offset, TRUE);
+	      (*info->callbacks->undefined_symbol) (info, name, input_bfd,
+						    input_section,
+						    rel->r_offset, TRUE);
 	      break;
 
 	    case bfd_reloc_outofrange:
@@ -4515,8 +4520,8 @@ nios2_elf32_relocate_section (bfd *output_bfd,
 
 	  if (msg)
 	    {
-	      r = info->callbacks->warning
-		(info, msg, name, input_bfd, input_section, rel->r_offset);
+	      (*info->callbacks->warning) (info, msg, name, input_bfd,
+					   input_section, rel->r_offset);
 	      return FALSE;
 	    }
 	}
@@ -5344,22 +5349,19 @@ nios2_elf32_finish_dynamic_sections (bfd *output_bfd,
 	      break;
 
 	    case DT_PLTGOT:
-	      s = htab->root.sgot;
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->output_section->vma;
+	      s = htab->root.sgotplt;
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_JMPREL:
 	      s = htab->root.srelplt;
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->output_section->vma;
+	      dyn.d_un.d_ptr = s->output_section->vma + s->output_offset;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 
 	    case DT_PLTRELSZ:
 	      s = htab->root.srelplt;
-	      BFD_ASSERT (s != NULL);
 	      dyn.d_un.d_val = s->size;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
@@ -5379,9 +5381,9 @@ nios2_elf32_finish_dynamic_sections (bfd *output_bfd,
 	      break;
 
 	    case DT_NIOS2_GP:
-	      s = htab->root.sgot;
-	      BFD_ASSERT (s != NULL);
-	      dyn.d_un.d_ptr = s->output_section->vma + 0x7ff0;
+	      s = htab->root.sgotplt;
+	      dyn.d_un.d_ptr
+		= s->output_section->vma + s->output_offset + 0x7ff0;
 	      bfd_elf32_swap_dyn_out (output_bfd, &dyn, dyncon);
 	      break;
 	    }
@@ -5535,8 +5537,8 @@ nios2_elf32_adjust_dynamic_symbol (struct bfd_link_info *info,
 
   if (h->size == 0)
     {
-      (*_bfd_error_handler) (_("dynamic variable `%s' is zero size"),
-			     h->root.root.string);
+      _bfd_error_handler (_("dynamic variable `%s' is zero size"),
+			  h->root.root.string);
       return TRUE;
     }
 
