@@ -5,7 +5,7 @@ This branch contains patches applied to GDB for JetBrains IDE builds (CLion, etc
 ## Structure
 
 ```
-(patches/gdb-jetbrains branch root)
+(utils/patches branch root)
 ├── bootstrap.sh       # Set up upstream remote and fetch release tags
 ├── apply.sh           # Applies patches to all platforms at once
 ├── manifests/         # Versioned manifests
@@ -46,7 +46,7 @@ A patch in `shared/` is not automatically applied everywhere — only platforms 
 After cloning, check out this branch and run `bootstrap.sh` to add the sourceware upstream remote and fetch GDB release tags (used as base refs by `apply.sh`):
 
 ```bash
-git checkout patches/gdb-jetbrains
+git checkout utils/patches
 ./bootstrap.sh
 ```
 

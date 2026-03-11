@@ -1,6 +1,6 @@
 # Patches Branch — AI Assistant Instructions
 
-This is the `patches/gdb-jetbrains` branch of `binutils-gdb`. It contains JetBrains-specific patches for GDB, organized by platform.
+This is the `utils/patches` branch of `binutils-gdb`. It contains JetBrains-specific patches for GDB, organized by platform.
 
 ## Applying patches to platform branches
 
