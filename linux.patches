@@ -1,0 +1,5 @@
+shared/gdb-fix-using-gnu-print.patch
+shared/gdb-7.12-dynamic-libs.patch
+shared/gdbserver-Output-PID-right-after-create_inferior-call.patch
+shared/CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
+shared/0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch

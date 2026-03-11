@@ -1,0 +1,22 @@
+diff --git a/configure b/configure
+index 80b2b02..ce15fb9 100755
+--- a/configure
++++ b/configure
+@@ -8440,7 +8440,7 @@ else
+  # trust that they are doing what they want.
+  if test "$with_static_standard_libraries" = yes -a "$stage1_libs" = "" \
+      -a "$have_static_libs" = yes; then
+-   stage1_ldflags="-static-libstdc++ -static-libgcc"
++   stage1_ldflags=""
+  fi
+ fi
+ 
+@@ -8476,7 +8476,7 @@ else
+  # statically.  But if the user explicitly specified the libraries to
+  # use, trust that they are doing what they want.
+  if test "$poststage1_libs" = ""; then
+-   poststage1_ldflags="-static-libstdc++ -static-libgcc"
++   poststage1_ldflags=""
+  fi
+ fi
+ 
