@@ -33,13 +33,52 @@ for arg in "$@"; do
     case "$arg" in
         -f)       FORCE=true ;;
         --push)   PUSH=true ;;
+        -h|--help) usage ;;
         -*)       echo "Unknown option: $arg" >&2; usage ;;
         *)        POSITIONAL+=("$arg") ;;
     esac
 done
-[[ ${#POSITIONAL[@]} -lt 2 ]] && usage
-BASE_REF="${POSITIONAL[0]}"
-BRANCH_SUFFIX="${POSITIONAL[1]}"
+# Interactive mode when no positional args given
+if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
+    mapfile -t tags < <(git -C "$REPO_ROOT" tag -l 'gdb-*-release' | sort -V)
+    if [[ ${#tags[@]} -eq 0 ]]; then
+        echo "No gdb-*-release tags found. Run bootstrap.sh first." >&2
+        exit 1
+    fi
+
+    echo "Available GDB release tags:"
+    echo
+    for i in "${!tags[@]}"; do
+        printf "  %2d) %s\n" $((i + 1)) "${tags[$i]}"
+    done
+    echo
+    read -rp "Select tag [1-${#tags[@]}]: " choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#tags[@]} )); then
+        echo "Invalid selection." >&2
+        exit 1
+    fi
+
+    BASE_REF="${tags[$((choice - 1))]}"
+    # gdb-17.1-release -> 17.1-patched
+    version="${BASE_REF#gdb-}"
+    version="${version%-release}"
+    BRANCH_SUFFIX="${version}-patches-applied"
+
+    echo
+    flags=""
+    $FORCE && flags+=" -f"
+    $PUSH && flags+=" --push"
+    echo "Will run: apply.sh${flags} $BASE_REF $BRANCH_SUFFIX"
+    read -rp "Proceed? [Y/n] " confirm
+    [[ "${confirm:-y}" =~ ^[Yy]?$ ]] || exit 0
+
+elif [[ ${#POSITIONAL[@]} -lt 2 ]]; then
+    usage
+else
+    BASE_REF="${POSITIONAL[0]}"
+    BRANCH_SUFFIX="${POSITIONAL[1]}"
+fi
 
 # Verify base ref exists
 if ! git -C "$REPO_ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
@@ -263,16 +302,6 @@ finish_platform() {
     echo
 }
 
-# Suggest pushing all branches
-suggest_push() {
-    local branches=("$@")
-    echo
-    echo "To push all branches:"
-    for b in "${branches[@]}"; do
-        echo "  git push origin $b"
-    done
-}
-
 # Generate top-level resume.sh in the scripts branch
 generate_top_resume() {
     local all_branches_str="$1" failed_str="$2"
@@ -284,6 +313,7 @@ HEADER
 
     cat >> "$SCRIPT_DIR/finalize.sh" <<VARS
 REPO_ROOT="$REPO_ROOT"
+PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
 ALL_BRANCHES=($all_branches_str)
 VARS
 
@@ -320,16 +350,136 @@ if [[ ${#not_ready[@]} -gt 0 ]]; then
 fi
 
 echo "All branches ready."
-echo
-echo "To push:"
-for b in "${ready[@]}"; do
-    echo "  git push origin $b"
+
+# Generate push script
+cat > "$PUSH_SCRIPT" <<PUSH_HEADER
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="$REPO_ROOT"
+ALL_BRANCHES=(${ALL_BRANCHES[*]})
+PUSH_HEADER
+
+cat >> "$PUSH_SCRIPT" <<'PUSH_BODY'
+
+for branch in "${ALL_BRANCHES[@]}"; do
+    echo "Pushing $branch..."
+    git -C "$REPO_ROOT" push origin "$branch"
 done
+
+echo
+echo "All branches pushed."
+rm -f "$0"
+PUSH_BODY
+
+chmod +x "$PUSH_SCRIPT"
+
+echo
+echo "To push all branches:"
+echo "  $PUSH_SCRIPT"
 
 rm -f "$0"
 BODY
 
     chmod +x "$SCRIPT_DIR/finalize.sh"
+}
+
+# Generate claudefix.sh that launches Claude Code to resolve rejects
+generate_claudefix() {
+    local all_branches_str="$1"
+
+    cat > "$SCRIPT_DIR/claudefix.sh" <<'HEADER'
+#!/usr/bin/env bash
+set -euo pipefail
+HEADER
+
+    cat >> "$SCRIPT_DIR/claudefix.sh" <<VARS
+REPO_ROOT="$REPO_ROOT"
+FINALIZE_SCRIPT="$SCRIPT_DIR/finalize.sh"
+CLAUDEFIX_SCRIPT="$SCRIPT_DIR/claudefix.sh"
+PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
+ALL_BRANCHES=($all_branches_str)
+VARS
+
+    cat >> "$SCRIPT_DIR/claudefix.sh" <<'BODY'
+
+find_worktree() {
+    git -C "$REPO_ROOT" worktree list --porcelain \
+        | grep -B2 "branch refs/heads/$1" \
+        | grep '^worktree ' | sed 's/^worktree //' || true
+}
+
+tasks=()
+for branch in "${ALL_BRANCHES[@]}"; do
+    if git -C "$REPO_ROOT" show "$branch:.jetbrains-patches-applied" >/dev/null 2>&1; then
+        continue
+    fi
+    wt=$(find_worktree "$branch")
+    if [[ -z "$wt" ]]; then
+        echo "Warning: $branch unresolved but no worktree found — skipping" >&2
+        continue
+    fi
+    tasks+=("$wt:$branch")
+done
+
+if [[ ${#tasks[@]} -eq 0 ]]; then
+    echo "Nothing to fix — all branches have .jetbrains-patches-applied marker."
+    exit 0
+fi
+
+prompt="You are fixing failed GDB patch applications across platform branches.
+Each worktree below has .rej files from patches that didn't apply cleanly.
+"
+
+for entry in "${tasks[@]}"; do
+    wt="${entry%%:*}"
+    branch="${entry#*:}"
+
+    rejects=$(find "$wt" -name '*.rej' 2>/dev/null || true)
+    if [[ -z "$rejects" ]]; then
+        prompt+="
+## Worktree: $wt (branch: $branch)
+
+No .rej files found — check if this worktree needs manual inspection.
+"
+        continue
+    fi
+
+    reject_list=""
+    while IFS= read -r rej; do
+        reject_list+="  $rej
+"
+    done <<< "$rejects"
+
+    prompt+="
+## Worktree: $wt (branch: $branch)
+
+Reject files:
+$reject_list
+Instructions:
+1. Read each .rej file to understand the intended change
+2. Read the corresponding source file (same path without .rej)
+3. Apply the intended change to the source file using the Edit tool
+4. Delete the .rej file
+5. After all rejects in this worktree are resolved, run: cd $wt && ./resume.sh
+   resume.sh will commit the fix and apply remaining patches
+"
+done
+
+prompt+="
+After ALL worktrees are resolved, run:
+  $FINALIZE_SCRIPT
+This should show all branches as ✅ and generate $PUSH_SCRIPT.
+
+Then suggest the user run these cleanup/next steps:
+  rm $CLAUDEFIX_SCRIPT
+  $PUSH_SCRIPT
+
+IMPORTANT: Do NOT run \`git push\` or push any branches yourself. Only fix rejects and verify locally."
+
+exec claude "$prompt"
+BODY
+
+    chmod +x "$SCRIPT_DIR/claudefix.sh"
 }
 
 echo "Base: $BASE_REF ($(git -C "$REPO_ROOT" rev-parse --short "$BASE_REF"))"
@@ -351,11 +501,34 @@ done
 
 if [[ $failed -gt 0 ]]; then
     generate_top_resume "${all_branches[*]}" "${failed_platforms[*]}"
+    generate_claudefix "${all_branches[*]}"
     echo "$failed platform(s) failed."
     echo "After resolving all platforms, come back here and run:"
-    echo "  $SCRIPT_DIR/finalize.sh"
+    echo "  $SCRIPT_DIR/claudefix.sh    # launch Claude to fix rejects"
+    echo "  $SCRIPT_DIR/finalize.sh     # verify all branches & generate push script"
     exit 1
 fi
 
 echo "All platforms done."
-suggest_push "${all_branches[@]}"
+if ! $PUSH; then
+    # Generate a convenience push script (same as finalize.sh would)
+    push_script="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
+    cat > "$push_script" <<PUSH_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="$REPO_ROOT"
+ALL_BRANCHES=(${all_branches[*]})
+
+for branch in "\${ALL_BRANCHES[@]}"; do
+    echo "Pushing \$branch..."
+    git -C "\$REPO_ROOT" push origin "\$branch"
+done
+
+echo
+echo "All branches pushed."
+rm -f "\$0"
+PUSH_EOF
+    chmod +x "$push_script"
+    echo "To push all branches:"
+    echo "  $push_script"
+fi
