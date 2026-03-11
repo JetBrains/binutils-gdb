@@ -31,9 +31,13 @@ When GDB 18 arrives and no `18.manifest` exists:
 2. Test each patch, create version-specific variants where needed
 3. If 18.2 later diverges, add `18.2.manifest` (overrides `18.manifest` for that minor)
 
-## Platform → Patch mapping
+## Patch file locations
 
-Each manifest lists the exact patches per platform. Open the versioned manifest to see what each platform gets for a given GDB version.
+- `shared/` — patches that touch generic GDB code (may be listed by any platform)
+- `darwin/` — darwin-only patches
+- `mingw/` — mingw-only patches
+
+A patch in `shared/` is not automatically applied everywhere — only platforms that list it in their manifest section get it.
 
 ## Usage
 
@@ -42,17 +46,21 @@ Each manifest lists the exact patches per platform. Open the versioned manifest 
 After cloning, check out this branch and run `bootstrap.sh` to add the sourceware upstream remote and fetch GDB release tags (used as base refs by `apply.sh`):
 
 ```bash
-git checkout utils/patches
+git checkout patches/gdb-jetbrains
 ./bootstrap.sh
 ```
 
 ### Apply patches to all platforms
 
 ```bash
-./apply.sh
+./apply.sh gdb-17.1-release 17.1-patches-applied
 ```
 
-This lists available GDB release tags, lets you pick one, and applies all platform patches. See `./apply.sh --help` for advanced usage.
+Or interactively (pick from available tags):
+
+```bash
+./apply.sh
+```
 
 On success, `apply.sh` generates `push_<suffix>.sh` — run it to push all platform branches to origin.
 
