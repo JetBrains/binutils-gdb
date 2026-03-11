@@ -8,17 +8,32 @@ This branch contains patches applied to GDB for JetBrains IDE builds (CLion, etc
 (patches/gdb-jetbrains branch root)
 ├── bootstrap.sh       # Set up upstream remote and fetch release tags
 ├── apply.sh           # Applies patches to all platforms at once
-├── linux.patches      # Manifest: which patches linux gets
-├── darwin.patches     # Manifest: which patches darwin gets
-├── mingw.patches      # Manifest: which patches mingw gets
+├── manifests/         # Versioned manifests
+│   ├── 16.manifest    # Patch list for GDB 16.x
+│   └── 17.manifest    # Patch list for GDB 17.x
 ├── shared/            # Patch files used by multiple platforms
 ├── darwin/            # Darwin-only patch files
 └── mingw/             # MinGW-only patch files
 ```
 
+## Versioned manifests
+
+Each GDB major version has a manifest file (`manifests/<major>.manifest`) with `[platform]` sections listing all patches for that platform in application order. A minor version can override with `manifests/<major>.<minor>.manifest`.
+
+Resolution order for GDB 17.1:
+1. `manifests/17.1.manifest` — exact minor version
+2. `manifests/17.manifest` — major version fallback
+
+### Adding a new GDB version
+
+When GDB 18 arrives and no `18.manifest` exists:
+1. Copy `17.manifest` → `18.manifest`
+2. Test each patch, create version-specific variants where needed
+3. If 18.2 later diverges, add `18.2.manifest` (overrides `18.manifest` for that minor)
+
 ## Platform → Patch mapping
 
-Each `<platform>.patches` manifest lists the exact patches applied to that platform, one per line. Open the file to see what each platform gets.
+Each manifest lists the exact patches per platform. Open the versioned manifest to see what each platform gets for a given GDB version.
 
 ## Usage
 

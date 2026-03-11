@@ -10,8 +10,8 @@ Usage: $(basename "$0") <base-ref> <branch-suffix> [--push]
 
 Apply JetBrains GDB patches to all platform branches.
 
-Reads <platform>.patches manifests to determine which patches each
-platform gets. Creates one branch per manifest:
+Resolves a versioned manifest from manifests/ to determine which
+patches each platform gets. Creates one branch per platform:
   <platform>/<branch-suffix>
 
 Options:
@@ -19,8 +19,8 @@ Options:
   --push    Push all branches to origin after applying patches
 
 Examples:
-  ./apply.sh gdb-16.3-release 16.3-patched
-  ./apply.sh -f 140ba01 16.3-patches-applied --push
+  ./apply.sh gdb-16.3-release 16.3-patches-applied
+  ./apply.sh -f gdb-17.1-release 17.1-patches-applied --push
 EOF
     exit 1
 }
@@ -86,33 +86,70 @@ if ! git -C "$REPO_ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Discover platforms from *.patches manifests
-PLATFORMS=()
-for manifest in "$SCRIPT_DIR"/*.patches; do
-    [[ -f "$manifest" ]] || continue
-    PLATFORMS+=("$(basename "$manifest" .patches)")
-done
-
-if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
-    echo "Error: no *.patches manifests found in $SCRIPT_DIR" >&2
+# Extract GDB version from base ref (e.g. gdb-17.1-release -> 17.1)
+if [[ "$BASE_REF" =~ gdb-([0-9]+(\.[0-9]+)*)-release ]]; then
+    GDB_VERSION="${BASH_REMATCH[1]}"
+else
+    echo "Error: cannot extract GDB version from '$BASE_REF' (expected gdb-X.Y-release)" >&2
     exit 1
 fi
 
-# Read patch list from a manifest
+# Resolve versioned manifest file.
+# Lookup order: manifests/<major>.<minor>.manifest, manifests/<major>.manifest
+MANIFEST_FILE=""
+candidate="$SCRIPT_DIR/manifests/${GDB_VERSION}.manifest"
+if [[ -f "$candidate" ]]; then
+    MANIFEST_FILE="$candidate"
+else
+    major="${GDB_VERSION%%.*}"
+    candidate="$SCRIPT_DIR/manifests/${major}.manifest"
+    if [[ -f "$candidate" ]]; then
+        MANIFEST_FILE="$candidate"
+    fi
+fi
+
+if [[ -z "$MANIFEST_FILE" ]]; then
+    echo "Error: no manifest found for GDB $GDB_VERSION" >&2
+    echo "  looked for: manifests/${GDB_VERSION}.manifest, manifests/${major}.manifest" >&2
+    exit 1
+fi
+
+# Discover platforms from [platform] section headers
+PLATFORMS=()
+while IFS= read -r line; do
+    if [[ "$line" =~ ^\[([a-z]+)\] ]]; then
+        PLATFORMS+=("${BASH_REMATCH[1]}")
+    fi
+done < "$MANIFEST_FILE"
+echo "Manifest: $MANIFEST_FILE"
+
+if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
+    echo "Error: no [platform] sections found in $MANIFEST_FILE" >&2
+    exit 1
+fi
+
+# Read patch list for a platform from the manifest's [platform] section.
 resolve_patches() {
     local platform="$1"
     local -n _patches=$2
-    local manifest="$SCRIPT_DIR/${platform}.patches"
     _patches=()
+
+    local in_section=false
     while IFS= read -r line; do
         [[ -z "$line" || "$line" == \#* ]] && continue
-        local path="$SCRIPT_DIR/$line"
-        if [[ ! -f "$path" ]]; then
-            echo "Error: patch '$line' listed in ${platform}.patches not found" >&2
-            return 1
+        if [[ "$line" =~ ^\[([a-z]+) ]]; then
+            [[ "${BASH_REMATCH[1]}" == "$platform" ]] && in_section=true || in_section=false
+            continue
         fi
-        _patches+=("$path")
-    done < "$manifest"
+        if $in_section; then
+            local path="$SCRIPT_DIR/$line"
+            if [[ ! -f "$path" ]]; then
+                echo "Error: patch '$line' from manifest not found" >&2
+                return 1
+            fi
+            _patches+=("$path")
+        fi
+    done < "$MANIFEST_FILE"
 }
 
 # Apply patches to one platform
