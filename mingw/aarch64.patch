@@ -1,8 +1,8 @@
 diff --git a/bfd/configure b/bfd/configure
-index 31dfac5..8b9d59d 100755
+index 2db9f76b9eb..6a0875bda8a 100755
 --- a/bfd/configure
 +++ b/bfd/configure
-@@ -13536,7 +13536,7 @@ selarchs=
+@@ -15743,7 +15743,7 @@ selarchs=
  TDEFINES=
  for targ in $target $canon_targets
  do
@@ -12,29 +12,52 @@ index 31dfac5..8b9d59d 100755
  	assocvecs="$assocvecs $targ_defvec $targ_selvecs"
      elif test $targ != plugin; then
 diff --git a/gdb/configure b/gdb/configure
-index bdc84be..65a9ef5 100755
+index 1531f62f76a..fd7d12d7b07 100755
 --- a/gdb/configure
 +++ b/gdb/configure
-@@ -17934,7 +17934,7 @@ fi
+@@ -24945,11 +24945,19 @@ fi
  # configuration.
  gdb_host_obs=posix-hdep.o
  
 -if test "${target}" = "${host}"; then
-+if test "${target}" = "${host} && false"; then
-   gdb_native=yes
- else
-   gdb_native=no
-@@ -18007,7 +18007,7 @@ gdb_osabi=
+-  gdb_native=yes
+-else
+-  gdb_native=no
+-fi
++case "${host}" in
++  aarch64-*-mingw*)
++    # aarch64-mingw native support not yet available in configure.nat
++    gdb_native=no
++    ;;
++  *)
++    if test "${target}" = "${host}"; then
++      gdb_native=yes
++    else
++      gdb_native=no
++    fi
++    ;;
++esac
+ 
+ . $srcdir/configure.host
+ 
+@@ -25178,7 +25186,14 @@ gdb_osabi=
  targ=$target; . ${srcdir}/configure.tgt
  
  # Fetch the default architecture and default target vector from BFD.
 -targ=$target; . $srcdir/../bfd/config.bfd
-+#targ=$target; . $srcdir/../bfd/config.bfd
++case "${host}" in
++  aarch64-*-mingw*)
++    # BFD config not available for aarch64 cross-builds
++    ;;
++  *)
++    targ=$target; . $srcdir/../bfd/config.bfd
++    ;;
++esac
  
  # We only want the first architecture, so strip off the others if
  # there is more than one.
 diff --git a/gdb/configure.host b/gdb/configure.host
-index da71675..c39f327 100644
+index 22855cdbdf8..8823b631b4f 100644
 --- a/gdb/configure.host
 +++ b/gdb/configure.host
 @@ -107,6 +107,9 @@ i[34567]86-*-go32*)	gdb_host=go32 ;;
@@ -48,7 +71,7 @@ index da71675..c39f327 100644
  i[34567]86-*-linux*)	gdb_host=linux ;;
  i[34567]86-*-gnu*)	gdb_host=i386gnu ;;
 diff --git a/gnulib/import/setenv.c b/gnulib/import/setenv.c
-index ebfd4e5..b0e8cad 100644
+index ebfd4e550e8..b0e8caddfc8 100644
 --- a/gnulib/import/setenv.c
 +++ b/gnulib/import/setenv.c
 @@ -219,7 +219,11 @@ __add_to_environ (const char *name, const char *value, const char *combined,
@@ -74,7 +97,7 @@ index ebfd4e5..b0e8cad 100644
    UNLOCK;
  
 diff --git a/libiberty/setenv.c b/libiberty/setenv.c
-index d57e90c..99ee9c1 100644
+index 232b2d6a15c..554f3624016 100644
 --- a/libiberty/setenv.c
 +++ b/libiberty/setenv.c
 @@ -133,7 +133,11 @@ setenv (const char *name, const char *value, int replace)
@@ -91,10 +114,10 @@ index d57e90c..99ee9c1 100644
    else if (replace)
      {
 diff --git a/opcodes/configure b/opcodes/configure
-index 9dc87d6..a7e3fed 100755
+index 547e5afc766..69d6da78be5 100755
 --- a/opcodes/configure
 +++ b/opcodes/configure
-@@ -12489,10 +12489,10 @@ all_targets=false
+@@ -14423,10 +14423,10 @@ all_targets=false
  selarchs=
  for targ in $target $canon_targets
  do
