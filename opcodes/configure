@@ -14423,10 +14423,10 @@ all_targets=false
 selarchs=
 for targ in $target $canon_targets
 do
-    if test "x$targ" = "xall" ; then
+    if test "x$targ" = "xall" || true ; then
         all_targets=true
     else
-	. $srcdir/../bfd/config.bfd
+#	. $srcdir/../bfd/config.bfd
 	selarchs="$selarchs $targ_archs"
     fi
 done
