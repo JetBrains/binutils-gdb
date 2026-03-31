@@ -21,6 +21,7 @@
 #include "arch/amd64-linux-tdesc.h"
 #include "arch/amd64.h"
 #include "arch/x86-linux-tdesc-features.h"
+#include <unordered_map>
 
 
 /* See arch/amd64-linux-tdesc.h.  */
