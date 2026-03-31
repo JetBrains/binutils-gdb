@@ -2345,6 +2345,7 @@ py_initialize_catch_abort ()
 
   TRY_SJLJ
     {
+      PyImport_AppendInittab ("_gdb", init__gdb_module);
       Py_Initialize ();
       py_isinitialized = true;
     }
