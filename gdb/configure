@@ -24945,7 +24945,7 @@ fi
 # configuration.
 gdb_host_obs=posix-hdep.o
 
-if test "${target}" = "${host}"; then
+if test "${target}" = "${host}" && false; then
   gdb_native=yes
 else
   gdb_native=no
