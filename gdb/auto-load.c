@@ -468,6 +468,10 @@ file_is_auto_load_safe (const char *filename)
 	  else
 	    {
 	      const char *homedir = getenv ("HOME");
+#ifdef _WIN32
+	       if (homedir == NULL)
+		homedir = getenv ("USERPROFILE");
+#endif
 	      if (homedir == nullptr)
 		homedir = "$HOME";
 	      home_config = (std::string (homedir) + SLASH_STRING
