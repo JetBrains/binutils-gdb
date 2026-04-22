@@ -3921,8 +3921,6 @@ ldlang_open_ctf (void)
 					    | SEC_LINKER_CREATED));
 	      picked_ctf = 1;
 	    }
-	  if (picked_ctf && picked_btf)
-	    break;
 	}
     }
 
@@ -8068,7 +8066,8 @@ lang_gc_sections (void)
   lang_gc_sections_1 (statement_list.head);
 
   /* SEC_EXCLUDE is ignored when doing a relocatable link, except in
-     the special case of .stabstr debug info.  (See bfd/stabs.c)
+     the special case of .stabstr debug info, and CTF/BTF sections.
+     (See bfd/stabs.c and ldlang_open_ctf in this file.)
      Twiddle the flag here, to simplify later linker code.  */
   if (bfd_link_relocatable (&link_info))
     {
@@ -8078,8 +8077,10 @@ lang_gc_sections (void)
 	  if (f->flags.claimed)
 	    continue;
 	  for (sec = f->the_bfd->sections; sec != NULL; sec = sec->next)
-	    if ((sec->flags & SEC_DEBUGGING) == 0
-		|| strcmp (sec->name, ".stabstr") != 0)
+	    if (strcmp (sec->name, ".ctf") != 0
+		&& strcmp (sec->name, ".BTF") != 0
+		&& ((sec->flags & SEC_DEBUGGING) == 0
+		    || strcmp (sec->name, ".stabstr") != 0))
 	      sec->flags &= ~SEC_EXCLUDE;
 	}
     }
