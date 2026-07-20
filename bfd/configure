@@ -15399,11 +15399,18 @@ selarchs=
 TDEFINES=
 for targ in $target $canon_targets
 do
-    if test $targ = all || true; then
+    if test $targ = all; then
         all_targets=true
 	assocvecs="$assocvecs $targ_defvec $targ_selvecs"
     elif test $targ != plugin; then
-	. $srcdir/config.bfd
+	case "${host}" in
+	  aarch64-*-mingw*)
+	    # BFD config not available for aarch64 cross-builds
+	    ;;
+	  *)
+	    . $srcdir/config.bfd
+	    ;;
+	esac
 	if test $targ = $target; then
 	    defvec=$targ_defvec
 	fi

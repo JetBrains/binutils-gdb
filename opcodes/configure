@@ -13925,10 +13925,17 @@ all_targets=false
 selarchs=
 for targ in $target $canon_targets
 do
-    if test "x$targ" = "xall" || true ; then
+    if test "x$targ" = "xall" ; then
         all_targets=true
     else
-#	. $srcdir/../bfd/config.bfd
+	case "${host}" in
+	  aarch64-*-mingw*)
+	    # BFD config not available for aarch64 cross-builds
+	    ;;
+	  *)
+	    . $srcdir/../bfd/config.bfd
+	    ;;
+	esac
 	selarchs="$selarchs $targ_archs"
     fi
 done
