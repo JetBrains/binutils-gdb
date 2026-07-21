@@ -219,11 +219,7 @@ __add_to_environ (const char *name, const char *value, const char *combined,
 
       new_environ[size + 1] = NULL;
 
-      memcpy ((char *) __environ, (char *) new_environ,
-        size * sizeof (char *));
-      __environ[size + 1] = NULL;
-
-      last_environ = new_environ;
+      last_environ = __environ = new_environ;
     }
   else if (replace)
     {
@@ -319,7 +315,7 @@ clearenv (void)
     }
 
   /* Clear the environment pointer removes the whole environment.  */
-  __environ[0] = NULL;
+  __environ = NULL;
 
   UNLOCK;
 

@@ -133,11 +133,7 @@ setenv (const char *name, const char *value, int replace)
 
       new_environ[size + 1] = NULL;
 
-      memcpy ((char *) __environ, (char *) new_environ,
-        size * sizeof (char *));
-      __environ[size + 1] = NULL;
-
-      last_environ = new_environ;
+      last_environ = __environ = new_environ;
     }
   else if (replace)
     {
