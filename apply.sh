@@ -14,6 +14,10 @@ Resolves a versioned manifest from manifests/ to determine which
 patches each platform gets. Creates one branch per platform:
   <platform>/<branch-suffix>
 
+A platform whose manifest header declares multiple archs
+(e.g. [mingw archs=x86_64,aarch64]) instead emits one branch per arch:
+  <platform>-<arch>/<branch-suffix>
+
 Options:
   -f        Delete and recreate branches that already exist
   --push    Push all branches to origin after applying patches
@@ -114,11 +118,15 @@ if [[ -z "$MANIFEST_FILE" ]]; then
     exit 1
 fi
 
-# Discover platforms from [platform] section headers
+# Discover platforms from [platform] section headers.
+# A header may carry an arch universe: [mingw archs=x86_64,aarch64].
+# No archs= = single/unspecified arch (current behavior).
 PLATFORMS=()
+declare -A PLATFORM_ARCHS
 while IFS= read -r line; do
-    if [[ "$line" =~ ^\[([a-z]+)\] ]]; then
+    if [[ "$line" =~ ^\[([a-z]+)([[:space:]]+archs=([A-Za-z0-9_,]+))?\] ]]; then
         PLATFORMS+=("${BASH_REMATCH[1]}")
+        PLATFORM_ARCHS["${BASH_REMATCH[1]}"]="${BASH_REMATCH[3]}"
     fi
 done < "$MANIFEST_FILE"
 echo "Manifest: $MANIFEST_FILE"
@@ -129,10 +137,18 @@ if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
 fi
 
 # Read patch list for a platform from the manifest's [platform] section.
+# Optional 3rd arg filter_arch: when non-empty, emit only untagged patches
+# plus those tagged with that arch (per-arch branch). Empty = include all
+# (bare branch for a no-archs / single-arch platform).
+# An inline "@arch=<tok>" whose tok is not in the section's archs= list is a
+# hard error (fail fast).
 resolve_patches() {
     local platform="$1"
     local -n _patches=$2
+    local filter_arch="${3:-}"
     _patches=()
+
+    local declared_archs="${PLATFORM_ARCHS[$platform]:-}"
 
     local in_section=false
     while IFS= read -r line; do
@@ -142,9 +158,31 @@ resolve_patches() {
             continue
         fi
         if $in_section; then
-            local path="$SCRIPT_DIR/$line"
+            # Split "path [@arch=tok]": first token is the path, optional selector follows.
+            local path_rel rest sel_arch=""
+            read -r path_rel rest <<< "$line"
+            if [[ -n "$rest" ]]; then
+                if [[ "$rest" =~ ^@arch=([A-Za-z0-9_]+)[[:space:]]*$ ]]; then
+                    sel_arch="${BASH_REMATCH[1]}"
+                else
+                    echo "Error: malformed selector '$rest' on patch line '$line' in [$platform]" >&2
+                    return 1
+                fi
+            fi
+            if [[ -n "$sel_arch" ]]; then
+                # Selector must name an arch the section declared.
+                if [[ ",$declared_archs," != *",$sel_arch,"* ]]; then
+                    echo "Error: @arch=$sel_arch on '$path_rel' is not in [$platform] archs='$declared_archs'" >&2
+                    return 1
+                fi
+                # Per-arch branch: drop patches tagged for a different arch.
+                if [[ -n "$filter_arch" && "$sel_arch" != "$filter_arch" ]]; then
+                    continue
+                fi
+            fi
+            local path="$SCRIPT_DIR/$path_rel"
             if [[ ! -f "$path" ]]; then
-                echo "Error: patch '$line' from manifest not found" >&2
+                echo "Error: patch '$path_rel' from manifest not found" >&2
                 return 1
             fi
             _patches+=("$path")
@@ -152,15 +190,23 @@ resolve_patches() {
     done < "$MANIFEST_FILE"
 }
 
-# Apply patches to one platform
-apply_platform() {
+# Apply patches to one branch of a platform.
+# filter_arch empty  -> bare branch, all patches (no-archs / single-arch platform)
+# filter_arch set    -> per-arch branch, untagged + that-arch patches only
+apply_branch() {
     local platform="$1"
-    local branch_name="${platform}/${BRANCH_SUFFIX}"
+    local filter_arch="$2"
+    local branch_name="$3"
 
     local patches
-    resolve_patches "$platform" patches
+    # Bail before touching git if the manifest is bad (missing patch file,
+    # unknown @arch token). apply_branch runs under `if !`, which suppresses
+    # set -e, so resolve_patches's non-zero return must be checked explicitly.
+    if ! resolve_patches "$platform" patches "$filter_arch"; then
+        return 1
+    fi
 
-    echo "=== $platform === ($branch_name, ${#patches[@]} patches)"
+    echo "=== $platform${filter_arch:+ ($filter_arch)} === ($branch_name, ${#patches[@]} patches)"
 
     # Create branch from base ref
     if git -C "$REPO_ROOT" rev-parse --verify "$branch_name" >/dev/null 2>&1; then
@@ -183,7 +229,7 @@ apply_platform() {
 
     # Create temporary worktree
     local worktree_dir
-    worktree_dir=$(mktemp -d "${TMPDIR:-/tmp}/gdb-patches-${platform}-XXXXXX")
+    worktree_dir=$(mktemp -d "${TMPDIR:-/tmp}/gdb-patches-${platform}${filter_arch:+-$filter_arch}-XXXXXX")
 
     git -C "$REPO_ROOT" worktree add "$worktree_dir" "$branch_name" >/dev/null 2>&1
 
@@ -222,7 +268,7 @@ apply_platform() {
         git commit -q -m "Apply $patch_name"
     done
 
-    commit_marker "$platform" "${patches[@]}"
+    commit_marker "$platform" "$filter_arch" "${patches[@]}"
     popd >/dev/null
     finish_platform "$worktree_dir" "$branch_name"
 }
@@ -308,10 +354,11 @@ RESUME_BODY
 
 # Create .jetbrains-patches-applied marker and commit it
 commit_marker() {
-    local platform="$1"; shift
+    local platform="$1" arch="$2"; shift 2
     local all_patches=("$@")
     {
         echo "platform: $platform"
+        [[ -n "$arch" ]] && echo "arch: $arch"
         echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "patches:"
         for p in "${all_patches[@]}"; do
@@ -527,12 +574,29 @@ failed=0
 failed_platforms=()
 all_branches=()
 for platform in "${PLATFORMS[@]}"; do
-    all_branches+=("${platform}/${BRANCH_SUFFIX}")
-    if ! apply_platform "$platform"; then
-        echo "🔴 $platform FAILED"
-        echo
-        failed_platforms+=("$platform")
-        ((failed++)) || true
+    # Split the declared arch universe. 0 or 1 arch -> one bare branch
+    # (exact current behavior); 2+ archs -> one branch per arch.
+    IFS=',' read -ra archs <<< "${PLATFORM_ARCHS[$platform]:-}"
+    if [[ ${#archs[@]} -le 1 ]]; then
+        branch="${platform}/${BRANCH_SUFFIX}"
+        all_branches+=("$branch")
+        if ! apply_branch "$platform" "" "$branch"; then
+            echo "🔴 $platform FAILED"
+            echo
+            failed_platforms+=("$platform")
+            ((failed++)) || true
+        fi
+    else
+        for arch in "${archs[@]}"; do
+            branch="${platform}-${arch}/${BRANCH_SUFFIX}"
+            all_branches+=("$branch")
+            if ! apply_branch "$platform" "$arch" "$branch"; then
+                echo "🔴 ${platform}-${arch} FAILED"
+                echo
+                failed_platforms+=("${platform}-${arch}")
+                ((failed++)) || true
+            fi
+        done
     fi
 done
 

@@ -30,6 +30,29 @@ Resolution for GDB 17.1: `manifests/17.1.manifest` → `manifests/17.manifest`.
 
 A patch in `shared/` is not automatically applied everywhere — only platforms that list it in their manifest section get it.
 
+### Manifest syntax
+
+```
+[platform]                       # single/unspecified arch — one bare branch
+patch/path.patch                 # applies to the platform's only branch
+# comment lines and blank lines are ignored
+
+[mingw archs=x86_64,aarch64]     # multi-arch platform — one branch per arch
+shared/some-common.patch         # untagged: goes to EVERY arch branch
+mingw/aarch64.patch @arch=aarch64  # tagged: only the aarch64 branch
+```
+
+- **Section header** — `[platform]` optionally followed by `archs=<a,b,...>` declaring the platform's arch universe. No `archs=` means single/unspecified arch (the historical behavior).
+- **Patch line** — a repo-root-relative path, optionally followed by a whitespace-separated `@arch=<tok>` selector. Untagged lines apply to all archs the platform declares; a tagged line applies only to that arch. Arch tokens are the GDB host-triple stems: `x86_64`, `aarch64`.
+- An `@arch=<tok>` whose `<tok>` is not in the section's `archs=` list is a hard error (apply.sh fails fast).
+- Comments (`#…`) and blank lines are ignored.
+
+### Branch emission
+
+- A platform with **no `archs=` (or a single arch)** emits one bare branch `<platform>/<suffix>` — exactly as before. `linux` and `darwin` stay bare, unchanged.
+- A platform declaring **multiple archs** emits one branch per arch, `<platform>-<arch>/<suffix>` (e.g. `mingw-x86_64/17.1-patches-applied`, `mingw-aarch64/17.1-patches-applied`). Each arch branch gets the untagged patches plus the patches tagged for that arch, in manifest order.
+- `<suffix>` must still start with `<major>.<minor>` (downstream TeamCity deploy parses it).
+
 ## Adding a new patch
 
 1. Create the `.patch` file (`git diff` against vanilla GDB, bare diff format)
