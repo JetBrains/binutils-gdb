@@ -28121,7 +28121,7 @@ fi
   # Otherwise fallback on the old way of trying different versions of
   # python in turn.
 
-  have_libpython=no
+  have_libpython=yes
   if test "${have_python_config}" = yes; then
 
 
