@@ -18,4 +18,4 @@ shared/CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
 shared/0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
 shared/solib-svr4-unordered-map.patch
 mingw/aarch64.patch @arch=aarch64
-mingw/clang14.patch
+mingw/clang14.patch @arch=aarch64
