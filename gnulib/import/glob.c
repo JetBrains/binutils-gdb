@@ -625,23 +625,7 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
           if (home_dir == NULL || home_dir[0] == '\0')
             {
 #ifdef WINDOWS32
-              /* Windows NT defines HOMEDRIVE and HOMEPATH.  But give
-                 preference to HOME, because the user can change HOME.  */
-              const char *home_drive = getenv ("HOMEDRIVE");
-              const char *home_path = getenv ("HOMEPATH");
-
-              if (home_drive != NULL && home_path != NULL)
-                {
-                  size_t home_drive_len = strlen (home_drive);
-                  size_t home_path_len = strlen (home_path);
-                  char *mem = alloca (home_drive_len + home_path_len + 1);
-
-                  memcpy (mem, home_drive, home_drive_len);
-                  memcpy (mem + home_drive_len, home_path, home_path_len + 1);
-                  home_dir = mem;
-                }
-              else
-                home_dir = "c:/users/default"; /* poor default */
+              home_dir = getenv ("USERPROFILE");
 #else
               int err;
               struct passwd *p;
