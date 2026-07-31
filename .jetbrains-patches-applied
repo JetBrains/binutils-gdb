@@ -1,0 +1,12 @@
+platform: mingw
+arch: aarch64
+date: 2026-07-31T07:36:29Z
+patches:
+  - gdb-fix-using-gnu-print.patch
+  - gdb-7.12-dynamic-libs.patch
+  - gdbserver-Output-PID-right-after-create_inferior-call-17.patch
+  - CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
+  - 0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
+  - solib-svr4-unordered-map.patch
+  - aarch64.patch
+  - clang14.patch
