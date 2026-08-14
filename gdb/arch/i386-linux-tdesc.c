@@ -21,6 +21,7 @@
 #include "arch/i386-linux-tdesc.h"
 #include "arch/i386.h"
 #include "arch/x86-linux-tdesc-features.h"
+#include <unordered_map>
 
 /* See arch/i386-linux-tdesc.h.  */
 
