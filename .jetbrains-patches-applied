@@ -1,0 +1,8 @@
+platform: linux
+date: 2026-08-14T09:53:24Z
+patches:
+  - gdb-fix-using-gnu-print.patch
+  - gdb-7.12-dynamic-libs.patch
+  - gdbserver-Output-PID-right-after-create_inferior-call-17.patch
+  - CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
+  - 0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
