@@ -25159,7 +25159,6 @@ else
   enable_tui=auto
 fi
 
-
 # Enable gdbtk.
 # Check whether --enable-gdbtk was given.
 if test "${enable_gdbtk+set}" = set; then :
