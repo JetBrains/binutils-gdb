@@ -15399,7 +15399,7 @@ selarchs=
 TDEFINES=
 for targ in $target $canon_targets
 do
-    if test $targ = all; then
+    if test $targ = all || true; then
         all_targets=true
 	assocvecs="$assocvecs $targ_defvec $targ_selvecs"
     elif test $targ != plugin; then

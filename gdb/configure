@@ -24878,11 +24878,19 @@ CPPFLAGS=$OLD_CPPFLAGS
 # configuration.
 gdb_host_obs=posix-hdep.o
 
-if test "${target}" = "${host}"; then
-  gdb_native=yes
-else
-  gdb_native=no
-fi
+case "${host}" in
+  aarch64-*-mingw*)
+    # aarch64-mingw native support not yet available in configure.nat
+    gdb_native=no
+    ;;
+  *)
+    if test "${target}" = "${host}"; then
+      gdb_native=yes
+    else
+      gdb_native=no
+    fi
+    ;;
+esac
 
 . $srcdir/configure.host
 
@@ -25122,7 +25130,14 @@ gdb_osabi=
 targ=$target; . ${srcdir}/configure.tgt
 
 # Fetch the default architecture and default target vector from BFD.
-targ=$target; . $srcdir/../bfd/config.bfd
+case "${host}" in
+  aarch64-*-mingw*)
+    # BFD config not available for aarch64 cross-builds
+    ;;
+  *)
+    targ=$target; . $srcdir/../bfd/config.bfd
+    ;;
+esac
 
 # We only want the first architecture, so strip off the others if
 # there is more than one.
