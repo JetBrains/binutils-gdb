@@ -572,6 +572,12 @@ cp_print_static_field (struct type *type,
       return;
     }
 
+  if (recurse > 99)
+  {
+    gdb_puts ("<recursion limit reached>", stream);
+    return;
+  }
+
   struct type *real_type = check_typedef (type);
   if (real_type->code () == TYPE_CODE_STRUCT)
     {
