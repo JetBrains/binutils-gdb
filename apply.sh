@@ -6,73 +6,125 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") <base-ref> <branch-suffix> [--push]
+Usage: $(basename "$0") [options] <base-ref> <branch-suffix>
 
 Apply JetBrains GDB patches to all platform branches.
 
+<base-ref> is either a GDB release tag (gdb-17.1-release) or a GDB
+development branch (gdb-17-branch, upstream/gdb-17-branch). The version
+used to resolve the manifest is taken from the ref name in both cases.
+
 Resolves a versioned manifest from manifests/ to determine which
 patches each platform gets. Creates one branch per platform:
-  <platform>/<branch-suffix>
+  [<prefix>/]<platform>/<branch-suffix>
 
 A platform whose manifest header declares multiple archs
 (e.g. [mingw archs=x86_64,aarch64]) instead emits one branch per arch:
-  <platform>-<arch>/<branch-suffix>
+  [<prefix>/]<platform>-<arch>/<branch-suffix>
 
 Options:
-  -f        Delete and recreate branches that already exist
-  --push    Push all branches to origin after applying patches
+  -f                     Delete and recreate branches that already exist
+  --push                 Push all branches to origin after applying patches
+  --prefix <p>           Prepend "<p>/" to every generated branch name
+  --random-prefix[=<b>]  Prepend a randomized "<b>-<token>/" prefix instead
+                         (<b> defaults to "tmp") — for throwaway test runs
+                         that must not collide with real branches
 
 Examples:
   ./apply.sh gdb-16.3-release 16.3-patches-applied
   ./apply.sh -f gdb-17.1-release 17.1-patches-applied --push
+  ./apply.sh --random-prefix upstream/gdb-18-branch 18-patches-applied
+  ./apply.sh --prefix try/gdb18 upstream/gdb-18-branch 18-patches-applied
 EOF
     exit 1
+}
+
+# Random [a-z0-9] token. Pure bash — no pipeline, so pipefail-safe.
+random_token() {
+    local chars=abcdefghijklmnopqrstuvwxyz0123456789 out="" i
+    for ((i = 0; i < ${1:-6}; i++)); do
+        out+="${chars:RANDOM % ${#chars}:1}"
+    done
+    printf '%s' "$out"
 }
 
 # Parse arguments
 FORCE=false
 PUSH=false
+BRANCH_PREFIX=""
 POSITIONAL=()
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         -f)       FORCE=true ;;
         --push)   PUSH=true ;;
+        --prefix)
+            shift
+            [[ $# -gt 0 ]] || { echo "--prefix requires a value" >&2; usage; }
+            BRANCH_PREFIX="$1"
+            ;;
+        --prefix=*)        BRANCH_PREFIX="${1#*=}" ;;
+        --random-prefix)   BRANCH_PREFIX="tmp-$(random_token)" ;;
+        --random-prefix=*) BRANCH_PREFIX="${1#*=}"
+                           BRANCH_PREFIX="${BRANCH_PREFIX:-tmp}-$(random_token)" ;;
         -h|--help) usage ;;
-        -*)       echo "Unknown option: $arg" >&2; usage ;;
-        *)        POSITIONAL+=("$arg") ;;
+        -*)       echo "Unknown option: $1" >&2; usage ;;
+        *)        POSITIONAL+=("$1") ;;
     esac
+    shift
 done
+
+# Normalize the prefix and let git itself vet it as a ref path.
+BRANCH_PREFIX="${BRANCH_PREFIX#/}"
+BRANCH_PREFIX="${BRANCH_PREFIX%/}"
+if [[ -n "$BRANCH_PREFIX" ]] \
+   && ! git check-ref-format "refs/heads/$BRANCH_PREFIX/x" >/dev/null 2>&1; then
+    echo "Error: '$BRANCH_PREFIX' is not a valid branch name prefix." >&2
+    exit 1
+fi
+
 # Interactive mode when no positional args given
 if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
-    mapfile -t tags < <(git -C "$REPO_ROOT" tag -l 'gdb-*-release' | sort -V)
-    if [[ ${#tags[@]} -eq 0 ]]; then
-        echo "No gdb-*-release tags found. Run bootstrap.sh first." >&2
+    # Release tags first, then the development branches (gdb-17-branch and
+    # friends, local or from any remote). Historical csl/date-named branches
+    # carry no version number, so they are filtered out.
+    mapfile -t refs < <(
+        git -C "$REPO_ROOT" tag -l 'gdb-*-release' | sort -V
+        git -C "$REPO_ROOT" for-each-ref --format='%(refname:short)' \
+                'refs/heads/gdb-*-branch' 'refs/remotes/*/gdb-*-branch' \
+            | grep -E '(^|/)gdb-[0-9]+(\.[0-9]+)*-branch$' | sort -V || true
+    )
+    if [[ ${#refs[@]} -eq 0 ]]; then
+        echo "No gdb-*-release tags or gdb-*-branch branches found." >&2
+        echo "Run bootstrap.sh first." >&2
         exit 1
     fi
 
-    echo "Available GDB release tags:"
+    echo "Available GDB base refs:"
     echo
-    for i in "${!tags[@]}"; do
-        printf "  %2d) %s\n" $((i + 1)) "${tags[$i]}"
+    for i in "${!refs[@]}"; do
+        printf "  %2d) %s\n" $((i + 1)) "${refs[$i]}"
     done
     echo
-    read -rp "Select tag [1-${#tags[@]}]: " choice
+    read -rp "Select base ref [1-${#refs[@]}]: " choice
 
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#tags[@]} )); then
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#refs[@]} )); then
         echo "Invalid selection." >&2
         exit 1
     fi
 
-    BASE_REF="${tags[$((choice - 1))]}"
-    # gdb-17.1-release -> 17.1-patched
-    version="${BASE_REF#gdb-}"
+    BASE_REF="${refs[$((choice - 1))]}"
+    # gdb-17.1-release -> 17.1, upstream/gdb-18-branch -> 18
+    version="${BASE_REF##*/}"
+    version="${version#gdb-}"
     version="${version%-release}"
+    version="${version%-branch}"
     BRANCH_SUFFIX="${version}-patches-applied"
 
     echo
     flags=""
-    $FORCE && flags+=" -f"
-    $PUSH && flags+=" --push"
+    $FORCE && flags+=" -f" || true
+    $PUSH && flags+=" --push" || true
+    [[ -n "$BRANCH_PREFIX" ]] && flags+=" --prefix $BRANCH_PREFIX" || true
     echo "Will run: apply.sh${flags} $BASE_REF $BRANCH_SUFFIX"
     read -rp "Proceed? [Y/n] " confirm
     [[ "${confirm:-y}" =~ ^[Yy]?$ ]] || exit 0
@@ -84,17 +136,26 @@ else
     BRANCH_SUFFIX="${POSITIONAL[1]}"
 fi
 
+# Branch names: [<prefix>/]<platform>[-<arch>]/<suffix>. The prefix also goes
+# into the helper script names, so prefixed (e.g. randomized) runs don't
+# overwrite the push script of another run.
+PREFIX_PATH="${BRANCH_PREFIX:+$BRANCH_PREFIX/}"
+PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_PREFIX:+${BRANCH_PREFIX//\//-}-}${BRANCH_SUFFIX}.sh"
+
 # Verify base ref exists
 if ! git -C "$REPO_ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
     echo "Error: base ref '$BASE_REF' does not exist." >&2
     exit 1
 fi
 
-# Extract GDB version from base ref (e.g. gdb-17.1-release -> 17.1)
-if [[ "$BASE_REF" =~ gdb-([0-9]+(\.[0-9]+)*)-release ]]; then
+# Extract GDB version from the base ref name, accepting both release tags and
+# development branches: gdb-17.1-release -> 17.1, upstream/gdb-18-branch -> 18.
+base_stem="${BASE_REF##*/}"
+if [[ "$base_stem" =~ ^gdb-([0-9]+(\.[0-9]+)*)-(release|branch)$ ]]; then
     GDB_VERSION="${BASH_REMATCH[1]}"
 else
-    echo "Error: cannot extract GDB version from '$BASE_REF' (expected gdb-X.Y-release)" >&2
+    echo "Error: cannot extract GDB version from '$BASE_REF'" >&2
+    echo "  expected gdb-X[.Y]-release or gdb-X[.Y]-branch" >&2
     exit 1
 fi
 
@@ -225,7 +286,9 @@ apply_branch() {
             return 1
         fi
     fi
-    git -C "$REPO_ROOT" branch "$branch_name" "$BASE_REF"
+    # --no-track: a remote development branch as base (upstream/gdb-17-branch)
+    # would otherwise make the patched branch track read-only upstream.
+    git -C "$REPO_ROOT" branch --no-track "$branch_name" "$BASE_REF"
 
     # Create temporary worktree
     local worktree_dir
@@ -397,7 +460,7 @@ HEADER
 
     cat >> "$SCRIPT_DIR/finalize.sh" <<VARS
 REPO_ROOT="$REPO_ROOT"
-PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
+PUSH_SCRIPT="$PUSH_SCRIPT"
 ALL_BRANCHES=($all_branches_str)
 VARS
 
@@ -480,7 +543,7 @@ HEADER
 REPO_ROOT="$REPO_ROOT"
 FINALIZE_SCRIPT="$SCRIPT_DIR/finalize.sh"
 CLAUDEFIX_SCRIPT="$SCRIPT_DIR/claudefix.sh"
-PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
+PUSH_SCRIPT="$PUSH_SCRIPT"
 ALL_BRANCHES=($all_branches_str)
 VARS
 
@@ -568,6 +631,7 @@ BODY
 
 echo "Base: $BASE_REF ($(git -C "$REPO_ROOT" rev-parse --short "$BASE_REF"))"
 echo "Platforms: ${PLATFORMS[*]}"
+[[ -n "$BRANCH_PREFIX" ]] && echo "Branch prefix: $BRANCH_PREFIX/" || true
 echo
 
 failed=0
@@ -578,7 +642,7 @@ for platform in "${PLATFORMS[@]}"; do
     # (exact current behavior); 2+ archs -> one branch per arch.
     IFS=',' read -ra archs <<< "${PLATFORM_ARCHS[$platform]:-}"
     if [[ ${#archs[@]} -le 1 ]]; then
-        branch="${platform}/${BRANCH_SUFFIX}"
+        branch="${PREFIX_PATH}${platform}/${BRANCH_SUFFIX}"
         all_branches+=("$branch")
         if ! apply_branch "$platform" "" "$branch"; then
             echo "🔴 $platform FAILED"
@@ -588,7 +652,7 @@ for platform in "${PLATFORMS[@]}"; do
         fi
     else
         for arch in "${archs[@]}"; do
-            branch="${platform}-${arch}/${BRANCH_SUFFIX}"
+            branch="${PREFIX_PATH}${platform}-${arch}/${BRANCH_SUFFIX}"
             all_branches+=("$branch")
             if ! apply_branch "$platform" "$arch" "$branch"; then
                 echo "🔴 ${platform}-${arch} FAILED"
@@ -613,8 +677,7 @@ fi
 echo "All platforms done."
 if ! $PUSH; then
     # Generate a convenience push script (same as finalize.sh would)
-    push_script="$SCRIPT_DIR/push_${BRANCH_SUFFIX}.sh"
-    cat > "$push_script" <<PUSH_EOF
+    cat > "$PUSH_SCRIPT" <<PUSH_EOF
 #!/usr/bin/env bash
 set -euo pipefail
 REPO_ROOT="$REPO_ROOT"
@@ -629,7 +692,7 @@ echo
 echo "All branches pushed."
 rm -f "\$0"
 PUSH_EOF
-    chmod +x "$push_script"
+    chmod +x "$PUSH_SCRIPT"
     echo "To push all branches:"
-    echo "  $push_script"
+    echo "  $PUSH_SCRIPT"
 fi

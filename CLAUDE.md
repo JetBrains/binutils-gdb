@@ -13,9 +13,22 @@ This is the `utils/patches` branch of `binutils-gdb`. It contains JetBrains-spec
 
 # Apply and push
 ./apply.sh -f gdb-17.1-release 17.1-patches-applied --push
+
+# Base on a GDB development branch instead of a release tag
+./apply.sh upstream/gdb-18-branch 18-patches-applied
+
+# Throwaway run — branches get a randomized "tmp-<token>/" prefix
+./apply.sh --random-prefix upstream/gdb-18-branch 18-patches-applied
+
+# Fixed prefix instead of a random one
+./apply.sh --prefix try/gdb18 upstream/gdb-18-branch 18-patches-applied
 ```
 
-`apply.sh` extracts the GDB version from the tag, resolves the manifest from `manifests/`, and applies patches per `[platform]` section.
+`apply.sh` extracts the GDB version from the base ref, resolves the manifest from `manifests/`, and applies patches per `[platform]` section.
+
+**Base refs:** either a release tag (`gdb-17.1-release`) or a development branch (`gdb-18-branch`, `upstream/gdb-18-branch`). The version comes from the ref name — `gdb-17.1-release` → `17.1`, `upstream/gdb-18-branch` → `18` — and a remote prefix is stripped before parsing. Created branches never track the base ref (`branch --no-track`), so a branch-based run can't push back to upstream.
+
+**Branch prefix:** `--prefix <p>` prepends `<p>/` to every generated branch name; `--random-prefix[=<base>]` prepends `<base>-<random token>/` (base defaults to `tmp`). The prefix also lands in the generated `push_*.sh` name, so prefixed runs don't clobber each other. Use it for test runs that must not collide with the real `<platform>/<suffix>` branches TeamCity consumes.
 
 ## Versioned manifests
 
