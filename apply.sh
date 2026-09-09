@@ -705,11 +705,14 @@ After ALL worktrees are resolved, run:
   $FINALIZE_SCRIPT
 This should show all branches as ✅ and generate $PUSH_SCRIPT.
 
+After that (if you've resolved conflicts) bring modified versions of patches in this repo and adapt the manifest file accordingly. You're allowed to drop patches from manifests if they've become obsolete.
+
 Then suggest the user run these cleanup/next steps:
   rm $CLAUDEFIX_SCRIPT
   $PUSH_SCRIPT
 
 IMPORTANT: Do NOT run \`git push\` or push any branches yourself. Only fix rejects and verify locally."
+
 
 exec claude "$prompt"
 BODY
