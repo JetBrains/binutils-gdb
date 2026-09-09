@@ -29,12 +29,31 @@ Options:
   --random-prefix[=<b>]  Prepend a randomized "<b>-<token>/" prefix instead
                          (<b> defaults to "tmp") — for throwaway test runs
                          that must not collide with real branches
+  --worktree-dir <dir>   Put each platform's worktree at the deterministic
+                         path "<dir>/<platform>[-<arch>]" instead of a random
+                         mktemp dir under system temp, so it can be
+                         re-derived later from (dir, platform, arch) alone.
+                         If that path already exists from a prior run,
+                         apply.sh refuses (use -f to wipe and redo it).
+                         With --run-id, the path also incorporates the run
+                         id (see below) so concurrent runs sharing the same
+                         --worktree-dir don't collide.
+  --run-id <token>       Append "-<token>" to the branch suffix, so branches
+                         become [<prefix>/]<platform>[-<arch>]/<suffix>-<token>.
+                         Unlike --prefix, the token lands INSIDE the suffix,
+                         after the version, so it survives into the branch
+                         name TeamCity captures without breaking the leading
+                         MAJOR.MINOR it needs. Use to isolate parallel or
+                         repeated (e.g. workflow) runs. <token> must not
+                         contain '/' or whitespace.
 
 Examples:
   ./apply.sh gdb-16.3-release 16.3-patches-applied
   ./apply.sh -f gdb-17.1-release 17.1-patches-applied --push
   ./apply.sh --random-prefix upstream/gdb-18-branch 18-patches-applied
   ./apply.sh --prefix try/gdb18 upstream/gdb-18-branch 18-patches-applied
+  ./apply.sh --worktree-dir /var/lib/gdb-patches/run1 upstream/gdb-18-branch 18-patches-applied
+  ./apply.sh --run-id wf-abc123 upstream/gdb-18-branch 18.1-patches-applied
 EOF
     exit 1
 }
@@ -52,6 +71,8 @@ random_token() {
 FORCE=false
 PUSH=false
 BRANCH_PREFIX=""
+WORKTREE_DIR=""
+RUN_ID=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,6 +87,18 @@ while [[ $# -gt 0 ]]; do
         --random-prefix)   BRANCH_PREFIX="tmp-$(random_token)" ;;
         --random-prefix=*) BRANCH_PREFIX="${1#*=}"
                            BRANCH_PREFIX="${BRANCH_PREFIX:-tmp}-$(random_token)" ;;
+        --worktree-dir)
+            shift
+            [[ $# -gt 0 ]] || { echo "--worktree-dir requires a value" >&2; usage; }
+            WORKTREE_DIR="$1"
+            ;;
+        --worktree-dir=*) WORKTREE_DIR="${1#*=}" ;;
+        --run-id)
+            shift
+            [[ $# -gt 0 ]] || { echo "--run-id requires a value" >&2; usage; }
+            RUN_ID="$1"
+            ;;
+        --run-id=*) RUN_ID="${1#*=}" ;;
         -h|--help) usage ;;
         -*)       echo "Unknown option: $1" >&2; usage ;;
         *)        POSITIONAL+=("$1") ;;
@@ -80,6 +113,21 @@ if [[ -n "$BRANCH_PREFIX" ]] \
    && ! git check-ref-format "refs/heads/$BRANCH_PREFIX/x" >/dev/null 2>&1; then
     echo "Error: '$BRANCH_PREFIX' is not a valid branch name prefix." >&2
     exit 1
+fi
+
+# --run-id becomes a literal "-<token>" tacked onto the suffix (not its own
+# path segment), so a slash would silently create an unintended nested
+# branch and whitespace would corrupt the ref outright — reject both
+# up front, then let git vet whatever's left as an actual ref component.
+if [[ -n "$RUN_ID" ]]; then
+    if [[ "$RUN_ID" == */* || "$RUN_ID" =~ [[:space:]] ]]; then
+        echo "Error: --run-id '$RUN_ID' must not contain '/' or whitespace." >&2
+        exit 1
+    fi
+    if ! git check-ref-format "refs/heads/x-$RUN_ID" >/dev/null 2>&1; then
+        echo "Error: '$RUN_ID' is not a valid --run-id token." >&2
+        exit 1
+    fi
 fi
 
 # Interactive mode when no positional args given
@@ -125,6 +173,7 @@ if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
     $FORCE && flags+=" -f" || true
     $PUSH && flags+=" --push" || true
     [[ -n "$BRANCH_PREFIX" ]] && flags+=" --prefix $BRANCH_PREFIX" || true
+    [[ -n "$RUN_ID" ]] && flags+=" --run-id $RUN_ID" || true
     echo "Will run: apply.sh${flags} $BASE_REF $BRANCH_SUFFIX"
     read -rp "Proceed? [Y/n] " confirm
     [[ "${confirm:-y}" =~ ^[Yy]?$ ]] || exit 0
@@ -140,7 +189,22 @@ fi
 # into the helper script names, so prefixed (e.g. randomized) runs don't
 # overwrite the push script of another run.
 PREFIX_PATH="${BRANCH_PREFIX:+$BRANCH_PREFIX/}"
-PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_PREFIX:+${BRANCH_PREFIX//\//-}-}${BRANCH_SUFFIX}.sh"
+
+# --run-id rides INSIDE the suffix, after the version token, rather than as
+# its own path segment: TeamCity's VCS branch spec captures everything after
+# "<platform>/" as the logical branch name, and GdbDeployToUltimate's
+# RUNNER_6 parses the GDB version off the START of that captured name. A
+# separate path segment (like --prefix) would land before the version and
+# break that parse; appending "-<runId>" after it leaves the version intact.
+EFFECTIVE_SUFFIX="${BRANCH_SUFFIX}${RUN_ID:+-$RUN_ID}"
+PUSH_SCRIPT="$SCRIPT_DIR/push_${BRANCH_PREFIX:+${BRANCH_PREFIX//\//-}-}${EFFECTIVE_SUFFIX}.sh"
+
+# Resolve --worktree-dir to an absolute path and make sure it exists. Empty
+# means "unset" — apply_branch falls back to its historical mktemp behavior.
+if [[ -n "$WORKTREE_DIR" ]]; then
+    mkdir -p "$WORKTREE_DIR"
+    WORKTREE_DIR="$(cd "$WORKTREE_DIR" && pwd)"
+fi
 
 # Verify base ref exists
 if ! git -C "$REPO_ROOT" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
@@ -286,13 +350,37 @@ apply_branch() {
             return 1
         fi
     fi
+
+    # Resolve the worktree path. With --worktree-dir this is deterministic —
+    # "<dir>/<platform>[-<arch>][-<runId>]" — so a later process (e.g. a
+    # repair step that runs after this script exits) can re-derive the same
+    # path from (dir, platform, arch, runId) alone and find the .rej files /
+    # resume.sh a failed run left behind, instead of parsing this run's
+    # stdout. The run id is folded in here too so that two runs sharing the
+    # same --worktree-dir (e.g. concurrent workflow invocations) don't
+    # collide on the same path. Without the flag, fall back to the
+    # historical random mktemp dir.
+    local worktree_dir
+    if [[ -n "$WORKTREE_DIR" ]]; then
+        worktree_dir="$WORKTREE_DIR/${platform}${filter_arch:+-$filter_arch}${RUN_ID:+-$RUN_ID}"
+        if [[ -e "$worktree_dir" ]]; then
+            if $FORCE; then
+                git -C "$REPO_ROOT" worktree remove --force "$worktree_dir" >/dev/null 2>&1 || true
+                rm -rf "$worktree_dir"
+            else
+                echo "Error: worktree dir '$worktree_dir' already exists (left by a prior run)." >&2
+                echo "  Use -f to wipe it and start over, or leave it in place for whoever" >&2
+                echo "  is resolving it (e.g. a repair step acting on its .rej files)." >&2
+                return 1
+            fi
+        fi
+    else
+        worktree_dir=$(mktemp -d "${TMPDIR:-/tmp}/gdb-patches-${platform}${filter_arch:+-$filter_arch}-XXXXXX")
+    fi
+
     # --no-track: a remote development branch as base (upstream/gdb-17-branch)
     # would otherwise make the patched branch track read-only upstream.
     git -C "$REPO_ROOT" branch --no-track "$branch_name" "$BASE_REF"
-
-    # Create temporary worktree
-    local worktree_dir
-    worktree_dir=$(mktemp -d "${TMPDIR:-/tmp}/gdb-patches-${platform}${filter_arch:+-$filter_arch}-XXXXXX")
 
     git -C "$REPO_ROOT" worktree add "$worktree_dir" "$branch_name" >/dev/null 2>&1
 
@@ -632,6 +720,23 @@ BODY
 echo "Base: $BASE_REF ($(git -C "$REPO_ROOT" rev-parse --short "$BASE_REF"))"
 echo "Platforms: ${PLATFORMS[*]}"
 [[ -n "$BRANCH_PREFIX" ]] && echo "Branch prefix: $BRANCH_PREFIX/" || true
+[[ -n "$RUN_ID" ]] && echo "Run id: $RUN_ID (suffix -> $EFFECTIVE_SUFFIX)" || true
+[[ -n "$WORKTREE_DIR" ]] && echo "Worktree dir: $WORKTREE_DIR" || true
+
+# Non-fatal guard: RUNNER_6 in GdbDeployToUltimate parses the GDB version off
+# the START of the captured branch name (sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p').
+# If EFFECTIVE_SUFFIX doesn't start with a dotted MAJOR.MINOR, that parse
+# comes back empty and RUNNER_6 fails the build far downstream (in a
+# monorepo deployment build, not here). We only WARN, not exit: apply.sh is
+# also run interactively with ad hoc suffixes that never reach TeamCity, and
+# a hard failure here would break that legitimate use.
+if [[ ! "$EFFECTIVE_SUFFIX" =~ ^[0-9]+\.[0-9]+ ]]; then
+    echo
+    echo "⚠️  WARNING: suffix '$EFFECTIVE_SUFFIX' does not start with a dotted" >&2
+    echo "   MAJOR.MINOR version (e.g. '17.2'). If these branches reach the" >&2
+    echo "   GdbAll -> GdbDeployToUltimate TeamCity pipeline, its RUNNER_6 step" >&2
+    echo "   will fail with: 'Could not derive GDB version from branch'." >&2
+fi
 echo
 
 failed=0
@@ -642,7 +747,7 @@ for platform in "${PLATFORMS[@]}"; do
     # (exact current behavior); 2+ archs -> one branch per arch.
     IFS=',' read -ra archs <<< "${PLATFORM_ARCHS[$platform]:-}"
     if [[ ${#archs[@]} -le 1 ]]; then
-        branch="${PREFIX_PATH}${platform}/${BRANCH_SUFFIX}"
+        branch="${PREFIX_PATH}${platform}/${EFFECTIVE_SUFFIX}"
         all_branches+=("$branch")
         if ! apply_branch "$platform" "" "$branch"; then
             echo "🔴 $platform FAILED"
@@ -652,7 +757,7 @@ for platform in "${PLATFORMS[@]}"; do
         fi
     else
         for arch in "${archs[@]}"; do
-            branch="${PREFIX_PATH}${platform}-${arch}/${BRANCH_SUFFIX}"
+            branch="${PREFIX_PATH}${platform}-${arch}/${EFFECTIVE_SUFFIX}"
             all_branches+=("$branch")
             if ! apply_branch "$platform" "$arch" "$branch"; then
                 echo "🔴 ${platform}-${arch} FAILED"

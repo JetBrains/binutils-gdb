@@ -28,7 +28,9 @@ This is the `utils/patches` branch of `binutils-gdb`. It contains JetBrains-spec
 
 **Base refs:** either a release tag (`gdb-17.1-release`) or a development branch (`gdb-18-branch`, `upstream/gdb-18-branch`). The version comes from the ref name — `gdb-17.1-release` → `17.1`, `upstream/gdb-18-branch` → `18` — and a remote prefix is stripped before parsing. Created branches never track the base ref (`branch --no-track`), so a branch-based run can't push back to upstream.
 
-**Branch prefix:** `--prefix <p>` prepends `<p>/` to every generated branch name; `--random-prefix[=<base>]` prepends `<base>-<random token>/` (base defaults to `tmp`). The prefix also lands in the generated `push_*.sh` name, so prefixed runs don't clobber each other. Use it for test runs that must not collide with the real `<platform>/<suffix>` branches TeamCity consumes.
+**Branch prefix:** `--prefix <p>` inserts `<p>/` between the platform component and the suffix of every generated branch name — `<platform>[-<arch>]/<p>/<suffix>`; `--random-prefix[=<base>]` inserts `<base>-<random token>/` the same way (base defaults to `tmp`). The platform must stay first: the downstream TeamCity config is handed an os-less branch and prepends the os-arch itself, so a prefix before the platform would be untriggerable — the os-less branch to hand it is `<prefix>/<suffix>`. The prefix also lands in the generated `push_*.sh` name, so prefixed runs don't clobber each other. Use it for test runs that must not collide with the real `<platform>/<suffix>` branches TeamCity consumes.
+
+**Worktree location:** by default each platform's worktree is a random `mktemp` dir under system temp, removed once its branch is done. `--worktree-dir <dir>` makes it deterministic instead — `<dir>/<platform>[-<arch>]` — so a process external to this run (e.g. a later repair step) can re-derive the same path from `(dir, platform, arch)` alone and find the `.rej` files and `resume.sh` a failed run left behind. If that path already exists from a prior run, `apply.sh` refuses and leaves it untouched; pass `-f` to wipe and redo it.
 
 ## Versioned manifests
 
