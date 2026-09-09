@@ -79,6 +79,10 @@ mingw/aarch64.patch @arch=aarch64  # tagged: only the aarch64 branch
 ## Adding a new GDB version
 
 1. Copy the latest manifest → `manifests/<new-major>.manifest`
+   (`apply.sh` does step 1 for you automatically when run non-interactively
+   against a version with no manifest yet — it copies the latest manifest,
+   marks the file as machine-generated/unreviewed, and prints a warning.
+   Interactive runs still error out and require this step by hand.)
 2. Test each patch against the new GDB source
 3. Create version-specific patch variants where needed (e.g. `-17.patch`)
 4. If a minor version diverges later, add `manifests/<major>.<minor>.manifest`
