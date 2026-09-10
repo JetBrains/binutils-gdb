@@ -743,6 +743,8 @@ fi
 
 prompt="You are fixing failed GDB patch applications across platform branches.
 Each worktree below has .rej files from patches that didn't apply cleanly.
+
+Each worktree is a separate, self-contained checkout. Confine ALL reading and writing to the worktree directory you are currently fixing. Do not read, cite, or let your conclusions be influenced by files anywhere else on this machine — in particular not $REPO_ROOT (the checkout these worktrees were cloned from) or any other repo or worktree. Any conclusion about whether a patch is obsolete must rest on the upstream sources inside that worktree alone, never on manifests or patch variants you find elsewhere.
 "
 
 for entry in "${tasks[@]}"; do
@@ -785,13 +787,14 @@ After ALL worktrees are resolved, run:
   $FINALIZE_SCRIPT
 This should show all branches as ✅ and generate $PUSH_SCRIPT.
 
-After that (if you've resolved conflicts) bring modified versions of patches in this repo and adapt the manifest file accordingly. You're allowed to drop patches from manifests if they've become obsolete.
+After that (if you've resolved conflicts) bring modified versions of patches in this repo and adapt the manifest file accordingly. You're allowed to drop patches from manifests if they've become obsolete — but decide that using only the upstream sources in the worktree you fixed, never by consulting manifests or patch files found outside it.
 
 Then suggest the user run these cleanup/next steps:
   rm $CLAUDEFIX_SCRIPT
   $PUSH_SCRIPT
 
-IMPORTANT: Do NOT run \`git push\` or push any branches yourself. Only fix rejects and verify locally."
+IMPORTANT: Do NOT run \`git push\` or push any branches yourself. Only fix rejects and verify locally.
+IMPORTANT: Stay inside your assigned worktree at all times. Never read, list, or grep files outside it — especially not $REPO_ROOT — and never let anything found there factor into your fixes or conclusions."
 
 
 if [[ -t 0 && -t 1 ]]; then
