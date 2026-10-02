@@ -74,7 +74,6 @@ mingw/aarch64.patch @arch=aarch64  # tagged: only the aarch64 branch
 2. Place it in `shared/`, `darwin/`, or `mingw/`
 3. Add it to the relevant `[platform]` sections in the version's manifest
 4. Commit to this branch
-5. Mirror the patch file to `clion-bundle-buildenv/patches/gdb/` (or platform dir) and update its manifest
 
 ## Adding a new GDB version
 
@@ -92,7 +91,6 @@ mingw/aarch64.patch @arch=aarch64  # tagged: only the aarch64 branch
 1. Remove from manifest `[platform]` sections
 2. Delete the `.patch` file if no manifest references it
 3. Commit to this branch
-4. Remove from `clion-bundle-buildenv` counterparts
 
 ## Relationship to clion-bundle-buildenv
 
@@ -100,4 +98,4 @@ The PKGBUILDs in `clion-bundle-buildenv` check for `.jetbrains-patches-applied` 
 - A vanilla GDB tarball (patches applied at build time by PKGBUILD)
 - A pre-patched branch (patches already committed, marker file present)
 
-`clion-bundle-buildenv` has its own copy of manifests (`manifests/`) and patch files. Keep them in sync.
+This branch is the only source of truth for patches. `clion-bundle-buildenv/patches/gdb/` holds a flat, unversioned set (listed in its `PKGBUILD.inc`) kept only for the vanilla-tarball fallback used by older GDB versions; it has no manifests and new patches are not added there.
