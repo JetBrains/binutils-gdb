@@ -198,6 +198,10 @@ i386_ptrace_get_tls_data (int pid, gdb::array_view<user_desc> buffer)
 {
   gdb_assert (buffer.size () == 3);
 
+#ifndef PTRACE_GET_THREAD_AREA
+#define PTRACE_GET_THREAD_AREA 25
+#endif
+
   for (int i = 0; i < 3; ++i)
     {
       void *addr = (void *) (uintptr_t) (i386_initial_tls_gdt + i);
@@ -216,6 +220,10 @@ bool
 i386_ptrace_set_tls_data (int pid, gdb::array_view<user_desc> buffer)
 {
   gdb_assert (buffer.size () == 3);
+
+#ifndef PTRACE_SET_THREAD_AREA
+#define PTRACE_SET_THREAD_AREA 26
+#endif
 
   for (int i = 0; i < 3; ++i)
     {
