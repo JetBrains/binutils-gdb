@@ -1,0 +1,6 @@
+platform: darwin
+date: 2026-10-02T19:44:38Z
+patches:
+  - configure.patch
+  - python.patch
+  - disable-native.patch
