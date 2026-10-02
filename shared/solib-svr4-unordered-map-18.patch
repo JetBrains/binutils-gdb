@@ -1,0 +1,12 @@
+diff --git a/gdb/solib-svr4.c b/gdb/solib-svr4.c
+index 8e3de4d3ea1..7d735dee410 100644
+--- a/gdb/solib-svr4.c
++++ b/gdb/solib-svr4.c
+@@ -46,6 +46,7 @@
+ #include "probe.h"
+ 
+ #include <map>
++#include "gdbsupport/unordered_map.h"
+ 
+ static void svr4_relocate_main_executable (void);
+ static void probes_table_remove_objfile_probes (struct objfile *objfile);
