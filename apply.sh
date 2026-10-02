@@ -16,7 +16,7 @@ used to resolve the manifest is taken from the ref name in both cases.
 
 Resolves a versioned manifest from manifests/ to determine which
 patches each platform gets. Creates one branch per platform:
-  [<prefix>/]<platform>/<branch-suffix>
+  <platform>/[<prefix>/]<branch-suffix>
 
 If no manifest exists for the target version:
   - interactively (a real terminal on stdin and stdout): errors out, same
@@ -30,15 +30,16 @@ If no manifest exists for the target version:
 
 A platform whose manifest header declares multiple archs
 (e.g. [mingw archs=x86_64,aarch64]) instead emits one branch per arch:
-  [<prefix>/]<platform>-<arch>/<branch-suffix>
+  <platform>-<arch>/[<prefix>/]<branch-suffix>
 
 Options:
   -f                     Delete and recreate branches that already exist
   --push                 Push all branches to origin after applying patches
-  --prefix <p>           Prepend "<p>/" to every generated branch name
-  --random-prefix[=<b>]  Prepend a randomized "<b>-<token>/" prefix instead
-                         (<b> defaults to "tmp") — for throwaway test runs
-                         that must not collide with real branches
+  --prefix <p>           Insert "<p>/" between the platform and suffix of
+                         every generated branch name
+  --random-prefix[=<b>]  Insert a randomized "<b>-<token>/" prefix the same
+                         way instead (<b> defaults to "tmp") — for throwaway
+                         test runs that must not collide with real branches
   --worktree-dir <dir>   Put each platform's worktree at the deterministic
                          path "<dir>/<platform>[-<arch>]" instead of a random
                          mktemp dir under system temp, so it can be
@@ -222,7 +223,7 @@ else
     BRANCH_SUFFIX="${POSITIONAL[1]}"
 fi
 
-# Branch names: [<prefix>/]<platform>[-<arch>]/<suffix>. The prefix also goes
+# Branch names: <platform>[-<arch>]/[<prefix>/]<suffix>. The prefix also goes
 # into the helper script names, so prefixed (e.g. randomized) runs don't
 # overwrite the push script of another run.
 PREFIX_PATH="${BRANCH_PREFIX:+$BRANCH_PREFIX/}"
@@ -840,7 +841,7 @@ for platform in "${PLATFORMS[@]}"; do
     # (exact current behavior); 2+ archs -> one branch per arch.
     IFS=',' read -ra archs <<< "${PLATFORM_ARCHS[$platform]:-}"
     if [[ ${#archs[@]} -le 1 ]]; then
-        branch="${PREFIX_PATH}${platform}/${EFFECTIVE_SUFFIX}"
+        branch="${platform}/${PREFIX_PATH}${EFFECTIVE_SUFFIX}"
         all_branches+=("$branch")
         if ! apply_branch "$platform" "" "$branch"; then
             echo "🔴 $platform FAILED"
@@ -850,7 +851,7 @@ for platform in "${PLATFORMS[@]}"; do
         fi
     else
         for arch in "${archs[@]}"; do
-            branch="${PREFIX_PATH}${platform}-${arch}/${EFFECTIVE_SUFFIX}"
+            branch="${platform}-${arch}/${PREFIX_PATH}${EFFECTIVE_SUFFIX}"
             all_branches+=("$branch")
             if ! apply_branch "$platform" "$arch" "$branch"; then
                 echo "🔴 ${platform}-${arch} FAILED"
