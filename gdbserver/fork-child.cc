@@ -123,6 +123,4 @@ post_fork_inferior (int pid, const char *program)
   current_thread->last_status = cs.last_status;
   signal_pid = pid;
   target_post_create_inferior ();
-  fprintf (stderr, "Process %s created; pid = %d\n", program, pid);
-  fflush (stderr);
 }

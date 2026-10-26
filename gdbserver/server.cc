@@ -298,6 +298,18 @@ get_environ ()
 }
 
 static int
+do_target_create_inferior (const char *program,
+		    const std::string &program_args)
+{
+  int pid = target_create_inferior (program, program_args);
+
+  fprintf (stderr, "Process %s created; pid = %d\n", program, pid);
+  fflush (stderr);
+
+  return pid;
+}
+
+static int
 attach_inferior (int pid)
 {
   client_state &cs = get_client_state ();
@@ -3512,7 +3524,7 @@ handle_v_run (char *own_buf)
 
   try
     {
-      target_create_inferior (program_path.get (), program_args);
+      do_target_create_inferior (program_path.get (), program_args);
     }
   catch (const gdb_exception_error &exception)
     {
@@ -4579,7 +4591,7 @@ captured_main (int argc, char *argv[])
       program_args = construct_inferior_arguments (args_view, escape_args);
 
       /* Wait till we are at first instruction in program.  */
-      target_create_inferior (program_path.get (), program_args);
+      do_target_create_inferior (program_path.get (), program_args);
 
       /* We are now (hopefully) stopped at the first instruction of
 	 the target process.  This assumes that the target process was
@@ -5128,7 +5140,7 @@ process_serial_event (void)
 	  /* Wait till we are at 1st instruction in prog.  */
 	  if (program_path.get () != NULL)
 	    {
-	      target_create_inferior (program_path.get (), program_args);
+	      do_target_create_inferior (program_path.get (), program_args);
 
 	      if (cs.last_status.kind () == TARGET_WAITKIND_STOPPED)
 		{
