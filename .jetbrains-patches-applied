@@ -1,6 +1,6 @@
 platform: mingw
 arch: aarch64
-date: 2026-10-02T19:45:07Z
+date: 2026-10-31T13:12:46Z
 patches:
   - gdb-fix-using-gnu-print.patch
   - gdb-7.12-dynamic-libs.patch
@@ -8,4 +8,5 @@ patches:
   - CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
   - 0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
   - solib-svr4-unordered-map-18.patch
+  - CPP-52934-lazy-readline-finder.patch
   - aarch64.patch
