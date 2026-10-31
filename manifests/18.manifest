@@ -5,11 +5,13 @@ shared/gdbserver-Output-PID-right-after-create_inferior-call-17.patch
 shared/CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
 shared/0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
 shared/x86-linux-tls-ptrace-guard.patch
+shared/CPP-52934-lazy-readline-finder.patch
 
 [darwin]
 darwin/configure.patch
 darwin/python.patch
 darwin/disable-native.patch
+shared/CPP-52934-lazy-readline-finder.patch
 
 [mingw archs=x86_64,aarch64]
 shared/gdb-fix-using-gnu-print.patch
@@ -18,4 +20,5 @@ shared/gdbserver-Output-PID-right-after-create_inferior-call-17.patch
 shared/CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
 shared/0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
 shared/solib-svr4-unordered-map-18.patch
+shared/CPP-52934-lazy-readline-finder.patch
 mingw/aarch64.patch @arch=aarch64
