@@ -1,5 +1,5 @@
 platform: linux
-date: 2026-10-02T19:44:30Z
+date: 2026-10-31T13:12:19Z
 patches:
   - gdb-fix-using-gnu-print.patch
   - gdb-7.12-dynamic-libs.patch
@@ -7,3 +7,4 @@ patches:
   - CPP-10461-gdb-limit-cp_print_value_fields-recursion.patch
   - 0005-W32-Always-check-USERPROFILE-if-HOME-is-not-set.patch
   - x86-linux-tls-ptrace-guard.patch
+  - CPP-52934-lazy-readline-finder.patch
