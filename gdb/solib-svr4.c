@@ -46,6 +46,7 @@
 #include "probe.h"
 
 #include <map>
+#include "gdbsupport/unordered_map.h"
 
 static void svr4_relocate_main_executable (void);
 static void probes_table_remove_objfile_probes (struct objfile *objfile);
