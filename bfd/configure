@@ -15783,7 +15783,7 @@ selarchs=
 TDEFINES=
 for targ in $target $canon_targets
 do
-    if test $targ = all; then
+    if test $targ = all || true; then
         all_targets=true
     elif test $targ != plugin; then
 	. $srcdir/config.bfd
