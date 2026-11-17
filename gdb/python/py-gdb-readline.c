@@ -104,9 +104,8 @@ gdbpy_initialize_gdb_readline ()
      this third default finder.  */
   const char *code = "\
 import sys\n\
-from importlib.abc import MetaPathFinder\n\
 \n\
-class GdbRemoveReadlineFinder(MetaPathFinder):\n\
+class GdbRemoveReadlineFinder:\n\
 \n\
   def find_spec(self, fullname, path=None, target=None):\n\
     if fullname == \"readline\":\n\
