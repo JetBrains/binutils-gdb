@@ -1,0 +1,7 @@
+platform: darwin
+date: 2026-11-17T09:55:46Z
+patches:
+  - configure.patch
+  - python.patch
+  - disable-native.patch
+  - py-gdb-readline-no-importlib-abc.patch
